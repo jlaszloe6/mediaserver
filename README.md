@@ -6,10 +6,10 @@ A self-hosted media server stack using Docker Compose. Add movies and TV shows t
 
 ```
 Trakt Watchlist ──► Sonarr/Radarr ──► Prowlarr ──► Indexers
-                         │                            │
-                         ▼                            ▼
-                    Transmission ◄──────── Torrent Search
-                         │
+       ▲                 │                            │
+       │                 ▼                            ▼
+   Seerr UI         Transmission ◄──────── Torrent Search
+  (requests)             │
                          ▼
                     Plex Libraries
                          │
