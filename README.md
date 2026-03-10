@@ -25,8 +25,10 @@ Trakt Watchlist ──► Sonarr/Radarr ──► Prowlarr ──► Indexers
 ```bash
 git clone https://github.com/jlaszloe6/mediaserver.git
 cd mediaserver
-cp .env.example .env  # edit with your API keys
+cp .env.example .env      # add PLEX_TOKEN and DuckDNS credentials
 docker compose up -d
+./scripts/init-setup.sh   # auto-configures Prowlarr, Sonarr, Radarr, Transmission, Tautulli
+./scripts/init-setup.sh --trakt  # interactive Trakt watchlist setup
 ```
 
 ## Documentation
