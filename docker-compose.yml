@@ -11,8 +11,8 @@ services:
       - VERSION=docker
     volumes:
       - ./config/plex:/config
-      - /mnt/mediaserver/media/tv:/tv
-      - /mnt/mediaserver/media/movies:/movies
+      - ${MEDIA_ROOT}/media/tv:/tv
+      - ${MEDIA_ROOT}/media/movies:/movies
     restart: unless-stopped
 
 
@@ -26,8 +26,8 @@ services:
       - PEERPORT=51413
     volumes:
       - ./config/transmission:/config
-      - /mnt/mediaserver/torrents:/downloads
-      - /mnt/mediaserver/watch:/watch
+      - ${MEDIA_ROOT}/torrents:/downloads
+      - ${MEDIA_ROOT}/watch:/watch
     ports:
       - "9091:9091"
       - "51413:51413"
@@ -47,7 +47,7 @@ services:
       - TZ=Europe/Budapest
     volumes:
       - ./config/sonarr:/config
-      - /mnt/mediaserver:/data
+      - ${MEDIA_ROOT}:/data
     ports:
       - "8989:8989"
     restart: unless-stopped
@@ -65,7 +65,7 @@ services:
       - TZ=Europe/Budapest
     volumes:
       - ./config/radarr:/config
-      - /mnt/mediaserver:/data
+      - ${MEDIA_ROOT}:/data
     ports:
       - "7878:7878"
     restart: unless-stopped
