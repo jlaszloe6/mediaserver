@@ -22,9 +22,9 @@ ERRORS=0
 DRY_RUN=false
 DO_TRAKT=false
 
-# Sonarr/Radarr built-in Trakt client IDs (public, not secrets)
-SONARR_TRAKT_CLIENT_ID="REDACTED_SONARR_TRAKT_CLIENT_ID"
-RADARR_TRAKT_CLIENT_ID="REDACTED_RADARR_TRAKT_CLIENT_ID"
+# Trakt client IDs (loaded from .env)
+SONARR_TRAKT_CLIENT_ID=$(grep -m1 '^SONARR_TRAKT_CLIENT_ID=' "$ENV_FILE" | cut -d= -f2-)
+RADARR_TRAKT_CLIENT_ID=$(grep -m1 '^RADARR_TRAKT_CLIENT_ID=' "$ENV_FILE" | cut -d= -f2-)
 
 # --- Helpers ---
 
@@ -966,6 +966,11 @@ TLEOF
             fi
         fi
     }
+
+    if [ -z "$SONARR_TRAKT_CLIENT_ID" ] || [ -z "$RADARR_TRAKT_CLIENT_ID" ]; then
+        log_error "SONARR_TRAKT_CLIENT_ID and RADARR_TRAKT_CLIENT_ID must be set in .env"
+        exit 1
+    fi
 
     trakt_device_flow "Sonarr" "$SONARR_TRAKT_CLIENT_ID" "http://localhost:8989" "$SONARR_KEY" "/data/media/tv"
     trakt_device_flow "Radarr" "$RADARR_TRAKT_CLIENT_ID" "http://localhost:7878" "$RADARR_KEY" "/data/media/movies"
