@@ -617,7 +617,172 @@ else
     fi
 fi
 
-# --- Section 8: Trakt integration (interactive) ---
+# --- Section 8: Email notifications ---
+
+echo ""
+log_info "=== Configuring Email Notifications ==="
+
+SMTP_SERVER=$(env_get "SMTP_SERVER")
+SMTP_PORT=$(env_get "SMTP_PORT")
+SMTP_USER=$(env_get "SMTP_USER")
+SMTP_PASSWORD=$(env_get "SMTP_PASSWORD")
+SMTP_FROM=$(env_get "SMTP_FROM")
+SMTP_TO=$(env_get "SMTP_TO")
+SEERR_SENDER_NAME=$(env_get "SEERR_SENDER_NAME")
+
+if [ -z "$SMTP_USER" ] || [ -z "$SMTP_PASSWORD" ] || [ -z "$SMTP_FROM" ]; then
+    log_warn "SMTP credentials not set in .env — skipping email notifications"
+    log_warn "Set SMTP_USER, SMTP_PASSWORD, and SMTP_FROM in .env and re-run"
+else
+    SMTP_SERVER="${SMTP_SERVER:-smtp-relay.brevo.com}"
+    SMTP_PORT="${SMTP_PORT:-587}"
+    SEERR_SENDER_NAME="${SEERR_SENDER_NAME:-Media Server}"
+
+    # Build recipient array for Sonarr/Radarr (JSON array of strings)
+    SMTP_TO_JSON=$(echo "$SMTP_TO" | tr ',' '\n' | sed 's/^ *//;s/ *$//' | jq -R . | jq -s .)
+
+    # Sonarr email notification
+    existing_notif=$(curl -sf -H "X-Api-Key: $SONARR_KEY" "http://localhost:8989/api/v3/notification")
+    sonarr_email_exists=$(echo "$existing_notif" | jq -r '.[] | select(.name == "Email") | .id')
+
+    if [ -z "$sonarr_email_exists" ]; then
+        sonarr_email_payload=$(cat <<SEEOF
+{
+  "name": "Email",
+  "implementation": "Email",
+  "configContract": "EmailSettings",
+  "onGrab": true,
+  "onImportComplete": true,
+  "onUpgrade": true,
+  "onHealthIssue": true,
+  "fields": [
+    {"name": "server", "value": "$SMTP_SERVER"},
+    {"name": "port", "value": $SMTP_PORT},
+    {"name": "useEncryption", "value": 0},
+    {"name": "username", "value": "$SMTP_USER"},
+    {"name": "password", "value": "$SMTP_PASSWORD"},
+    {"name": "from", "value": "$SMTP_FROM"},
+    {"name": "to", "value": $SMTP_TO_JSON}
+  ]
+}
+SEEOF
+)
+        if $DRY_RUN; then
+            log_info "[DRY RUN] Would add email notification to Sonarr"
+        else
+            parse_response "$(api_call POST "http://localhost:8989/api/v3/notification" "$SONARR_KEY" "$sonarr_email_payload")"
+            if [ "$RESP_CODE" = "200" ] || [ "$RESP_CODE" = "201" ]; then
+                log_ok "Added email notification to Sonarr"
+            else
+                log_err "Failed to add email notification to Sonarr (HTTP $RESP_CODE): $RESP_BODY"
+            fi
+        fi
+    else
+        log_ok "Email notification already configured in Sonarr"
+    fi
+
+    # Radarr email notification
+    existing_notif=$(curl -sf -H "X-Api-Key: $RADARR_KEY" "http://localhost:7878/api/v3/notification")
+    radarr_email_exists=$(echo "$existing_notif" | jq -r '.[] | select(.name == "Email") | .id')
+
+    if [ -z "$radarr_email_exists" ]; then
+        radarr_email_payload=$(cat <<REEOF
+{
+  "name": "Email",
+  "implementation": "Email",
+  "configContract": "EmailSettings",
+  "onGrab": true,
+  "onImportComplete": true,
+  "onUpgrade": true,
+  "onHealthIssue": true,
+  "fields": [
+    {"name": "server", "value": "$SMTP_SERVER"},
+    {"name": "port", "value": $SMTP_PORT},
+    {"name": "useEncryption", "value": 0},
+    {"name": "username", "value": "$SMTP_USER"},
+    {"name": "password", "value": "$SMTP_PASSWORD"},
+    {"name": "from", "value": "$SMTP_FROM"},
+    {"name": "to", "value": $SMTP_TO_JSON}
+  ]
+}
+REEOF
+)
+        if $DRY_RUN; then
+            log_info "[DRY RUN] Would add email notification to Radarr"
+        else
+            parse_response "$(api_call POST "http://localhost:7878/api/v3/notification" "$RADARR_KEY" "$radarr_email_payload")"
+            if [ "$RESP_CODE" = "200" ] || [ "$RESP_CODE" = "201" ]; then
+                log_ok "Added email notification to Radarr"
+            else
+                log_err "Failed to add email notification to Radarr (HTTP $RESP_CODE): $RESP_BODY"
+            fi
+        fi
+    else
+        log_ok "Email notification already configured in Radarr"
+    fi
+
+    # Seerr email notification
+    if [ -n "$PLEX_TOKEN" ]; then
+        # Authenticate with Seerr
+        seerr_cookie=$(curl -s -c- -X POST "http://localhost:5055/api/v1/auth/plex" \
+            -H "Content-Type: application/json" \
+            -d "{\"authToken\":\"$PLEX_TOKEN\"}" 2>/dev/null | grep -i 'connect.sid' | awk '{print $NF}')
+
+        if [ -n "$seerr_cookie" ]; then
+            # Check current email settings
+            seerr_email=$(curl -sf -b "connect.sid=$seerr_cookie" "http://localhost:5055/api/v1/settings/notifications/email")
+            seerr_email_enabled=$(echo "$seerr_email" | jq -r '.enabled // false')
+
+            if [ "$seerr_email_enabled" = "true" ]; then
+                log_ok "Email notification already configured in Seerr"
+            else
+                seerr_email_payload=$(cat <<SREOF
+{
+  "enabled": true,
+  "embedPoster": true,
+  "options": {
+    "userEmailRequired": true,
+    "emailFrom": "$SMTP_FROM",
+    "smtpHost": "$SMTP_SERVER",
+    "smtpPort": $SMTP_PORT,
+    "secure": false,
+    "ignoreTls": false,
+    "requireTls": false,
+    "allowSelfSigned": false,
+    "senderName": "$SEERR_SENDER_NAME",
+    "authUser": "$SMTP_USER",
+    "authPass": "$SMTP_PASSWORD"
+  },
+  "types": 4062
+}
+SREOF
+)
+                if $DRY_RUN; then
+                    log_info "[DRY RUN] Would configure email notification in Seerr"
+                else
+                    seerr_result=$(curl -s -w '\n%{http_code}' -X POST \
+                        "http://localhost:5055/api/v1/settings/notifications/email" \
+                        -b "connect.sid=$seerr_cookie" \
+                        -H "Content-Type: application/json" \
+                        -d "$seerr_email_payload")
+                    seerr_code=$(echo "$seerr_result" | tail -1)
+                    if [ "$seerr_code" = "200" ] || [ "$seerr_code" = "201" ]; then
+                        log_ok "Configured email notification in Seerr"
+                    else
+                        log_err "Failed to configure Seerr email (HTTP $seerr_code)"
+                    fi
+                fi
+            fi
+        else
+            log_warn "Could not authenticate with Seerr — skipping Seerr email setup"
+            log_warn "Complete the Seerr setup wizard first, then re-run"
+        fi
+    else
+        log_warn "PLEX_TOKEN not set — skipping Seerr email notification"
+    fi
+fi
+
+# --- Section 9: Trakt integration (interactive) ---
 
 if $DO_TRAKT; then
     echo ""
@@ -813,7 +978,7 @@ TLEOF
     fi
 fi
 
-# --- Section 9: Summary ---
+# --- Section 10: Summary ---
 
 echo ""
 echo "=== Setup Summary ==="
