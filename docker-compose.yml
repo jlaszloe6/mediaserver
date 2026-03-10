@@ -98,21 +98,6 @@ services:
     restart: unless-stopped
 
 
-  jackett:
-    image: lscr.io/linuxserver/jackett:latest
-    container_name: jackett
-    environment:
-      - PUID=1000
-      - PGID=1000
-      - TZ=Europe/Budapest
-    volumes:
-      - ./config/jackett:/config
-      - /mnt/mediaserver/torrents:/downloads
-    ports:
-      - "9117:9117"
-    restart: unless-stopped
-
-
   tautulli:
     image: lscr.io/linuxserver/tautulli:latest
     container_name: tautulli
