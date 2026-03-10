@@ -1,13 +1,14 @@
 #!/bin/bash
-# trakt-sync.sh - Force-refresh Trakt import lists in Sonarr and Radarr
+# trakt-sync.sh - Force-refresh Trakt import lists and cleanup unmonitored items
 #
-# Sonarr/Radarr cache Trakt data for 12 hours (minRefreshInterval).
-# ImportListSync only processes cached data, so newly watchlisted items
-# can take up to 12 hours to appear. The only way to force a fresh fetch
-# is to delete and recreate the import list.
+# 1. Cycles (delete + recreate) all Trakt import lists to bust the 12-hour cache,
+#    then triggers ImportListSync so newly watchlisted items appear quickly.
 #
-# This script cycles (delete + recreate) all Trakt import lists, then
-# triggers ImportListSync on both services.
+# 2. Deletes unmonitored items from Sonarr/Radarr (including files).
+#    Items become unmonitored when removed from Trakt watchlist
+#    (listSyncLevel=keepAndUnmonitor). This step cleans them up.
+#
+# Run hourly via cron. The cleanup catches items unmonitored in the previous run.
 
 set -uo pipefail
 
@@ -160,6 +161,63 @@ cycle_trakt_lists "Radarr" "$RADARR_URL" "$RADARR_KEY"
 
 trigger_sync "Sonarr" "$SONARR_URL" "$SONARR_KEY"
 trigger_sync "Radarr" "$RADARR_URL" "$RADARR_KEY"
+
+# --- Phase 2: Cleanup unmonitored items ---
+# Items removed from Trakt become unmonitored (keepAndUnmonitor).
+# Delete them from Sonarr/Radarr along with their files.
+# Note: items unmonitored in THIS run's sync will be caught on the NEXT run.
+
+cleanup_unmonitored() {
+    local service_name="$1"
+    local base_url="$2"
+    local api_key="$3"
+    local api_endpoint="$4"   # "series" or "movie"
+    local exclusion_param="$5" # "addImportListExclusion" (Sonarr) or "addImportExclusion" (Radarr)
+
+    log "Cleaning up unmonitored items in $service_name..."
+
+    local items
+    items=$(curl -sf -H "X-Api-Key: $api_key" "$base_url/api/v3/$api_endpoint") || {
+        log "ERROR: Failed to fetch $api_endpoint from $service_name"
+        ERRORS=$((ERRORS + 1))
+        return 1
+    }
+
+    local unmonitored
+    unmonitored=$(echo "$items" | jq -c '.[] | select(.monitored == false) | {id, title}')
+
+    if [ -z "$unmonitored" ]; then
+        log "  No unmonitored items to clean up"
+        return 0
+    fi
+
+    local count=0
+    while IFS= read -r item; do
+        [ -z "$item" ] && continue
+        local id title del_code
+        id=$(echo "$item" | jq -r '.id')
+        title=$(echo "$item" | jq -r '.title')
+
+        del_code=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE \
+            -H "X-Api-Key: $api_key" \
+            "$base_url/api/v3/$api_endpoint/$id?deleteFiles=true&$exclusion_param=false")
+
+        if [ "$del_code" = "200" ]; then
+            log "  Deleted '$title' (id=$id) with files"
+            count=$((count + 1))
+        else
+            log "  ERROR: Failed to delete '$title' (HTTP $del_code)"
+            ERRORS=$((ERRORS + 1))
+        fi
+    done <<< "$unmonitored"
+
+    log "  Cleaned up $count unmonitored item(s) from $service_name"
+}
+
+log "=== Cleanup unmonitored items ==="
+
+cleanup_unmonitored "Sonarr" "$SONARR_URL" "$SONARR_KEY" "series" "addImportListExclusion"
+cleanup_unmonitored "Radarr" "$RADARR_URL" "$RADARR_KEY" "movie" "addImportExclusion"
 
 if [ "$ERRORS" -gt 0 ]; then
     log "=== Done with $ERRORS error(s) ==="
