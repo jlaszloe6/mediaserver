@@ -5,22 +5,25 @@ A self-hosted media server stack using Docker Compose. Add movies and TV shows t
 ## Architecture
 
 ```
+                         ┌─────────────────────────────────────┐
+                         │           DOWNLOAD FLOW             │
+                         └─────────────────────────────────────┘
+
 Trakt Watchlist ──► Sonarr/Radarr ──► Prowlarr ──► Indexers
-  │    ▲                 │                            │
-  │    │                 ▼                            ▼
-  │  Seerr UI       Transmission ◄──────── Torrent Search
-  │ (requests)           │
-  │                      ▼
-  │                 Plex Libraries
-  │                      │
-  │                      ▼
-  │                 Tautulli (watch tracking)
-  │                      │
-  │                      ▼
-  │                 Prunarr (cleanup after 30 days)
-  │
-  ▼ Remove from watchlist or delete from Plex
-trakt-sync.sh / plex-cleanup.sh ──► auto-delete from Sonarr/Radarr + Plex
+       ▲                 │                            │
+       │                 ▼                            ▼
+   Seerr UI         Transmission ◄──────── Torrent Search
+  (requests)             │
+                         ▼
+                    Plex Libraries
+
+                         ┌─────────────────────────────────────┐
+                         │           CLEANUP FLOWS             │
+                         └─────────────────────────────────────┘
+
+Watched 30+ days ago ──► Tautulli ──► Prunarr ──► delete from Sonarr/Radarr
+Remove from Trakt   ──► trakt-sync.sh ──────────► delete from Sonarr/Radarr
+Delete from Plex    ──► plex-cleanup.sh ─────────► delete from Sonarr/Radarr
 ```
 
 ## Quick Start
