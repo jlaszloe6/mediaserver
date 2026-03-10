@@ -9,9 +9,9 @@ A self-hosted media server stack using Docker Compose. Add movies and TV shows t
                          │           DOWNLOAD FLOW             │
                          └─────────────────────────────────────┘
 
-Trakt Watchlist ──► Sonarr/Radarr ──► Prowlarr ──► Indexers
-       ▲                 │                            │
-       │                 ▼                            ▼
+Trakt Watchlist ◄─► Sonarr/Radarr ──► Prowlarr ──► Indexers
+       ▲                 ▲                            │
+       │                 │                            ▼
    Seerr UI         Transmission ◄──────── Torrent Search
   (requests)             │
                          ▼

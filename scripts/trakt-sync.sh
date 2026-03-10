@@ -1,12 +1,15 @@
 #!/bin/bash
-# trakt-sync.sh - Force-refresh Trakt import lists and cleanup unmonitored items
+# trakt-sync.sh - Force-refresh Trakt import lists, cleanup, and reverse-sync
 #
-# 1. Cycles (delete + recreate) all Trakt import lists to bust the 12-hour cache,
-#    then triggers ImportListSync so newly watchlisted items appear quickly.
+# Phase 1: Cycles (delete + recreate) all Trakt import lists to bust the 12-hour
+#           cache, then triggers ImportListSync so newly watchlisted items appear quickly.
 #
-# 2. Deletes unmonitored items from Sonarr/Radarr (including files).
-#    Items become unmonitored when removed from Trakt watchlist
-#    (listSyncLevel=keepAndUnmonitor). This step cleans them up.
+# Phase 2: Deletes unmonitored items from Sonarr/Radarr (including files).
+#           Items become unmonitored when removed from Trakt watchlist
+#           (listSyncLevel=keepAndUnmonitor). This step cleans them up.
+#
+# Phase 3: Reverse-sync — pushes all monitored items from Sonarr/Radarr to each
+#           user's Trakt watchlist. This ensures Seerr requests appear in Trakt.
 #
 # Run hourly via cron. The cleanup catches items unmonitored in the previous run.
 
@@ -26,6 +29,8 @@ if [ -f "$ENV_FILE" ]; then
     # Export only the variables we need
     SONARR_KEY=$(grep -m1 '^SONARR_API_KEY=' "$ENV_FILE" | cut -d= -f2-)
     RADARR_KEY=$(grep -m1 '^RADARR_API_KEY=' "$ENV_FILE" | cut -d= -f2-)
+    SONARR_TRAKT_CLIENT_ID=$(grep -m1 '^SONARR_TRAKT_CLIENT_ID=' "$ENV_FILE" | cut -d= -f2-)
+    RADARR_TRAKT_CLIENT_ID=$(grep -m1 '^RADARR_TRAKT_CLIENT_ID=' "$ENV_FILE" | cut -d= -f2-)
 else
     echo "ERROR: .env file not found at $ENV_FILE" >&2
     exit 1
@@ -229,6 +234,121 @@ log "=== Cleanup unmonitored items ==="
 
 cleanup_unmonitored "Sonarr" "$SONARR_URL" "$SONARR_KEY" "series" "addImportListExclusion"
 cleanup_unmonitored "Radarr" "$RADARR_URL" "$RADARR_KEY" "movie" "addImportExclusion"
+
+# --- Phase 3: Reverse-sync monitored items to Trakt watchlists ---
+# Pushes all monitored movies/shows from Sonarr/Radarr to each user's Trakt
+# watchlist. This ensures items added via Seerr (or manually) appear in Trakt.
+# Tokens are extracted from Sonarr's existing Trakt import lists.
+
+sync_to_trakt() {
+    log "=== Reverse-sync to Trakt watchlists ==="
+
+    if [ -z "${SONARR_TRAKT_CLIENT_ID:-}" ]; then
+        log "WARN: SONARR_TRAKT_CLIENT_ID not set in .env, skipping reverse-sync"
+        return 0
+    fi
+
+    # Extract per-user tokens from Sonarr's Trakt import lists
+    local lists
+    lists=$(curl -sf -H "X-Api-Key: $SONARR_KEY" "$SONARR_URL/api/v3/importlist") || {
+        log "ERROR: Failed to fetch import lists from Sonarr for token extraction"
+        ERRORS=$((ERRORS + 1))
+        return 1
+    }
+
+    # Build array of {user, token} from Trakt lists
+    local user_tokens
+    user_tokens=$(echo "$lists" | jq -c '
+        [.[] | select(.listType == "trakt") |
+         { user: (.fields[] | select(.name == "authUser") | .value),
+           token: (.fields[] | select(.name == "accessToken") | .value) }]
+        | unique_by(.user)
+        | .[]')
+
+    if [ -z "$user_tokens" ]; then
+        log "  No Trakt users found in import lists"
+        return 0
+    fi
+
+    # Fetch all monitored movies from Radarr (tmdbId + imdbId)
+    local movies_payload=""
+    local movies
+    movies=$(curl -sf -H "X-Api-Key: $RADARR_KEY" "$RADARR_URL/api/v3/movie") || {
+        log "ERROR: Failed to fetch movies from Radarr"
+        ERRORS=$((ERRORS + 1))
+        movies="[]"
+    }
+
+    movies_payload=$(echo "$movies" | jq -c '[.[] | select(.monitored == true) |
+        { ids: (
+            (if .imdbId and .imdbId != "" then { imdb: .imdbId } else {} end) +
+            (if .tmdbId and .tmdbId > 0 then { tmdb: .tmdbId } else {} end)
+        ) } | select(.ids != {})]')
+
+    local movie_count
+    movie_count=$(echo "$movies_payload" | jq 'length')
+    log "  Found $movie_count monitored movies in Radarr"
+
+    # Fetch all monitored series from Sonarr (tvdbId + imdbId)
+    local shows_payload=""
+    local series
+    series=$(curl -sf -H "X-Api-Key: $SONARR_KEY" "$SONARR_URL/api/v3/series") || {
+        log "ERROR: Failed to fetch series from Sonarr"
+        ERRORS=$((ERRORS + 1))
+        series="[]"
+    }
+
+    shows_payload=$(echo "$series" | jq -c '[.[] | select(.monitored == true) |
+        { ids: (
+            (if .imdbId and .imdbId != "" then { imdb: .imdbId } else {} end) +
+            (if .tvdbId and .tvdbId > 0 then { tvdb: .tvdbId } else {} end)
+        ) } | select(.ids != {})]')
+
+    local show_count
+    show_count=$(echo "$shows_payload" | jq 'length')
+    log "  Found $show_count monitored series in Sonarr"
+
+    # Sync to each user's Trakt watchlist
+    while IFS= read -r entry; do
+        [ -z "$entry" ] && continue
+        local user token
+        user=$(echo "$entry" | jq -r '.user')
+        token=$(echo "$entry" | jq -r '.token')
+
+        log "  Syncing to Trakt watchlist for '$user'..."
+
+        if $DRY_RUN; then
+            log "  [DRY RUN] Would sync $movie_count movies + $show_count shows to '$user'"
+            continue
+        fi
+
+        # Build combined payload
+        local payload
+        payload=$(jq -nc --argjson movies "$movies_payload" --argjson shows "$shows_payload" \
+            '{ movies: $movies, shows: $shows }')
+
+        local sync_code
+        sync_code=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+            "https://api.trakt.tv/sync/watchlist" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $token" \
+            -H "trakt-api-version: 2" \
+            -H "trakt-api-key: $SONARR_TRAKT_CLIENT_ID" \
+            -d "$payload")
+
+        if [ "$sync_code" = "201" ]; then
+            log "  Synced $movie_count movies + $show_count shows to '$user'"
+        elif [ "$sync_code" = "401" ] || [ "$sync_code" = "403" ]; then
+            log "  WARN: Auth failed for '$user' (HTTP $sync_code) — token may need refresh"
+            ERRORS=$((ERRORS + 1))
+        else
+            log "  ERROR: Trakt sync failed for '$user' (HTTP $sync_code)"
+            ERRORS=$((ERRORS + 1))
+        fi
+    done <<< "$user_tokens"
+}
+
+sync_to_trakt
 
 if [ "$ERRORS" -gt 0 ]; then
     log "=== Done with $ERRORS error(s) ==="
