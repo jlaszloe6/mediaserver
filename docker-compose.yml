@@ -137,6 +137,37 @@ services:
     restart: unless-stopped
 
 
+  caddy:
+    build:
+      context: ./caddy
+      network: host
+    container_name: caddy
+    network_mode: host
+    environment:
+      - DUCKDNS_TOKEN=${DUCKDNS_TOKEN}
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./config/caddy/data:/data
+      - ./config/caddy/config:/config
+    restart: unless-stopped
+
+
+  duckdns:
+    image: lscr.io/linuxserver/duckdns:latest
+    container_name: duckdns
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Budapest
+      - SUBDOMAINS=${DUCKDNS_SUBDOMAINS}
+      - TOKEN=${DUCKDNS_TOKEN}
+      - UPDATE_IP=ipv4
+      - LOG_FILE=true
+    volumes:
+      - ./config/duckdns:/config
+    restart: unless-stopped
+
+
   prunarr:
     image: ghcr.io/haijeploeg/prunarr:latest
     container_name: prunarr

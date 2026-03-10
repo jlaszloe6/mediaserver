@@ -1,0 +1,17 @@
+freya-mediaserver.duckdns.org {
+	tls {
+		dns duckdns {env.DUCKDNS_TOKEN}
+	}
+	reverse_proxy localhost:32400 {
+		header_up X-Real-IP {remote_host}
+	}
+}
+
+freya-seerr.duckdns.org {
+	tls {
+		dns duckdns {env.DUCKDNS_TOKEN}
+	}
+	reverse_proxy localhost:5055 {
+		header_up X-Real-IP {remote_host}
+	}
+}
