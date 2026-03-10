@@ -6,24 +6,27 @@ A self-hosted media server stack using Docker Compose. Add movies and TV shows t
 
 ```
 Trakt Watchlist ──► Sonarr/Radarr ──► Prowlarr ──► Indexers
-       ▲                 │                            │
-       │                 ▼                            ▼
-   Seerr UI         Transmission ◄──────── Torrent Search
-  (requests)             │
-                         ▼
-                    Plex Libraries
-                         │
-                         ▼
-                    Tautulli (watch tracking)
-                         │
-                         ▼
-                    Prunarr (cleanup after 30 days)
+  │    ▲                 │                            │
+  │    │                 ▼                            ▼
+  │  Seerr UI       Transmission ◄──────── Torrent Search
+  │ (requests)           │
+  │                      ▼
+  │                 Plex Libraries
+  │                      │
+  │                      ▼
+  │                 Tautulli (watch tracking)
+  │                      │
+  │                      ▼
+  │                 Prunarr (cleanup after 30 days)
+  │
+  ▼ Remove from watchlist or delete from Plex
+trakt-sync.sh / plex-cleanup.sh ──► auto-delete from Sonarr/Radarr + Plex
 ```
 
 ## Quick Start
 
 ```bash
-git clone https://github.com/jlaszloe6/mediaserver.git
+git clone <this-repo>
 cd mediaserver
 cp .env.example .env      # add PLEX_TOKEN and DuckDNS credentials
 docker compose up -d
@@ -33,9 +36,9 @@ docker compose up -d
 
 ## Documentation
 
-See the [Wiki](https://github.com/jlaszloe6/mediaserver/wiki) for full documentation:
+See the [Wiki](../../wiki) for full documentation:
 
-- [Setup](https://github.com/jlaszloe6/mediaserver/wiki/Setup) - Initial setup guide
-- [Trakt Integration](https://github.com/jlaszloe6/mediaserver/wiki/Trakt-Integration) - Watchlist automation
-- [Notifications](https://github.com/jlaszloe6/mediaserver/wiki/Notifications) - Email notification setup
-- [Maintenance](https://github.com/jlaszloe6/mediaserver/wiki/Maintenance) - Cron jobs and cleanup
+- [Setup](../../wiki/Setup) - Initial setup guide
+- [Trakt Integration](../../wiki/Trakt-Integration) - Watchlist automation
+- [Notifications](../../wiki/Notifications) - Email notification setup
+- [Maintenance](../../wiki/Maintenance) - Cron jobs and cleanup
