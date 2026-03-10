@@ -1,8 +1,10 @@
 services:
 
   plex:
-    image: lscr.io/linuxserver/plex:latest
+    # plex v1.43.0
+    image: lscr.io/linuxserver/plex@sha256:79dfc89947410ec120a3e34cf68f746f6f154de20772e6f27b9998ca9bd65a5e
     container_name: plex
+    # host network required: Plex needs direct LAN/WAN access for discovery and streaming
     network_mode: host
     environment:
       - PUID=1000
@@ -14,10 +16,16 @@ services:
       - ${MEDIA_ROOT}/media/tv:/tv
       - ${MEDIA_ROOT}/media/movies:/movies
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:32400/identity"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
 
   transmission:
-    image: lscr.io/linuxserver/transmission:latest
+    # transmission v4.0.6
+    image: lscr.io/linuxserver/transmission@sha256:d2183a00bbd5dbb083b14dcd65419379bfd91e0965b52849642354ec3d246452
     container_name: transmission
     environment:
       - PUID=1000
@@ -29,14 +37,20 @@ services:
       - ${MEDIA_ROOT}/torrents:/downloads
       - ${MEDIA_ROOT}/watch:/watch
     ports:
-      - "9091:9091"
+      - "127.0.0.1:9091:9091"
       - "51413:51413"
       - "51413:51413/udp"
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9091/transmission/rpc || [ $? -eq 22 ]"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
 
   sonarr:
-    image: lscr.io/linuxserver/sonarr:latest
+    # sonarr v4.0.14
+    image: lscr.io/linuxserver/sonarr@sha256:21c1c3d52248589bb064f5adafec18cad45812d7a01d317472955eef051e619b
     container_name: sonarr
     depends_on:
       - transmission
@@ -49,12 +63,18 @@ services:
       - ./config/sonarr:/config
       - ${MEDIA_ROOT}:/data
     ports:
-      - "8989:8989"
+      - "127.0.0.1:8989:8989"
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8989/ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
 
   radarr:
-    image: lscr.io/linuxserver/radarr:latest
+    # radarr v5.20.2
+    image: lscr.io/linuxserver/radarr@sha256:ca43905eaf2dd11425efdcfe184892e43806b1ae0a830440c825cecbc2629cfb
     container_name: radarr
     depends_on:
       - transmission
@@ -67,23 +87,30 @@ services:
       - ./config/radarr:/config
       - ${MEDIA_ROOT}:/data
     ports:
-      - "7878:7878"
+      - "127.0.0.1:7878:7878"
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7878/ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
 
   flaresolverr:
-    image: ghcr.io/flaresolverr/flaresolverr:latest
+    # flaresolverr v3.3.21
+    image: ghcr.io/flaresolverr/flaresolverr@sha256:7962759d99d7e125e108e0f5e7f3cdbcd36161776d058d1d9b7153b92ef1af9e
     container_name: flaresolverr
     environment:
       - TZ=Europe/Budapest
       - LOG_LEVEL=info
     ports:
-      - "8191:8191"
+      - "127.0.0.1:8191:8191"
     restart: unless-stopped
 
 
   prowlarr:
-    image: lscr.io/linuxserver/prowlarr:latest
+    # prowlarr v1.32.2
+    image: lscr.io/linuxserver/prowlarr@sha256:a8fe7b9c502f979146b6d0f22438b825c38e068241bb8a708c473062dffdbb03
     container_name: prowlarr
     depends_on:
       - flaresolverr
@@ -94,13 +121,20 @@ services:
     volumes:
       - ./config/prowlarr:/config
     ports:
-      - "9696:9696"
+      - "127.0.0.1:9696:9696"
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9696/ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
 
   tautulli:
-    image: lscr.io/linuxserver/tautulli:latest
+    # tautulli v2.15.1
+    image: lscr.io/linuxserver/tautulli@sha256:c75d3410b958399f86b6d1786f7640e91b867b24d154b3f09f9bb3207f2e8b35
     container_name: tautulli
+    # host network required: needs to reach Plex on localhost (bridge-to-host blocked by firewall)
     network_mode: host
     environment:
       - PUID=1000
@@ -109,11 +143,18 @@ services:
     volumes:
       - ./config/tautulli:/config
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8181/status"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
 
   seerr:
-    image: ghcr.io/seerr-team/seerr:latest
+    # seerr latest
+    image: ghcr.io/seerr-team/seerr@sha256:b35ba0461c4a1033d117ac1e5968fd4cbe777899e4cbfbdeaf3d10a42a0eb7e9
     container_name: seerr
+    # host network required: needs to reach Plex, Sonarr, and Radarr on localhost (bridge-to-host blocked by firewall)
     network_mode: host
     environment:
       - TZ=Europe/Budapest
@@ -127,6 +168,7 @@ services:
       context: ./caddy
       network: host
     container_name: caddy
+    # host network required: needs to reach Plex and Seerr on localhost, and for build (IPv6 unreachable in bridge)
     network_mode: host
     environment:
       - DUCKDNS_TOKEN=${DUCKDNS_TOKEN}
@@ -138,7 +180,8 @@ services:
 
 
   duckdns:
-    image: lscr.io/linuxserver/duckdns:latest
+    # duckdns latest
+    image: lscr.io/linuxserver/duckdns@sha256:afe50a2ef043a63e33ffe6e6e119a7a82db999eab966aef2a33611fd89f81117
     container_name: duckdns
     environment:
       - PUID=1000
@@ -154,8 +197,10 @@ services:
 
 
   prunarr:
-    image: ghcr.io/haijeploeg/prunarr:latest
+    # prunarr latest
+    image: ghcr.io/haijeploeg/prunarr@sha256:d7a164cd2b35aedd7c916db1dd8898370af13a5099f6f8a1659406bcef42829d
     container_name: prunarr
+    # host network required: needs to reach Sonarr, Radarr, and Tautulli on localhost (bridge-to-host blocked by firewall)
     network_mode: host
     entrypoint: ["sh", "-c", "while true; do sleep 86400; done"]
     environment:

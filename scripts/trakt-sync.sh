@@ -10,7 +10,14 @@
 #
 # Run hourly via cron. The cleanup catches items unmonitored in the previous run.
 
-set -uo pipefail
+DRY_RUN=false
+for arg in "$@"; do
+    case "$arg" in
+        --dry-run) DRY_RUN=true ;;
+    esac
+done
+
+set -euo pipefail
 
 # Load .env from the same directory as docker-compose.yml
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -63,6 +70,8 @@ cycle_trakt_lists() {
         config=$(echo "$lists" | jq ".[] | select(.id == $id)")
         local name
         name=$(echo "$config" | jq -r '.name')
+
+        if $DRY_RUN; then log "  [DRY RUN] Would cycle '$name' (id=$id)"; continue; fi
 
         log "  Cycling '$name' (id=$id)..."
 
@@ -197,6 +206,8 @@ cleanup_unmonitored() {
         local id title del_code
         id=$(echo "$item" | jq -r '.id')
         title=$(echo "$item" | jq -r '.title')
+
+        if $DRY_RUN; then log "  [DRY RUN] Would delete '$title' (id=$id)"; count=$((count + 1)); continue; fi
 
         del_code=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE \
             -H "X-Api-Key: $api_key" \

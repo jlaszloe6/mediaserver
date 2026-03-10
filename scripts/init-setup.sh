@@ -11,7 +11,7 @@
 #
 # Usage: ./scripts/init-setup.sh [--trakt] [--dry-run]
 
-set -uo pipefail
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
@@ -46,9 +46,10 @@ env_get() {
 env_set() {
     local key="$1" value="$2"
     if grep -q "^$key=" "$ENV_FILE" 2>/dev/null; then
-        sed -i "s|^$key=.*|$key=$value|" "$ENV_FILE"
+        # Use awk to avoid sed delimiter issues with special characters
+        awk -v k="$key" -v v="$value" 'BEGIN{FS=OFS="="} $1==k{$2=v}1' "$ENV_FILE" > "$ENV_FILE.tmp" && mv "$ENV_FILE.tmp" "$ENV_FILE"
     else
-        echo "$key=$value" >> "$ENV_FILE"
+        printf '%s=%s\n' "$key" "$value" >> "$ENV_FILE"
     fi
 }
 
@@ -646,27 +647,31 @@ else
     sonarr_email_exists=$(echo "$existing_notif" | jq -r '.[] | select(.name == "Email") | .id')
 
     if [ -z "$sonarr_email_exists" ]; then
-        sonarr_email_payload=$(cat <<SEEOF
-{
-  "name": "Email",
-  "implementation": "Email",
-  "configContract": "EmailSettings",
-  "onGrab": true,
-  "onImportComplete": true,
-  "onUpgrade": true,
-  "onHealthIssue": true,
-  "fields": [
-    {"name": "server", "value": "$SMTP_SERVER"},
-    {"name": "port", "value": $SMTP_PORT},
-    {"name": "useEncryption", "value": 0},
-    {"name": "username", "value": "$SMTP_USER"},
-    {"name": "password", "value": "$SMTP_PASSWORD"},
-    {"name": "from", "value": "$SMTP_FROM"},
-    {"name": "to", "value": $SMTP_TO_JSON}
-  ]
-}
-SEEOF
-)
+        sonarr_email_payload=$(jq -n \
+            --arg server "$SMTP_SERVER" \
+            --argjson port "$SMTP_PORT" \
+            --arg user "$SMTP_USER" \
+            --arg pass "$SMTP_PASSWORD" \
+            --arg from "$SMTP_FROM" \
+            --argjson to "$SMTP_TO_JSON" \
+            '{
+                name: "Email",
+                implementation: "Email",
+                configContract: "EmailSettings",
+                onGrab: true,
+                onImportComplete: true,
+                onUpgrade: true,
+                onHealthIssue: true,
+                fields: [
+                    {name: "server", value: $server},
+                    {name: "port", value: $port},
+                    {name: "useEncryption", value: 0},
+                    {name: "username", value: $user},
+                    {name: "password", value: $pass},
+                    {name: "from", value: $from},
+                    {name: "to", value: $to}
+                ]
+            }')
         if $DRY_RUN; then
             log_info "[DRY RUN] Would add email notification to Sonarr"
         else
@@ -686,27 +691,31 @@ SEEOF
     radarr_email_exists=$(echo "$existing_notif" | jq -r '.[] | select(.name == "Email") | .id')
 
     if [ -z "$radarr_email_exists" ]; then
-        radarr_email_payload=$(cat <<REEOF
-{
-  "name": "Email",
-  "implementation": "Email",
-  "configContract": "EmailSettings",
-  "onGrab": true,
-  "onImportComplete": true,
-  "onUpgrade": true,
-  "onHealthIssue": true,
-  "fields": [
-    {"name": "server", "value": "$SMTP_SERVER"},
-    {"name": "port", "value": $SMTP_PORT},
-    {"name": "useEncryption", "value": 0},
-    {"name": "username", "value": "$SMTP_USER"},
-    {"name": "password", "value": "$SMTP_PASSWORD"},
-    {"name": "from", "value": "$SMTP_FROM"},
-    {"name": "to", "value": $SMTP_TO_JSON}
-  ]
-}
-REEOF
-)
+        radarr_email_payload=$(jq -n \
+            --arg server "$SMTP_SERVER" \
+            --argjson port "$SMTP_PORT" \
+            --arg user "$SMTP_USER" \
+            --arg pass "$SMTP_PASSWORD" \
+            --arg from "$SMTP_FROM" \
+            --argjson to "$SMTP_TO_JSON" \
+            '{
+                name: "Email",
+                implementation: "Email",
+                configContract: "EmailSettings",
+                onGrab: true,
+                onImportComplete: true,
+                onUpgrade: true,
+                onHealthIssue: true,
+                fields: [
+                    {name: "server", value: $server},
+                    {name: "port", value: $port},
+                    {name: "useEncryption", value: 0},
+                    {name: "username", value: $user},
+                    {name: "password", value: $pass},
+                    {name: "from", value: $from},
+                    {name: "to", value: $to}
+                ]
+            }')
         if $DRY_RUN; then
             log_info "[DRY RUN] Would add email notification to Radarr"
         else
@@ -736,27 +745,31 @@ REEOF
             if [ "$seerr_email_enabled" = "true" ]; then
                 log_ok "Email notification already configured in Seerr"
             else
-                seerr_email_payload=$(cat <<SREOF
-{
-  "enabled": true,
-  "embedPoster": true,
-  "options": {
-    "userEmailRequired": true,
-    "emailFrom": "$SMTP_FROM",
-    "smtpHost": "$SMTP_SERVER",
-    "smtpPort": $SMTP_PORT,
-    "secure": false,
-    "ignoreTls": false,
-    "requireTls": false,
-    "allowSelfSigned": false,
-    "senderName": "$SEERR_SENDER_NAME",
-    "authUser": "$SMTP_USER",
-    "authPass": "$SMTP_PASSWORD"
-  },
-  "types": 4062
-}
-SREOF
-)
+                seerr_email_payload=$(jq -n \
+                    --arg from "$SMTP_FROM" \
+                    --arg host "$SMTP_SERVER" \
+                    --argjson port "$SMTP_PORT" \
+                    --arg sender "$SEERR_SENDER_NAME" \
+                    --arg user "$SMTP_USER" \
+                    --arg pass "$SMTP_PASSWORD" \
+                    '{
+                        enabled: true,
+                        embedPoster: true,
+                        options: {
+                            userEmailRequired: true,
+                            emailFrom: $from,
+                            smtpHost: $host,
+                            smtpPort: $port,
+                            secure: false,
+                            ignoreTls: false,
+                            requireTls: false,
+                            allowSelfSigned: false,
+                            senderName: $sender,
+                            authUser: $user,
+                            authPass: $pass
+                        },
+                        types: 4062
+                    }')
                 if $DRY_RUN; then
                     log_info "[DRY RUN] Would configure email notification in Seerr"
                 else
@@ -968,7 +981,7 @@ TLEOF
     }
 
     if [ -z "$SONARR_TRAKT_CLIENT_ID" ] || [ -z "$RADARR_TRAKT_CLIENT_ID" ]; then
-        log_error "SONARR_TRAKT_CLIENT_ID and RADARR_TRAKT_CLIENT_ID must be set in .env"
+        log_err "SONARR_TRAKT_CLIENT_ID and RADARR_TRAKT_CLIENT_ID must be set in .env"
         exit 1
     fi
 
@@ -1007,6 +1020,7 @@ echo "     crontab -e"
 echo "     0 3 * * * docker exec prunarr prunarr movies remove --watched --days-watched 30 --force >> /tmp/prunarr-movies.log 2>&1"
 echo "     15 3 * * * docker exec prunarr prunarr series remove --watched --days-watched 30 --force >> /tmp/prunarr-series.log 2>&1"
 echo "     0 * * * * $PROJECT_DIR/scripts/trakt-sync.sh >> /tmp/trakt-sync.log 2>&1"
+echo "     */30 * * * * $PROJECT_DIR/scripts/plex-cleanup.sh >> /tmp/plex-cleanup.log 2>&1"
 echo ""
 
 exit $ERRORS

@@ -13,7 +13,14 @@
 #
 # Run via cron every 30 minutes. On first run, only saves state (no deletions).
 
-set -uo pipefail
+DRY_RUN=false
+for arg in "$@"; do
+    case "$arg" in
+        --dry-run) DRY_RUN=true ;;
+    esac
+done
+
+set -euo pipefail
 
 # Load .env
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -120,6 +127,12 @@ process_movies() {
             id=$(echo "$item" | jq -r '.id')
             title=$(echo "$item" | jq -r '.title')
 
+            if $DRY_RUN; then
+                log "  [DRY RUN] Would remove movie '$title' (id=$id)"
+                count=$((count + 1))
+                continue
+            fi
+
             del_code=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE \
                 -H "X-Api-Key: $api_key" \
                 "$base_url/api/v3/movie/$id?deleteFiles=true&addImportExclusion=true")
@@ -176,6 +189,12 @@ process_series() {
             local id title del_code
             id=$(echo "$item" | jq -r '.id')
             title=$(echo "$item" | jq -r '.title')
+
+            if $DRY_RUN; then
+                log "  [DRY RUN] Would remove series '$title' (id=$id)"
+                count=$((count + 1))
+                continue
+            fi
 
             del_code=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE \
                 -H "X-Api-Key: $api_key" \
