@@ -36,7 +36,7 @@ mkdir -p "$STATE_DIR"
 ERRORS=0
 
 log() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >&2
 }
 
 # Trigger a disk rescan and wait for completion (up to 2 minutes)
