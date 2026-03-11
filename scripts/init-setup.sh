@@ -553,17 +553,17 @@ echo ""
 log_info "=== Configuring Transmission ==="
 
 if $DRY_RUN; then
-    log_info "[DRY RUN] Would set seed ratio=2.0, idle limit=30 min"
+    log_info "[DRY RUN] Would set seed ratio=2.0, idle seeding limit=disabled (per-indexer seed times used instead)"
 else
     SESSION_ID=$(curl -s -D- http://localhost:9091/transmission/rpc 2>/dev/null | grep -i 'X-Transmission-Session-Id' | tr -d '\r' | awk '{print $2}')
     if [ -n "$SESSION_ID" ]; then
         result=$(curl -s -w '\n%{http_code}' -X POST http://localhost:9091/transmission/rpc \
             -H "X-Transmission-Session-Id: $SESSION_ID" \
             -H "Content-Type: application/json" \
-            -d '{"method":"session-set","arguments":{"seedRatioLimited":true,"seedRatioLimit":2.0,"idle-seeding-limit-enabled":true,"idle-seeding-limit":30}}')
+            -d '{"method":"session-set","arguments":{"seedRatioLimited":true,"seedRatioLimit":2.0,"idle-seeding-limit-enabled":false}}')
         code=$(echo "$result" | tail -1)
         if [ "$code" = "200" ]; then
-            log_ok "Set Transmission seed limits (ratio=2.0, idle=30 min)"
+            log_ok "Set Transmission seed limits (ratio=2.0, idle seeding limit=disabled)"
         else
             log_err "Failed to set Transmission seed limits (HTTP $code)"
         fi
