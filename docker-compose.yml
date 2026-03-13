@@ -196,6 +196,18 @@ services:
     restart: unless-stopped
 
 
+  uptime-kuma:
+    # uptime-kuma v1
+    image: louislam/uptime-kuma@sha256:3d632903e6af34139a37f18055c4f1bfd9b7205ae1138f1e5e8940ddc1d176f9
+    container_name: uptime-kuma
+    # host network required: needs to reach all services on localhost (Plex, Tautulli, Seerr on host network)
+    network_mode: host
+    environment:
+      - UPTIME_KUMA_PORT=3001
+    volumes:
+      - ./config/uptime-kuma:/app/data
+    restart: unless-stopped
+
   prunarr:
     # prunarr latest
     image: ghcr.io/haijeploeg/prunarr@sha256:d7a164cd2b35aedd7c916db1dd8898370af13a5099f6f8a1659406bcef42829d
