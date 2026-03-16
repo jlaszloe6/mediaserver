@@ -41,7 +41,13 @@ docker compose up -d
 
 See the [Wiki](../../wiki) for full documentation:
 
+- [User Guide](../../wiki/User-Guide) - How to request and watch media
+- [User Journey](../../wiki/User-Journey) - What happens behind the scenes for every action
+- [Requirements](../../wiki/Requirements) - Hardware, software, and network requirements
 - [Setup](../../wiki/Setup) - Initial setup guide
 - [Trakt Integration](../../wiki/Trakt-Integration) - Watchlist automation
+- [Language Preferences](../../wiki/Language-Preferences) - Prioritize dual-audio releases in your preferred language
 - [Notifications](../../wiki/Notifications) - Email notification setup
+- [Remote Access](../../wiki/Remote-Access) - DuckDNS + Caddy HTTPS reverse proxy
+- [Monitoring](../../wiki/Monitoring) - Uptime Kuma service monitoring and alerts
 - [Maintenance](../../wiki/Maintenance) - Cron jobs and cleanup
