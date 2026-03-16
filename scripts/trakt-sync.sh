@@ -3,6 +3,7 @@
 #
 # Phase 1: Cycles (delete + recreate) all Trakt import lists to bust the 12-hour
 #           cache, then triggers ImportListSync so newly watchlisted items appear quickly.
+#           List configs are backed up to disk before deletion so tokens are never lost.
 #
 # Phase 2: Deletes unmonitored items from Sonarr/Radarr (including files).
 #           Items become unmonitored when removed from Trakt watchlist
@@ -45,6 +46,9 @@ log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
 }
 
+BACKUP_DIR="/var/tmp/mediaserver-trakt-backup"
+mkdir -p "$BACKUP_DIR"
+
 cycle_trakt_lists() {
     local service_name="$1"
     local base_url="$2"
@@ -65,12 +69,40 @@ cycle_trakt_lists() {
     trakt_ids=$(echo "$lists" | jq -r '.[] | select(.listType == "trakt") | .id')
 
     if [ -z "$trakt_ids" ]; then
-        log "No Trakt import lists found in $service_name"
+        # Try to restore from backup
+        local backup_file="$BACKUP_DIR/${service_name,,}-lists.json"
+        if [ -f "$backup_file" ]; then
+            log "No Trakt import lists found — restoring from backup..."
+            local backed_up
+            backed_up=$(jq -c '.[]' "$backup_file")
+            while IFS= read -r item; do
+                [ -z "$item" ] && continue
+                local bname
+                bname=$(echo "$item" | jq -r '.name')
+                local restore_code
+                restore_code=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+                    -H "X-Api-Key: $api_key" \
+                    -H "Content-Type: application/json" \
+                    -d "$item" \
+                    "$base_url/api/v3/importlist?forceSave=true")
+                if [ "$restore_code" = "201" ]; then
+                    log "  Restored '$bname' from backup"
+                else
+                    log "  ERROR: Failed to restore '$bname' (HTTP $restore_code)"
+                    ERRORS=$((ERRORS + 1))
+                fi
+            done <<< "$backed_up"
+        else
+            log "No Trakt import lists found in $service_name (no backup available)"
+        fi
         return 0
     fi
 
+    # Save backup of all Trakt list configs (with tokens) before any deletion
+    local backup_file="$BACKUP_DIR/${service_name,,}-lists.json"
+    echo "$lists" | jq '[.[] | select(.listType == "trakt") | del(.id)]' > "$backup_file"
+
     for id in $trakt_ids; do
-        # Get the full config for this list
         local config
         config=$(echo "$lists" | jq ".[] | select(.id == $id)")
         local name
@@ -80,7 +112,6 @@ cycle_trakt_lists() {
 
         log "  Cycling '$name' (id=$id)..."
 
-        # Strip the id field — API assigns a new one on create
         local create_payload
         create_payload=$(echo "$config" | jq 'del(.id)')
 
@@ -96,29 +127,16 @@ cycle_trakt_lists() {
             continue
         fi
 
-        # Recreate it (forceSave bypasses validation that fails when watchlist is empty)
-        local create_code
-        local result
-        result=$(curl -s -w '\n%{http_code}' -X POST \
-            -H "X-Api-Key: $api_key" \
-            -H "Content-Type: application/json" \
-            -d "$create_payload" \
-            "$base_url/api/v3/importlist?forceSave=true")
-
-        create_code=$(echo "$result" | tail -1)
-        result=$(echo "$result" | sed '$d')
-
-        if [ "$create_code" = "201" ]; then
-            local new_id
-            new_id=$(echo "$result" | jq -r '.id')
-            log "  Recreated '$name' (new id=$new_id)"
-        else
-            log "  WARN: POST returned HTTP $create_code for '$name', retrying without forceSave..."
+        # Recreate with forceSave, retry up to 3 times
+        local create_code=""
+        local result=""
+        local attempt
+        for attempt in 1 2 3; do
             result=$(curl -s -w '\n%{http_code}' -X POST \
                 -H "X-Api-Key: $api_key" \
                 -H "Content-Type: application/json" \
                 -d "$create_payload" \
-                "$base_url/api/v3/importlist")
+                "$base_url/api/v3/importlist?forceSave=true")
 
             create_code=$(echo "$result" | tail -1)
             result=$(echo "$result" | sed '$d')
@@ -127,25 +145,14 @@ cycle_trakt_lists() {
                 local new_id
                 new_id=$(echo "$result" | jq -r '.id')
                 log "  Recreated '$name' (new id=$new_id)"
-            else
-                log "  ERROR: Failed to recreate '$name' (HTTP $create_code). Attempting restore..."
-                # Re-add with original id to try to restore
-                local restore_result
-                restore_result=$(curl -s -w '\n%{http_code}' -X POST \
-                    -H "X-Api-Key: $api_key" \
-                    -H "Content-Type: application/json" \
-                    -d "$(echo "$config" | jq 'del(.id)')" \
-                    "$base_url/api/v3/importlist?forceSave=true")
-
-                local restore_code
-                restore_code=$(echo "$restore_result" | tail -1)
-                if [ "$restore_code" = "201" ]; then
-                    log "  Restored '$name' (cache NOT refreshed — token may be invalid)"
-                else
-                    log "  ERROR: Could not restore '$name'! Manual recreation needed."
-                fi
-                ERRORS=$((ERRORS + 1))
+                break
             fi
+            [ "$attempt" -lt 3 ] && sleep 2
+        done
+
+        if [ "$create_code" != "201" ]; then
+            log "  ERROR: Failed to recreate '$name' after 3 attempts (HTTP $create_code). Will restore from backup on next run."
+            ERRORS=$((ERRORS + 1))
         fi
     done
 }
