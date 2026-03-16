@@ -27,3 +27,18 @@ freya-seerr.duckdns.org {
 		header_up X-Real-IP {remote_host}
 	}
 }
+
+freya-status.duckdns.org {
+	tls {
+		dns duckdns {env.DUCKDNS_TOKEN}
+	}
+	header {
+		Strict-Transport-Security "max-age=31536000;"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer-when-downgrade"
+		-Server
+	}
+	reverse_proxy localhost:8080 {
+		header_up X-Real-IP {remote_host}
+	}
+}

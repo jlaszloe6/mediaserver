@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Media Server Status</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #e0e0e0;
+            min-height: 100vh;
+        }
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 2rem 1rem;
+        }
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+        }
+        header h1 { font-size: 1.5rem; color: #fff; }
+        .logout {
+            color: #8892b0;
+            text-decoration: none;
+            font-size: 0.9rem;
+            padding: 0.4rem 0.8rem;
+            border: 1px solid #2a2a4a;
+            border-radius: 6px;
+            transition: color 0.2s, border-color 0.2s;
+        }
+        .logout:hover { color: #e94560; border-color: #e94560; }
+
+        .section {
+            background: #16213e;
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-bottom: 1.25rem;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+        }
+        .section h2 {
+            font-size: 1.1rem;
+            color: #fff;
+            margin-bottom: 1rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 1px solid #1a3a5c;
+        }
+
+        /* Health badges */
+        .health-row { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+        .badge {
+            padding: 0.35rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+        .badge.up { background: rgba(46,204,113,0.15); color: #2ecc71; }
+        .badge.down { background: rgba(233,69,96,0.15); color: #e94560; }
+
+        /* Stat cards */
+        .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
+        .stat-card {
+            background: #0f3460;
+            border-radius: 10px;
+            padding: 1.25rem;
+            text-align: center;
+        }
+        .stat-card .number { font-size: 2rem; font-weight: 700; color: #fff; }
+        .stat-card .label { color: #8892b0; font-size: 0.85rem; margin-top: 0.25rem; }
+        .stat-card .delta {
+            font-size: 0.8rem;
+            margin-top: 0.35rem;
+        }
+        .delta.positive { color: #2ecc71; }
+        .delta.negative { color: #e94560; }
+        .delta.neutral { color: #8892b0; }
+
+        /* Downloads table */
+        table { width: 100%; border-collapse: collapse; }
+        th { text-align: left; color: #8892b0; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; padding: 0.5rem 0.75rem; }
+        td { padding: 0.6rem 0.75rem; border-top: 1px solid #1a3a5c; font-size: 0.85rem; }
+        .progress-bar {
+            background: #0f3460;
+            border-radius: 4px;
+            height: 8px;
+            overflow: hidden;
+            min-width: 80px;
+        }
+        .progress-fill {
+            height: 100%;
+            background: #e94560;
+            border-radius: 4px;
+            transition: width 0.3s;
+        }
+        .progress-fill.done { background: #2ecc71; }
+
+        /* Activity timeline */
+        .timeline { list-style: none; }
+        .timeline li {
+            padding: 0.5rem 0;
+            border-bottom: 1px solid #1a3a5c;
+            display: flex;
+            gap: 0.75rem;
+            align-items: baseline;
+            font-size: 0.85rem;
+        }
+        .timeline li:last-child { border-bottom: none; }
+        .time { color: #8892b0; font-size: 0.75rem; white-space: nowrap; min-width: 5rem; }
+        .event-tag {
+            font-size: 0.7rem;
+            padding: 0.15rem 0.4rem;
+            border-radius: 4px;
+            text-transform: lowercase;
+            font-weight: 600;
+        }
+        .event-grabbed { background: rgba(52,152,219,0.2); color: #3498db; }
+        .event-downloaded { background: rgba(46,204,113,0.2); color: #2ecc71; }
+        .event-imported { background: rgba(46,204,113,0.2); color: #2ecc71; }
+        .event-deleted { background: rgba(233,69,96,0.2); color: #e94560; }
+        .event-other { background: rgba(136,146,176,0.2); color: #8892b0; }
+        .type-icon { font-size: 0.75rem; }
+
+        /* Diff */
+        .diff-list { list-style: none; }
+        .diff-list li {
+            padding: 0.3rem 0;
+            font-size: 0.85rem;
+        }
+        .diff-list .added { color: #2ecc71; }
+        .diff-list .added::before { content: "+ "; }
+        .diff-list .removed { color: #e94560; }
+        .diff-list .removed::before { content: "- "; }
+
+        /* Trakt log */
+        .log-box {
+            background: #0a0e1a;
+            border-radius: 8px;
+            padding: 1rem;
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            font-size: 0.75rem;
+            line-height: 1.6;
+            color: #8892b0;
+            overflow-x: auto;
+            max-height: 300px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        .empty { color: #8892b0; font-size: 0.85rem; font-style: italic; }
+
+        @media (max-width: 600px) {
+            .stats { grid-template-columns: 1fr; }
+            .container { padding: 1rem 0.5rem; }
+            table { font-size: 0.8rem; }
+            th, td { padding: 0.4rem; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Media Server Status</h1>
+            <a href="{{ url_for('logout') }}" class="logout">Log out</a>
+        </header>
+
+        <!-- Service Health -->
+        <div class="section">
+            <h2>Service Health</h2>
+            <div class="health-row">
+                {% for svc in health %}
+                    <span class="badge {{ 'up' if svc.ok else 'down' }}">{{ svc.name }}</span>
+                {% endfor %}
+            </div>
+        </div>
+
+        <!-- Library Overview -->
+        <div class="section">
+            <h2>Library Overview</h2>
+            <div class="stats">
+                <div class="stat-card">
+                    <div class="number">{{ movie_count }}</div>
+                    <div class="label">Movies</div>
+                    {% set m_added = diff.added_movies|length %}
+                    {% set m_removed = diff.removed_movies|length %}
+                    {% set m_delta = m_added - m_removed %}
+                    {% if prev_timestamp and m_delta != 0 %}
+                        <div class="delta {{ 'positive' if m_delta > 0 else 'negative' }}">
+                            {{ '+' if m_delta > 0 }}{{ m_delta }} since last login
+                        </div>
+                    {% elif prev_timestamp %}
+                        <div class="delta neutral">no change</div>
+                    {% endif %}
+                </div>
+                <div class="stat-card">
+                    <div class="number">{{ series_count }}</div>
+                    <div class="label">Series</div>
+                    {% set s_added = diff.added_series|length %}
+                    {% set s_removed = diff.removed_series|length %}
+                    {% set s_delta = s_added - s_removed %}
+                    {% if prev_timestamp and s_delta != 0 %}
+                        <div class="delta {{ 'positive' if s_delta > 0 else 'negative' }}">
+                            {{ '+' if s_delta > 0 }}{{ s_delta }} since last login
+                        </div>
+                    {% elif prev_timestamp %}
+                        <div class="delta neutral">no change</div>
+                    {% endif %}
+                </div>
+                <div class="stat-card">
+                    <div class="number">{{ episode_count }}</div>
+                    <div class="label">Episodes</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Active Downloads -->
+        <div class="section">
+            <h2>Active Downloads</h2>
+            {% if torrents %}
+            <div style="overflow-x:auto">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Progress</th>
+                            <th>Down</th>
+                            <th>Up</th>
+                            <th>ETA</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for t in torrents %}
+                        <tr>
+                            <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{ t.name }}">{{ t.name }}</td>
+                            <td>
+                                <div class="progress-bar">
+                                    <div class="progress-fill {{ 'done' if t.percent >= 100 }}" style="width:{{ t.percent }}%"></div>
+                                </div>
+                                <span style="font-size:0.75rem;color:#8892b0">{{ t.percent }}%</span>
+                            </td>
+                            <td>{{ t.down }}</td>
+                            <td>{{ t.up }}</td>
+                            <td>{{ t.eta }}</td>
+                            <td>{{ t.status }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+                <p class="empty">No active torrents or Transmission is offline.</p>
+            {% endif %}
+        </div>
+
+        <!-- Recent Activity -->
+        <div class="section">
+            <h2>Recent Activity (24h)</h2>
+            {% if activity %}
+            <ul class="timeline">
+                {% for item in activity %}
+                <li>
+                    <span class="time">{{ item.time[11:16] if item.time|length > 16 else item.time }}</span>
+                    <span class="type-icon">{{ 'TV' if item.type == 'tv' else 'MV' }}</span>
+                    {% set evt = item.event|lower %}
+                    <span class="event-tag event-{{ evt if evt in ['grabbed', 'downloaded', 'imported', 'deleted'] else 'other' }}">{{ item.event }}</span>
+                    <span>{{ item.title }}</span>
+                </li>
+                {% endfor %}
+            </ul>
+            {% else %}
+                <p class="empty">No recent activity.</p>
+            {% endif %}
+        </div>
+
+        <!-- Since Last Login -->
+        <div class="section">
+            <h2>Since Last Login</h2>
+            {% if not prev_timestamp %}
+                <p class="empty">First visit &mdash; nothing to compare yet.</p>
+            {% else %}
+                <p style="font-size:0.8rem;color:#8892b0;margin-bottom:0.75rem">Last login: {{ prev_timestamp }}</p>
+                {% set has_changes = diff.added_movies or diff.removed_movies or diff.added_series or diff.removed_series %}
+                {% if has_changes %}
+                <ul class="diff-list">
+                    {% for title in diff.added_movies %}
+                        <li class="added">{{ title }} (movie)</li>
+                    {% endfor %}
+                    {% for title in diff.removed_movies %}
+                        <li class="removed">{{ title }} (movie)</li>
+                    {% endfor %}
+                    {% for title in diff.added_series %}
+                        <li class="added">{{ title }} (series)</li>
+                    {% endfor %}
+                    {% for title in diff.removed_series %}
+                        <li class="removed">{{ title }} (series)</li>
+                    {% endfor %}
+                </ul>
+                {% else %}
+                    <p class="empty">No changes since last login.</p>
+                {% endif %}
+            {% endif %}
+        </div>
+
+        <!-- Trakt Sync Status -->
+        <div class="section">
+            <h2>Trakt Sync Status</h2>
+            {% if trakt_log %}
+                <div class="log-box">{{ trakt_log }}</div>
+            {% else %}
+                <p class="empty">No Trakt sync log available.</p>
+            {% endif %}
+        </div>
+    </div>
+</body>
+</html>

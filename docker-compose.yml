@@ -208,6 +208,37 @@ services:
       - ./config/uptime-kuma:/app/data
     restart: unless-stopped
 
+  statuspage:
+    build:
+      context: ./status-page
+    container_name: statuspage
+    # host network required: needs to reach all services on localhost (Plex, Sonarr, Radarr, etc.)
+    network_mode: host
+    environment:
+      - SECRET_KEY=${STATUSPAGE_SECRET_KEY}
+      - ALLOWED_EMAILS=${STATUSPAGE_ALLOWED_EMAILS}
+      - BASE_URL=https://freya-status.duckdns.org
+      - SONARR_API_KEY=${SONARR_API_KEY}
+      - RADARR_API_KEY=${RADARR_API_KEY}
+      - PLEX_TOKEN=${PLEX_TOKEN}
+      - PROWLARR_API_KEY=${PROWLARR_API_KEY}
+      - TAUTULLI_API_KEY=${TAUTULLI_API_KEY}
+      - SMTP_SERVER=${SMTP_SERVER}
+      - SMTP_PORT=${SMTP_PORT}
+      - SMTP_USER=${SMTP_USER}
+      - SMTP_PASSWORD=${SMTP_PASSWORD}
+      - SMTP_FROM=${SMTP_FROM}
+      - TRAKT_LOG=/logs/trakt-sync.log
+    volumes:
+      - ./config/statuspage:/app/data
+      - /tmp/trakt-sync.log:/logs/trakt-sync.log:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/login"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
   prunarr:
     # prunarr latest
     image: ghcr.io/haijeploeg/prunarr@sha256:d7a164cd2b35aedd7c916db1dd8898370af13a5099f6f8a1659406bcef42829d
