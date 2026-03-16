@@ -50,4 +50,5 @@ See the [Wiki](../../wiki) for full documentation:
 - [Notifications](../../wiki/Notifications) - Email notification setup
 - [Remote Access](../../wiki/Remote-Access) - DuckDNS + Caddy HTTPS reverse proxy
 - [Monitoring](../../wiki/Monitoring) - Uptime Kuma service monitoring and alerts
+- [Status Page](../../wiki/Status-Page) - Dashboard with service health, library stats, and activity
 - [Maintenance](../../wiki/Maintenance) - Cron jobs and cleanup
