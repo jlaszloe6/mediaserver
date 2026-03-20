@@ -12,19 +12,27 @@
             background: #1a1a2e;
             color: #e0e0e0;
             min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
+        }
+        .container {
+            max-width: 500px;
+            margin: 0 auto;
+            padding: 2rem 1rem;
         }
         .card {
             background: #16213e;
             border-radius: 12px;
             padding: 2.5rem;
             width: 100%;
-            max-width: 420px;
-            margin: 1rem;
             box-shadow: 0 8px 32px rgba(0,0,0,0.3);
         }
+        .section {
+            background: #16213e;
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-top: 1.25rem;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+        }
+        .section h2 { font-size: 1.1rem; color: #fff; margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 1px solid #1a3a5c; }
         h1 { font-size: 1.5rem; margin-bottom: 0.5rem; color: #fff; }
         .subtitle { color: #8892b0; font-size: 0.9rem; margin-bottom: 2rem; line-height: 1.5; }
         label { display: block; font-size: 0.85rem; color: #8892b0; margin-bottom: 0.4rem; margin-top: 0.75rem; }
@@ -76,6 +84,7 @@
     </style>
 </head>
 <body>
+    <div class="container">
     <div class="card">
         <h1>Join the Media Server</h1>
         <p class="subtitle">Request access to stream movies and TV shows.</p>
@@ -106,6 +115,41 @@
             <button type="submit">Request Access</button>
         </form>
         <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+    </div>
+
+    <div class="section">
+        <h2>How It Works</h2>
+        <ol style="line-height:1.8;font-size:0.9rem;color:#8892b0;padding-left:1.2rem">
+            <li>You add a movie or TV show to your <strong style="color:#e0e0e0">Trakt watchlist</strong></li>
+            <li>The server picks it up automatically (within an hour)</li>
+            <li>It downloads and appears in <strong style="color:#e0e0e0">Plex</strong>, ready to watch</li>
+            <li>30 days after you've watched it, it's automatically removed to free up space</li>
+        </ol>
+        <p style="font-size:0.85rem;color:#5a6a8a;margin-top:0.75rem">You can also browse and request media through <strong style="color:#8892b0">Seerr</strong>, a visual catalog with posters, ratings, and trailers.</p>
+    </div>
+
+    <div class="section">
+        <h2>FAQ</h2>
+        <div style="font-size:0.9rem;color:#8892b0;line-height:1.7">
+            <p style="margin-bottom:0.75rem"><strong style="color:#e0e0e0">How long until something appears in Plex?</strong><br>
+            The server checks your watchlist every hour, downloads take time, and Plex scans every 15 minutes. Total: up to ~2 hours.</p>
+
+            <p style="margin-bottom:0.75rem"><strong style="color:#e0e0e0">Can I request something still in theaters?</strong><br>
+            Yes, add it to your watchlist. It won't download until a digital release is available, then it's grabbed automatically.</p>
+
+            <p style="margin-bottom:0.75rem"><strong style="color:#e0e0e0">How do I remove something?</strong><br>
+            Remove it from your Trakt watchlist &mdash; the server will delete it from Plex within ~2 hours. Or delete it directly in Plex.</p>
+
+            <p style="margin-bottom:0.75rem"><strong style="color:#e0e0e0">Is there a storage limit?</strong><br>
+            Yes, guests share a storage quota. Watched content is automatically cleaned up after 30 days to free space.</p>
+
+            <p style="margin-bottom:0.75rem"><strong style="color:#e0e0e0">Do I need a VPN?</strong><br>
+            Yes. After approval you'll get a VPN config file to connect securely. Plex won't work without it.</p>
+
+            <p><strong style="color:#e0e0e0">What quality are the downloads?</strong><br>
+            The server prefers 1080p releases with English subtitles included. 4K is only used as a fallback.</p>
+        </div>
+    </div>
     </div>
 </body>
 </html>
