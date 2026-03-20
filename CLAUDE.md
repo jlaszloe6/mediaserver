@@ -85,6 +85,7 @@ Guest instances: Sonarr-Guest, Radarr-Guest, Prunarr-Guest
 - Dashboard: service health, library stats, active downloads, recent activity, Trakt sync log
 - Guest view: filtered stats, quota bar, guest-only downloads
 - Self-service onboarding at `/onboard` with VPN auto-creation
+- Welcome email includes VPN setup as step 1 with link back to onboarding page for config download
 
 ## Seerr
 - Image: `ghcr.io/seerr-team/seerr` (not Overseerr)
