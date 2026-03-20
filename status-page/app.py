@@ -952,8 +952,13 @@ def create_wg_client(guest_name):
     s = _wg_easy_session()
     r = s.post(f"{WG_EASY_URL}/api/wireguard/client", json={"name": guest_name}, timeout=5)
     r.raise_for_status()
-    client = r.json()
-    return client["id"]
+    # wg-easy API returns {"success": true} — fetch client list to get the ID
+    r = s.get(f"{WG_EASY_URL}/api/wireguard/client", timeout=5)
+    r.raise_for_status()
+    clients = [c for c in r.json() if c["name"] == guest_name]
+    if not clients:
+        raise RuntimeError(f"Client '{guest_name}' not found after creation")
+    return clients[-1]["id"]
 
 
 def send_guest_welcome(email, name):
@@ -1042,6 +1047,16 @@ def onboard_status(token):
     guest = _get_guest_by_token(token)
     if not guest:
         abort(404)
+    # Retry VPN client creation if it failed during onboarding
+    if guest["status"] == "complete" and not guest["wg_client_id"]:
+        try:
+            wg_id = create_wg_client(guest["name"])
+            db = get_db()
+            db.execute("UPDATE guests SET wg_client_id = ? WHERE id = ?", (wg_id, guest["id"]))
+            db.commit()
+            guest = _get_guest_by_token(token)
+        except Exception as e:
+            app.logger.error(f"VPN client retry failed for {guest['name']}: {e}")
     device_data = json.loads(guest["trakt_device_data"]) if guest["trakt_device_data"] else None
     return render_template("onboard_status.html", guest=guest, device_data=device_data, quota_gb=GUEST_QUOTA_GB)
 
