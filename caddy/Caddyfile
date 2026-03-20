@@ -1,13 +1,30 @@
-{$CADDY_DOMAIN_PLEX} {
-	tls {
-		dns duckdns {env.DUCKDNS_TOKEN}
-	}
+{
+	order maxmind_geolocation first
+}
+
+(security_headers) {
 	header {
 		Strict-Transport-Security "max-age=31536000;"
 		X-Content-Type-Options "nosniff"
 		Referrer-Policy "no-referrer-when-downgrade"
 		-Server
 	}
+}
+
+(geoip_hungary) {
+	maxmind_geolocation {
+		db_path "/data/geolite2/GeoLite2-Country.mmdb"
+	}
+	@blocked not maxmind_geolocation country HU
+	respond @blocked 403
+}
+
+{$CADDY_DOMAIN_PLEX} {
+	tls {
+		dns duckdns {env.DUCKDNS_TOKEN}
+	}
+	import security_headers
+	import geoip_hungary
 	reverse_proxy localhost:32400 {
 		header_up X-Real-IP {remote_host}
 	}
@@ -17,12 +34,8 @@
 	tls {
 		dns duckdns {env.DUCKDNS_TOKEN}
 	}
-	header {
-		Strict-Transport-Security "max-age=31536000;"
-		X-Content-Type-Options "nosniff"
-		Referrer-Policy "no-referrer-when-downgrade"
-		-Server
-	}
+	import security_headers
+	import geoip_hungary
 	reverse_proxy localhost:5055 {
 		header_up X-Real-IP {remote_host}
 	}
@@ -32,12 +45,8 @@
 	tls {
 		dns duckdns {env.DUCKDNS_TOKEN}
 	}
-	header {
-		Strict-Transport-Security "max-age=31536000;"
-		X-Content-Type-Options "nosniff"
-		Referrer-Policy "no-referrer-when-downgrade"
-		-Server
-	}
+	import security_headers
+	import geoip_hungary
 	reverse_proxy localhost:8080 {
 		header_up X-Real-IP {remote_host}
 	}

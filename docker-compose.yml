@@ -177,6 +177,8 @@ services:
       - CADDY_DOMAIN_PLEX=${CADDY_DOMAIN_PLEX}
       - CADDY_DOMAIN_SEERR=${CADDY_DOMAIN_SEERR}
       - CADDY_DOMAIN_STATUS=${CADDY_DOMAIN_STATUS}
+      - MAXMIND_ACCOUNT_ID=${MAXMIND_ACCOUNT_ID}
+      - MAXMIND_LICENSE_KEY=${MAXMIND_LICENSE_KEY}
     volumes:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - ./config/caddy/data:/data
