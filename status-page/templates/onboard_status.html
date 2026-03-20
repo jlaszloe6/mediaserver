@@ -302,14 +302,9 @@
         </div>
 
         <div class="section">
-            <h2>Plex Setup</h2>
-            <p class="status-msg">Download the <strong>Plex</strong> app on your device and sign in with your Plex account (<strong>{{ guest.email }}</strong>). You'll see <strong>Guest TV</strong> and <strong>Guest Movies</strong> libraries.</p>
-            <p class="status-msg" style="margin-top:0.5rem">Check your email for a Plex invite &mdash; accept it to get library access.</p>
-        </div>
-
-        <div class="section">
             <h2>VPN Setup (for Remote Access)</h2>
-            <p class="status-msg" style="margin-bottom:1rem">You need a VPN connection to stream when you're away from the home network.</p>
+            <p class="status-msg" style="margin-bottom:0.5rem"><strong style="color:#e94560">Important:</strong> Plex will not work without an active VPN connection. Set this up first.</p>
+            <p class="status-msg" style="margin-bottom:1rem">The VPN puts your device on the home network so Plex can find the server.</p>
 
             {% if guest.wg_client_id %}
             <div style="background:#0a0e1a;border-radius:8px;padding:1.25rem;margin-bottom:1.25rem;text-align:center">
@@ -321,27 +316,20 @@
             {% endif %}
 
             <div class="vpn-tabs">
-                <div class="vpn-tab active" onclick="showVpn('phone')">Phone / Tablet</div>
-                <div class="vpn-tab" onclick="showVpn('desktop')">Laptop / Desktop</div>
-                <div class="vpn-tab" onclick="showVpn('tv')">Android TV</div>
+                <div class="vpn-tab" data-vpn="phone" onclick="showVpn('phone')">Phone / Tablet</div>
+                <div class="vpn-tab" data-vpn="desktop" onclick="showVpn('desktop')">Laptop / Desktop</div>
+                <div class="vpn-tab" data-vpn="tv" onclick="showVpn('tv')">Android TV</div>
             </div>
-            <div id="vpn-phone" class="vpn-content active">
+            <div id="vpn-phone" class="vpn-content">
                 <ol>
                     <li>Install <strong>WireGuard</strong> from the App Store or Play Store</li>
-                    <li>Open the app, tap <strong>+</strong></li>
                     {% if guest.wg_client_id %}
-                    <li><strong>Option A:</strong> Tap <strong>"Create from QR code"</strong> and scan this:</li>
-                </ol>
-                <div style="text-align:center;margin:1rem 0">
-                    <img src="{{ url_for('onboard_vpn_qr', token=guest.onboard_token) }}" alt="WireGuard QR Code"
-                         style="width:200px;height:200px;border-radius:8px;background:#fff;padding:8px">
-                </div>
-                <p style="text-align:center;color:#5a6a8a;font-size:0.8rem;margin-bottom:1rem">or</p>
-                <ol start="3">
-                    <li><strong>Option B:</strong> <a href="{{ url_for('onboard_vpn_config', token=guest.onboard_token) }}" style="color:#8ab4f8">Download the .conf file</a>, then tap <strong>"Import from file or archive"</strong></li>
+                    <li><a href="{{ url_for('onboard_vpn_config', token=guest.onboard_token) }}" style="color:#8ab4f8">Download the .conf file</a></li>
                     {% else %}
-                    <li>Scan the QR code from your admin, or import the .conf file</li>
+                    <li>Ask your admin for your <strong>.conf</strong> config file</li>
                     {% endif %}
+                    <li>Open the app, tap <strong>+</strong> &rarr; <strong>"Import from file or archive"</strong></li>
+                    <li>Select the downloaded .conf file</li>
                     <li>Name the tunnel <strong>"MediaServer"</strong></li>
                     <li>Toggle it on when you want to stream remotely</li>
                 </ol>
@@ -379,13 +367,33 @@
                 </ol>
             </div>
             <script>
+            (function() {
+                var ua = navigator.userAgent;
+                var type = 'desktop';
+                if (/Android/.test(ua) && /TV|BRAVIA|CrKey|AFT|AFTM|AFTT/.test(ua)) {
+                    type = 'tv';
+                } else if (/Android|iPhone|iPad|iPod/.test(ua) || (navigator.maxTouchPoints > 1 && /Macintosh/.test(ua))) {
+                    type = 'phone';
+                }
+                showVpn(type);
+            })();
+
             function showVpn(type) {
-                document.querySelectorAll('.vpn-tab').forEach(t => t.classList.remove('active'));
-                document.querySelectorAll('.vpn-content').forEach(c => c.classList.remove('active'));
-                event.target.classList.add('active');
-                document.getElementById('vpn-' + type).classList.add('active');
+                document.querySelectorAll('.vpn-tab').forEach(function(t) { t.classList.remove('active'); });
+                document.querySelectorAll('.vpn-content').forEach(function(c) { c.classList.remove('active'); });
+                var tab = document.querySelector('.vpn-tab[data-vpn="' + type + '"]');
+                if (tab) tab.classList.add('active');
+                var content = document.getElementById('vpn-' + type);
+                if (content) content.classList.add('active');
             }
             </script>
+        </div>
+
+        <div class="section">
+            <h2>Plex Setup</h2>
+            <p class="status-msg"><strong style="color:#e94560">Make sure VPN is active first</strong> &mdash; Plex won't find the server without it.</p>
+            <p class="status-msg" style="margin-top:0.5rem">Download the <strong>Plex</strong> app on your device and sign in with your Plex account (<strong>{{ guest.email }}</strong>). You'll see <strong>Guest TV</strong> and <strong>Guest Movies</strong> libraries.</p>
+            <p class="status-msg" style="margin-top:0.5rem">Check your email for a Plex invite &mdash; accept it to get library access.</p>
         </div>
 
         <div class="section">
