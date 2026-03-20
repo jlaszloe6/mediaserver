@@ -203,18 +203,16 @@ services:
 
   dnsmasq:
     # dnsmasq — LAN DNS override for DuckDNS domains (resolves to freya-pc instead of public IP)
-    # host network: needs to bind to 192.168.1.14:53 for LAN clients, avoids conflict with systemd-resolved on 127.0.0.53
-    image: jpillora/dnsmasq@sha256:98b69ad825942089fb7c4b9153e3c5af0205eda3a103c691e30b1a13fd912830
+    # host network: binds to 192.168.1.14:53 for LAN clients, avoids conflict with systemd-resolved on 127.0.0.53
+    build:
+      context: ./dnsmasq
     container_name: dnsmasq
     network_mode: host
     volumes:
       - ./dnsmasq/dnsmasq.conf:/etc/dnsmasq.conf:ro
-    environment:
-      - HTTP_USER=admin
-      - HTTP_PASS=${DNSMASQ_PASSWORD:-admin}
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "nslookup freya-status.duckdns.org 192.168.1.14 > /dev/null 2>&1"]
+      test: ["CMD", "nslookup", "freya-status.duckdns.org", "192.168.1.14"]
       interval: 30s
       timeout: 5s
       retries: 3

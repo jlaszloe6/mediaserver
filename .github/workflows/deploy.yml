@@ -26,6 +26,7 @@ jobs:
           rebuild_statuspage=false
           rebuild_cron=false
           rebuild_caddy=false
+          rebuild_dnsmasq=false
 
           changed=$(git diff --name-only "$BEFORE" "$AFTER" 2>/dev/null || echo "")
 
@@ -38,6 +39,9 @@ jobs:
           if echo "$changed" | grep -q '^caddy/'; then
             rebuild_caddy=true
           fi
+          if echo "$changed" | grep -q '^dnsmasq/'; then
+            rebuild_dnsmasq=true
+          fi
 
           compose_changed=false
           if echo "$changed" | grep -q '^docker-compose.yml$'; then
@@ -47,12 +51,13 @@ jobs:
           echo "rebuild_statuspage=$rebuild_statuspage" >> "$GITHUB_OUTPUT"
           echo "rebuild_cron=$rebuild_cron" >> "$GITHUB_OUTPUT"
           echo "rebuild_caddy=$rebuild_caddy" >> "$GITHUB_OUTPUT"
+          echo "rebuild_dnsmasq=$rebuild_dnsmasq" >> "$GITHUB_OUTPUT"
           echo "compose_changed=$compose_changed" >> "$GITHUB_OUTPUT"
-          echo "any_rebuild=$([ "$rebuild_statuspage" = true ] || [ "$rebuild_cron" = true ] || [ "$rebuild_caddy" = true ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "any_rebuild=$([ "$rebuild_statuspage" = true ] || [ "$rebuild_cron" = true ] || [ "$rebuild_caddy" = true ] || [ "$rebuild_dnsmasq" = true ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
 
           echo "Changed files:"
           echo "$changed"
-          echo "Rebuild: statuspage=$rebuild_statuspage cron=$rebuild_cron caddy=$rebuild_caddy compose=$compose_changed"
+          echo "Rebuild: statuspage=$rebuild_statuspage cron=$rebuild_cron caddy=$rebuild_caddy dnsmasq=$rebuild_dnsmasq compose=$compose_changed"
 
       - name: Build and restart statuspage
         if: steps.changes.outputs.rebuild_statuspage == 'true'
@@ -68,6 +73,11 @@ jobs:
         if: steps.changes.outputs.rebuild_caddy == 'true'
         working-directory: /home/janoslaszlo/Documents/mediaserver
         run: docker compose up -d --build --no-deps caddy
+
+      - name: Build and restart dnsmasq
+        if: steps.changes.outputs.rebuild_dnsmasq == 'true'
+        working-directory: /home/janoslaszlo/Documents/mediaserver
+        run: docker compose up -d --build --no-deps dnsmasq
 
       - name: Verify services healthy
         if: steps.changes.outputs.any_rebuild == 'true'
