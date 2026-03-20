@@ -922,7 +922,7 @@ def _create_radarr_import_list(trakt_username, access_token, refresh_token, expi
 
 
 def share_plex_guest_libraries(guest_email):
-    """Invite a Plex user and share only Guest TV / Guest Movies libraries via v1 API."""
+    """Invite a Plex user and share only Guest TV / Guest Movies libraries via plex.tv API."""
     if not PLEX_TOKEN:
         raise RuntimeError("PLEX_TOKEN not configured")
 
@@ -932,16 +932,26 @@ def share_plex_guest_libraries(guest_email):
     if not machine_id:
         raise RuntimeError("Could not get Plex machine identifier")
 
-    root = ET.fromstring(
-        requests.get(f"{PLEX_URL}/library/sections", params={"X-Plex-Token": PLEX_TOKEN}, timeout=API_TIMEOUT).text
+    # Get section IDs from plex.tv (different from local keys)
+    server_root = ET.fromstring(
+        requests.get(
+            f"https://plex.tv/api/servers/{machine_id}",
+            params={"X-Plex-Token": PLEX_TOKEN},
+            headers={"X-Plex-Client-Identifier": "mediaserver-statuspage"},
+            timeout=API_TIMEOUT,
+        ).text
     )
-    guest_section_ids = [int(d.get("key")) for d in root.findall("Directory") if d.get("title") in ("Guest TV", "Guest Movies")]
+    guest_section_ids = []
+    for server in server_root.findall("Server"):
+        for section in server.findall("Section"):
+            if section.get("title") in ("Guest TV", "Guest Movies"):
+                guest_section_ids.append(int(section.get("id")))
     if not guest_section_ids:
-        raise RuntimeError("Guest TV / Guest Movies libraries not found in Plex")
+        raise RuntimeError("Guest TV / Guest Movies libraries not found on plex.tv")
 
-    # Use Plex v1 API with JSON body — correctly filters library sections
     r = requests.post(
-        f"https://plex.tv/api/servers/{machine_id}/shared_servers?X-Plex-Token={PLEX_TOKEN}",
+        f"https://plex.tv/api/servers/{machine_id}/shared_servers",
+        params={"X-Plex-Token": PLEX_TOKEN},
         headers={"Content-Type": "application/json", "X-Plex-Client-Identifier": "mediaserver-statuspage"},
         json={
             "server_id": machine_id,
