@@ -39,14 +39,20 @@ jobs:
             rebuild_caddy=true
           fi
 
+          compose_changed=false
+          if echo "$changed" | grep -q '^docker-compose.yml$'; then
+            compose_changed=true
+          fi
+
           echo "rebuild_statuspage=$rebuild_statuspage" >> "$GITHUB_OUTPUT"
           echo "rebuild_cron=$rebuild_cron" >> "$GITHUB_OUTPUT"
           echo "rebuild_caddy=$rebuild_caddy" >> "$GITHUB_OUTPUT"
+          echo "compose_changed=$compose_changed" >> "$GITHUB_OUTPUT"
           echo "any_rebuild=$([ "$rebuild_statuspage" = true ] || [ "$rebuild_cron" = true ] || [ "$rebuild_caddy" = true ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
 
           echo "Changed files:"
           echo "$changed"
-          echo "Rebuild: statuspage=$rebuild_statuspage cron=$rebuild_cron caddy=$rebuild_caddy"
+          echo "Rebuild: statuspage=$rebuild_statuspage cron=$rebuild_cron caddy=$rebuild_caddy compose=$compose_changed"
 
       - name: Build and restart statuspage
         if: steps.changes.outputs.rebuild_statuspage == 'true'
@@ -80,6 +86,11 @@ jobs:
           if [ "$failed" = true ]; then exit 1; fi
           echo "All rebuilt services are running."
 
+      - name: Apply compose changes (new/updated services)
+        if: steps.changes.outputs.compose_changed == 'true'
+        working-directory: /home/janoslaszlo/Documents/mediaserver
+        run: docker compose up -d --no-build
+
       - name: No rebuild needed
-        if: steps.changes.outputs.any_rebuild == 'false'
+        if: steps.changes.outputs.any_rebuild == 'false' && steps.changes.outputs.compose_changed == 'false'
         run: echo "No custom-build services changed. Config/compose-only update pulled."

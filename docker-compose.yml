@@ -203,7 +203,7 @@ services:
 
   dnsmasq:
     # dnsmasq — LAN DNS override for DuckDNS domains (resolves to freya-pc instead of public IP)
-    image: jpillora/dnsmasq@sha256:e3be01237a76e8e46dada2a42d5c439fdbeae5a98b52c61f4eae3a3e43ff3a69
+    image: jpillora/dnsmasq@sha256:98b69ad825942089fb7c4b9153e3c5af0205eda3a103c691e30b1a13fd912830
     container_name: dnsmasq
     ports:
       - "53:53/udp"
