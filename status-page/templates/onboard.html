@@ -21,14 +21,17 @@
         .page-header p { color: #8892b0; font-size: 1rem; }
         .columns {
             display: grid;
-            grid-template-columns: 1fr 1fr 1fr;
+            grid-template-columns: 1fr 1fr 1fr 1fr;
             gap: 1.25rem;
-            max-width: 1100px;
+            max-width: 1400px;
             margin: 1.5rem auto;
             padding: 0 1rem 2rem;
-            align-items: start;
+            align-items: stretch;
         }
-        @media (max-width: 900px) {
+        @media (max-width: 1100px) {
+            .columns { grid-template-columns: 1fr 1fr; }
+        }
+        @media (max-width: 650px) {
             .columns { grid-template-columns: 1fr; max-width: 500px; }
         }
         .card {
@@ -36,10 +39,10 @@
             border-radius: 12px;
             padding: 1.75rem;
             box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+            display: flex;
+            flex-direction: column;
         }
         .card h2 { font-size: 1.1rem; color: #fff; margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 1px solid #1a3a5c; }
-        .card h3 { font-size: 0.95rem; color: #e0e0e0; margin-top: 1rem; margin-bottom: 0.5rem; }
-        .card h3:first-child { margin-top: 0; }
         label { display: block; font-size: 0.85rem; color: #8892b0; margin-bottom: 0.4rem; margin-top: 0.75rem; }
         input[type="text"], input[type="email"] {
             width: 100%;
@@ -108,6 +111,16 @@
             font-weight: 600;
             margin-left: 0.25rem;
         }
+        .prereqs {
+            background: #0f3460;
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 1rem;
+            font-size: 0.85rem;
+            line-height: 1.6;
+        }
+        .prereqs strong { color: #fff; }
+        .prereqs a { color: #8ab4f8; }
         a { color: #8ab4f8; }
     </style>
 </head>
@@ -118,68 +131,72 @@
     </div>
 
     <div class="columns">
-        <!-- Column 1: What to expect -->
-        <div class="card">
-            <h2>What to Expect</h2>
-
-            <h3>The Onboarding Process</h3>
-            <ul class="steps-list">
-                <li><span class="step-num">1</span> Fill out the form <span class="time-badge">1 min</span></li>
-                <li><span class="step-num">2</span> Wait for admin approval <span class="time-badge">manual</span></li>
-                <li><span class="step-num">3</span> Authorize Trakt (2x) <span class="time-badge">2 min</span></li>
-                <li><span class="step-num">4</span> Set up VPN on your device <span class="time-badge">5 min</span></li>
-                <li><span class="step-num">5</span> Install Plex and start watching</li>
-            </ul>
-
-            <h3>Before You Start</h3>
-            <ol class="info-list">
-                <li>Create a free <a href="https://plex.tv" target="_blank">Plex</a> account</li>
-                <li>Create a free <a href="https://trakt.tv" target="_blank">Trakt</a> account</li>
-                <li>Use the <strong>same email</strong> for Plex and for this form</li>
-            </ol>
-
-            <h3>What You'll Need After Approval</h3>
-            <ul class="info-list" style="list-style:disc">
-                <li>Your phone, laptop, or TV to install <strong>WireGuard VPN</strong></li>
-                <li>The <strong>Plex</strong> app on whatever you watch on</li>
-                <li>Your <strong>Trakt</strong> account to authorize the connection (done in the browser)</li>
-            </ul>
-        </div>
-
-        <!-- Column 2: How it works + FAQ -->
+        <!-- Column 1: How It Works -->
         <div class="card">
             <h2>How It Works</h2>
             <ol class="info-list">
                 <li>Add a movie or show to your <strong>Trakt watchlist</strong></li>
                 <li>The server picks it up within an hour</li>
-                <li>It downloads and appears in <strong>Plex</strong></li>
+                <li>It downloads and appears in <strong>Plex</strong>, ready to watch</li>
                 <li>30 days after watching, it's auto-removed to free space</li>
             </ol>
-            <p style="font-size:0.85rem;color:#5a6a8a;margin-top:0.75rem">You can also browse and request through <strong style="color:#8892b0">Seerr</strong>, a visual catalog with posters and ratings.</p>
-
-            <h2 style="margin-top:1.25rem">FAQ</h2>
-            <div class="faq-item"><strong>How long until content appears?</strong><br>
-            Up to ~2 hours (hourly sync + download + 15-min Plex scan).</div>
-
-            <div class="faq-item"><strong>Movies still in theaters?</strong><br>
-            Add to your watchlist &mdash; it downloads once a digital release is out.</div>
-
-            <div class="faq-item"><strong>How to remove content?</strong><br>
-            Remove from Trakt watchlist or delete in Plex. Both fully automatic.</div>
-
-            <div class="faq-item"><strong>Storage limit?</strong><br>
-            Guests share a quota. Watched content auto-cleans after 30 days.</div>
-
-            <div class="faq-item"><strong>Why VPN?</strong><br>
-            The VPN securely connects your device to the server. Plex won't work without it.</div>
-
-            <div class="faq-item"><strong>Quality?</strong><br>
-            1080p preferred with English subtitles. 4K only as fallback.</div>
+            <p style="font-size:0.85rem;color:#5a6a8a;margin-top:1rem">You can also browse and request through <strong style="color:#8892b0">Seerr</strong>, a visual catalog with posters and ratings.</p>
+            <p style="font-size:0.85rem;color:#5a6a8a;margin-top:0.75rem">The server prefers <strong style="color:#8892b0">1080p</strong> releases with English subtitles. 4K is only used as a fallback when no 1080p version is available.</p>
+            <p style="font-size:0.85rem;color:#5a6a8a;margin-top:0.75rem">Guests share a storage quota. Watched content is automatically cleaned up after 30 days to keep space available for everyone.</p>
         </div>
 
-        <!-- Column 3: Join form -->
+        <!-- Column 2: FAQ -->
+        <div class="card">
+            <h2>FAQ</h2>
+            <div class="faq-item"><strong>How long until content appears in Plex?</strong><br>
+            Up to ~2 hours. The server checks your watchlist every hour, downloads take time, and Plex scans for new files every 15 minutes.</div>
+
+            <div class="faq-item"><strong>Can I request movies still in theaters?</strong><br>
+            Yes. Add it to your watchlist &mdash; it won't download until a digital release is available, then it's grabbed automatically.</div>
+
+            <div class="faq-item"><strong>How do I remove something?</strong><br>
+            Remove it from your Trakt watchlist &mdash; gone from Plex within ~2 hours. Or delete it directly in Plex &mdash; cleaned up within 30 minutes.</div>
+
+            <div class="faq-item"><strong>Why do I need a VPN?</strong><br>
+            The VPN securely connects your device to the media server. Without it, Plex can't find the server or stream content.</div>
+
+            <div class="faq-item"><strong>Why is Trakt authorized twice?</strong><br>
+            TV shows (Sonarr) and movies (Radarr) use separate systems. Each needs its own Trakt connection, so you authorize once for TV and once for movies.</div>
+
+            <div class="faq-item"><strong>I finished a show. Do I need to do anything?</strong><br>
+            No. Watched content is automatically removed after 30 days. Remove it from your Trakt watchlist if you don't want new episodes.</div>
+        </div>
+
+        <!-- Column 3: What to Expect -->
+        <div class="card">
+            <h2>What to Expect</h2>
+
+            <p style="font-size:0.9rem;color:#8892b0;margin-bottom:1rem">The onboarding takes about <strong style="color:#e0e0e0">10 minutes</strong> of your time, plus a wait for admin approval.</p>
+
+            <ul class="steps-list">
+                <li><span class="step-num">1</span> Fill out the request form <span class="time-badge">1 min</span></li>
+                <li><span class="step-num">2</span> Wait for admin approval <span class="time-badge">manual</span></li>
+                <li><span class="step-num">3</span> Authorize Trakt for TV shows <span class="time-badge">1 min</span></li>
+                <li><span class="step-num">4</span> Authorize Trakt for movies <span class="time-badge">1 min</span></li>
+                <li><span class="step-num">5</span> Set up VPN on your device <span class="time-badge">5 min</span></li>
+                <li><span class="step-num">6</span> Install Plex and start watching</li>
+            </ul>
+
+            <p style="font-size:0.85rem;color:#5a6a8a;margin-top:1rem">After approval, you'll get a link to continue setup. Everything is guided step by step &mdash; no technical knowledge needed.</p>
+
+            <p style="font-size:0.85rem;color:#5a6a8a;margin-top:0.75rem"><strong style="color:#8892b0">What you'll need after approval:</strong> your phone, laptop, or TV to install the WireGuard VPN app and the Plex app. The Trakt authorization is done in the browser.</p>
+        </div>
+
+        <!-- Column 4: Request Access -->
         <div class="card">
             <h2>Request Access</h2>
+
+            <div class="prereqs">
+                <strong>Before you start, you'll need:</strong><br>
+                1. A <a href="https://plex.tv" target="_blank">Plex</a> account (free)<br>
+                2. A <a href="https://trakt.tv" target="_blank">Trakt</a> account (free)<br>
+                3. Use the <strong>same email</strong> for Plex and this form
+            </div>
 
             {% with messages = get_flashed_messages(with_categories=true) %}
                 {% for category, message in messages %}
