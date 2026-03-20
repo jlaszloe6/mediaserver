@@ -251,8 +251,6 @@ services:
     cap_add:
       - NET_ADMIN
       - SYS_MODULE
-    sysctls:
-      - net.ipv4.conf.all.src_valid_mark=1
     environment:
       - LANG=en
       - WG_HOST=${WG_HOST}
@@ -262,7 +260,7 @@ services:
       - WG_DEFAULT_DNS=192.168.1.1
       - WG_ALLOWED_IPS=192.168.1.0/24, 10.13.13.0/24
       - WG_PERSISTENT_KEEPALIVE=25
-      - WG_POST_UP=sysctl -w net.ipv4.conf.wg0.route_localnet=1; iptables -t nat -A POSTROUTING -s 10.13.13.0/24 ! -o wg0 -j MASQUERADE; iptables -t nat -A POSTROUTING -s 10.13.13.0/24 -d 127.0.0.1 -j MASQUERADE; iptables -A FORWARD -i wg0 -j ACCEPT; iptables -A FORWARD -o wg0 -j ACCEPT; iptables -t nat -A PREROUTING -i wg0 -d 192.168.1.14 -p tcp --dport 8989 -j DNAT --to-destination 127.0.0.1:8989; iptables -t nat -A PREROUTING -i wg0 -d 192.168.1.14 -p tcp --dport 7878 -j DNAT --to-destination 127.0.0.1:7878; iptables -t nat -A PREROUTING -i wg0 -d 192.168.1.14 -p tcp --dport 9696 -j DNAT --to-destination 127.0.0.1:9696; iptables -t nat -A PREROUTING -i wg0 -d 192.168.1.14 -p tcp --dport 9091 -j DNAT --to-destination 127.0.0.1:9091; iptables -t nat -A PREROUTING -i wg0 -d 192.168.1.14 -p tcp --dport 8191 -j DNAT --to-destination 127.0.0.1:8191
+      - WG_POST_UP=iptables -t nat -A POSTROUTING -s 10.13.13.0/24 ! -o wg0 -j MASQUERADE; iptables -t nat -A POSTROUTING -s 10.13.13.0/24 -d 127.0.0.1 -j MASQUERADE; iptables -A FORWARD -i wg0 -j ACCEPT; iptables -A FORWARD -o wg0 -j ACCEPT; iptables -t nat -A PREROUTING -i wg0 -d 192.168.1.14 -p tcp --dport 8989 -j DNAT --to-destination 127.0.0.1:8989; iptables -t nat -A PREROUTING -i wg0 -d 192.168.1.14 -p tcp --dport 7878 -j DNAT --to-destination 127.0.0.1:7878; iptables -t nat -A PREROUTING -i wg0 -d 192.168.1.14 -p tcp --dport 9696 -j DNAT --to-destination 127.0.0.1:9696; iptables -t nat -A PREROUTING -i wg0 -d 192.168.1.14 -p tcp --dport 9091 -j DNAT --to-destination 127.0.0.1:9091; iptables -t nat -A PREROUTING -i wg0 -d 192.168.1.14 -p tcp --dport 8191 -j DNAT --to-destination 127.0.0.1:8191
       - WG_POST_DOWN=iptables -t nat -D POSTROUTING -s 10.13.13.0/24 ! -o wg0 -j MASQUERADE; iptables -t nat -D POSTROUTING -s 10.13.13.0/24 -d 127.0.0.1 -j MASQUERADE; iptables -D FORWARD -i wg0 -j ACCEPT; iptables -D FORWARD -o wg0 -j ACCEPT; iptables -t nat -D PREROUTING -i wg0 -d 192.168.1.14 -p tcp --dport 8989 -j DNAT --to-destination 127.0.0.1:8989; iptables -t nat -D PREROUTING -i wg0 -d 192.168.1.14 -p tcp --dport 7878 -j DNAT --to-destination 127.0.0.1:7878; iptables -t nat -D PREROUTING -i wg0 -d 192.168.1.14 -p tcp --dport 9696 -j DNAT --to-destination 127.0.0.1:9696; iptables -t nat -D PREROUTING -i wg0 -d 192.168.1.14 -p tcp --dport 9091 -j DNAT --to-destination 127.0.0.1:9091; iptables -t nat -D PREROUTING -i wg0 -d 192.168.1.14 -p tcp --dport 8191 -j DNAT --to-destination 127.0.0.1:8191
       - UI_TRAFFIC_STATS=true
       - UI_CHART_TYPE=1
