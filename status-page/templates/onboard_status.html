@@ -306,14 +306,7 @@
             <p class="status-msg" style="margin-bottom:0.5rem"><strong style="color:#e94560">Important:</strong> Plex will not work without an active VPN connection. Set this up first.</p>
             <p class="status-msg" style="margin-bottom:1rem">The VPN securely connect your device to the media server so Plex can find the media libraries.</p>
 
-            {% if guest.wg_client_id %}
-            <div style="background:#0a0e1a;border-radius:8px;padding:1.25rem;margin-bottom:1.25rem;text-align:center">
-                <p style="color:#8892b0;font-size:0.85rem;margin-bottom:0.75rem">Your VPN profile</p>
-                <div style="display:flex;gap:0.75rem;justify-content:center;flex-wrap:wrap">
-                    <a href="{{ url_for('onboard_vpn_config', token=guest.onboard_token) }}" class="btn" style="font-size:0.85rem;padding:0.5rem 1.2rem;margin:0">Download .conf File</a>
-                </div>
-            </div>
-            {% else %}
+            {% if not guest.wg_client_id %}
             <div style="background:rgba(233,69,96,0.1);border:1px solid rgba(233,69,96,0.3);border-radius:8px;padding:1rem;margin-bottom:1.25rem">
                 <p style="color:#e94560;font-size:0.9rem">VPN profile could not be generated. Please try refreshing this page or contact the admin.</p>
             </div>
@@ -350,8 +343,9 @@
                     <li>Transfer the .conf file to your TV:
                         <ul style="margin-top:0.5rem;list-style:disc;padding-left:1rem">
                             <li><strong>USB drive</strong> &mdash; copy file to USB, plug into TV</li>
-                            <li><strong>Google Drive</strong> &mdash; upload file, open on TV via file manager</li>
+                            <li><strong>Google Drive</strong> &mdash; upload file, open on TV with <strong>X-plore File Manager</strong> (install from Play Store)</li>
                             <li><strong>Send Files to TV</strong> &mdash; free app on both phone and TV</li>
+                            <li><strong>X-plore File Manager</strong> &mdash; recommended file manager for Android TV, also useful for browsing USB drives</li>
                         </ul>
                     </li>
                     <li>Open WireGuard on TV, tap <strong>+</strong> &rarr; <strong>"Import from file"</strong></li>
