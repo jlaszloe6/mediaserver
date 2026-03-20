@@ -206,8 +206,8 @@ services:
     image: jpillora/dnsmasq@sha256:98b69ad825942089fb7c4b9153e3c5af0205eda3a103c691e30b1a13fd912830
     container_name: dnsmasq
     ports:
-      - "53:53/udp"
-      - "53:53/tcp"
+      - "192.168.1.14:53:53/udp"
+      - "192.168.1.14:53:53/tcp"
       - "127.0.0.1:5380:8080"
     volumes:
       - ./dnsmasq/dnsmasq.conf:/etc/dnsmasq.conf:ro

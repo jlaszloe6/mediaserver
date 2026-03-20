@@ -89,7 +89,7 @@ jobs:
       - name: Apply compose changes (new/updated services)
         if: steps.changes.outputs.compose_changed == 'true'
         working-directory: /home/janoslaszlo/Documents/mediaserver
-        run: docker compose up -d --no-build
+        run: docker compose up -d --no-build --no-recreate
 
       - name: No rebuild needed
         if: steps.changes.outputs.any_rebuild == 'false' && steps.changes.outputs.compose_changed == 'false'
