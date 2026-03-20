@@ -1411,10 +1411,46 @@ def admin_invite_remove(guest_id):
         except Exception as e:
             app.logger.error(f"Failed to remove import list from {service}: {e}")
 
-    db.execute("UPDATE guests SET active = 0, status = 'rejected' WHERE id = ?", (guest_id,))
+    # Revoke Plex library share
+    if guest["plex_shared"]:
+        try:
+            machine_id = ET.fromstring(
+                requests.get(f"{PLEX_URL}/identity", params={"X-Plex-Token": PLEX_TOKEN}, timeout=API_TIMEOUT).text
+            ).get("machineIdentifier")
+            r = requests.get(
+                f"https://plex.tv/api/servers/{machine_id}/shared_servers",
+                params={"X-Plex-Token": PLEX_TOKEN},
+                headers={"X-Plex-Client-Identifier": "mediaserver-statuspage"},
+                timeout=API_TIMEOUT,
+            )
+            if r.status_code == 200:
+                for ss in ET.fromstring(r.text).findall("SharedServer"):
+                    if ss.get("email", "").lower() == guest["email"].lower():
+                        share_id = ss.get("id")
+                        requests.delete(
+                            f"https://plex.tv/api/servers/{machine_id}/shared_servers/{share_id}",
+                            params={"X-Plex-Token": PLEX_TOKEN},
+                            headers={"X-Plex-Client-Identifier": "mediaserver-statuspage"},
+                            timeout=API_TIMEOUT,
+                        )
+                        app.logger.info(f"Revoked Plex share for {guest['email']} (share {share_id})")
+                        break
+        except Exception as e:
+            app.logger.error(f"Failed to revoke Plex share for {guest['email']}: {e}")
+
+    # Delete WireGuard VPN client
+    if guest["wg_client_id"]:
+        try:
+            s = _wg_easy_session()
+            s.delete(f"{WG_EASY_URL}/api/wireguard/client/{guest['wg_client_id']}", timeout=5)
+            app.logger.info(f"Deleted WireGuard client {guest['wg_client_id']} for {guest['name']}")
+        except Exception as e:
+            app.logger.error(f"Failed to delete WireGuard client for {guest['name']}: {e}")
+
+    db.execute("UPDATE guests SET active = 0, status = 'rejected', plex_shared = 0, wg_client_id = NULL WHERE id = ?", (guest_id,))
     db.commit()
 
-    flash(f"Guest '{trakt_username}' deactivated and import lists removed.", "info")
+    flash(f"Guest '{trakt_username}' removed — import lists, Plex share, and VPN deleted.", "info")
     return redirect(url_for("admin_invite"))
 
 
