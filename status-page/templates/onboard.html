@@ -13,28 +13,33 @@
             color: #e0e0e0;
             min-height: 100vh;
         }
-        .container {
-            max-width: 500px;
-            margin: 0 auto;
-            padding: 2rem 1rem;
+        .page-header {
+            text-align: center;
+            padding: 2.5rem 1rem 1rem;
+        }
+        .page-header h1 { font-size: 1.8rem; color: #fff; margin-bottom: 0.5rem; }
+        .page-header p { color: #8892b0; font-size: 1rem; }
+        .columns {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 1.25rem;
+            max-width: 1100px;
+            margin: 1.5rem auto;
+            padding: 0 1rem 2rem;
+            align-items: start;
+        }
+        @media (max-width: 900px) {
+            .columns { grid-template-columns: 1fr; max-width: 500px; }
         }
         .card {
             background: #16213e;
             border-radius: 12px;
-            padding: 2.5rem;
-            width: 100%;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
-        }
-        .section {
-            background: #16213e;
-            border-radius: 12px;
-            padding: 1.5rem;
-            margin-top: 1.25rem;
+            padding: 1.75rem;
             box-shadow: 0 4px 16px rgba(0,0,0,0.2);
         }
-        .section h2 { font-size: 1.1rem; color: #fff; margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 1px solid #1a3a5c; }
-        h1 { font-size: 1.5rem; margin-bottom: 0.5rem; color: #fff; }
-        .subtitle { color: #8892b0; font-size: 0.9rem; margin-bottom: 2rem; line-height: 1.5; }
+        .card h2 { font-size: 1.1rem; color: #fff; margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 1px solid #1a3a5c; }
+        .card h3 { font-size: 0.95rem; color: #e0e0e0; margin-top: 1rem; margin-bottom: 0.5rem; }
+        .card h3:first-child { margin-top: 0; }
         label { display: block; font-size: 0.85rem; color: #8892b0; margin-bottom: 0.4rem; margin-top: 0.75rem; }
         input[type="text"], input[type="email"] {
             width: 100%;
@@ -71,85 +76,132 @@
         }
         .flash.info { background: rgba(100,150,255,0.15); color: #8ab4f8; }
         .flash.error { background: rgba(233,69,96,0.15); color: #e94560; }
-        .prereqs {
-            background: #0f3460;
-            border-radius: 8px;
-            padding: 1rem;
-            margin-bottom: 1.5rem;
-            font-size: 0.85rem;
-            line-height: 1.6;
+        .info-list { line-height: 1.8; font-size: 0.9rem; color: #8892b0; padding-left: 1.2rem; }
+        .info-list li { margin-bottom: 0.25rem; }
+        .info-list strong { color: #e0e0e0; }
+        .faq-item { margin-bottom: 0.75rem; font-size: 0.9rem; color: #8892b0; line-height: 1.7; }
+        .faq-item:last-child { margin-bottom: 0; }
+        .faq-item strong { color: #e0e0e0; }
+        .step-num {
+            display: inline-block;
+            width: 22px;
+            height: 22px;
+            background: #e94560;
+            color: #fff;
+            border-radius: 50%;
+            text-align: center;
+            font-size: 0.75rem;
+            font-weight: 700;
+            line-height: 22px;
+            margin-right: 0.4rem;
         }
-        .prereqs strong { color: #fff; }
-        .prereqs a { color: #8ab4f8; }
+        .steps-list { list-style: none; padding: 0; }
+        .steps-list li { line-height: 1.8; font-size: 0.9rem; color: #8892b0; margin-bottom: 0.25rem; }
+        .steps-list strong { color: #e0e0e0; }
+        .time-badge {
+            display: inline-block;
+            background: #0f3460;
+            color: #8ab4f8;
+            padding: 0.15rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            margin-left: 0.25rem;
+        }
+        a { color: #8ab4f8; }
     </style>
 </head>
 <body>
-    <div class="container">
-    <div class="card">
-        <h1>Join the Media Server</h1>
-        <p class="subtitle">Request access to stream movies and TV shows.</p>
+    <div class="page-header">
+        <h1>Media Server</h1>
+        <p>Stream movies and TV shows on demand</p>
+    </div>
 
-        {% with messages = get_flashed_messages(with_categories=true) %}
-            {% for category, message in messages %}
-                <div class="flash {{ category }}">{{ message }}</div>
-            {% endfor %}
-        {% endwith %}
+    <div class="columns">
+        <!-- Column 1: What to expect -->
+        <div class="card">
+            <h2>What to Expect</h2>
 
-        <div class="prereqs">
-            <strong>Before you start, you'll need:</strong><br>
-            1. A <a href="https://plex.tv" target="_blank">Plex</a> account (free)<br>
-            2. A <a href="https://trakt.tv" target="_blank">Trakt</a> account (free)
+            <h3>The Onboarding Process</h3>
+            <ul class="steps-list">
+                <li><span class="step-num">1</span> Fill out the form <span class="time-badge">1 min</span></li>
+                <li><span class="step-num">2</span> Wait for admin approval <span class="time-badge">manual</span></li>
+                <li><span class="step-num">3</span> Authorize Trakt (2x) <span class="time-badge">2 min</span></li>
+                <li><span class="step-num">4</span> Set up VPN on your device <span class="time-badge">5 min</span></li>
+                <li><span class="step-num">5</span> Install Plex and start watching</li>
+            </ul>
+
+            <h3>Before You Start</h3>
+            <ol class="info-list">
+                <li>Create a free <a href="https://plex.tv" target="_blank">Plex</a> account</li>
+                <li>Create a free <a href="https://trakt.tv" target="_blank">Trakt</a> account</li>
+                <li>Use the <strong>same email</strong> for Plex and for this form</li>
+            </ol>
+
+            <h3>What You'll Need After Approval</h3>
+            <ul class="info-list" style="list-style:disc">
+                <li>Your phone, laptop, or TV to install <strong>WireGuard VPN</strong></li>
+                <li>The <strong>Plex</strong> app on whatever you watch on</li>
+                <li>Your <strong>Trakt</strong> account to authorize the connection (done in the browser)</li>
+            </ul>
         </div>
 
-        <form method="POST">
-            <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
-            <label for="name">Your name</label>
-            <input type="text" id="name" name="name" placeholder="e.g. Alex" required>
-            <label for="email">Email</label>
-            <input type="email" id="email" name="email" placeholder="Must match your Plex account" required>
-            <div class="hint">Use the same email as your Plex account</div>
-            <label for="trakt_username">Trakt username</label>
-            <input type="text" id="trakt_username" name="trakt_username" placeholder="e.g. alex123" required>
-            <div class="hint">Find it at trakt.tv/users/me</div>
-            <div class="cf-turnstile" data-sitekey="{{ turnstile_site_key }}" data-theme="dark" style="margin-top:1.25rem"></div>
-            <button type="submit">Request Access</button>
-        </form>
-        <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
-    </div>
+        <!-- Column 2: How it works + FAQ -->
+        <div class="card">
+            <h2>How It Works</h2>
+            <ol class="info-list">
+                <li>Add a movie or show to your <strong>Trakt watchlist</strong></li>
+                <li>The server picks it up within an hour</li>
+                <li>It downloads and appears in <strong>Plex</strong></li>
+                <li>30 days after watching, it's auto-removed to free space</li>
+            </ol>
+            <p style="font-size:0.85rem;color:#5a6a8a;margin-top:0.75rem">You can also browse and request through <strong style="color:#8892b0">Seerr</strong>, a visual catalog with posters and ratings.</p>
 
-    <div class="section">
-        <h2>How It Works</h2>
-        <ol style="line-height:1.8;font-size:0.9rem;color:#8892b0;padding-left:1.2rem">
-            <li>You add a movie or TV show to your <strong style="color:#e0e0e0">Trakt watchlist</strong></li>
-            <li>The server picks it up automatically (within an hour)</li>
-            <li>It downloads and appears in <strong style="color:#e0e0e0">Plex</strong>, ready to watch</li>
-            <li>30 days after you've watched it, it's automatically removed to free up space</li>
-        </ol>
-        <p style="font-size:0.85rem;color:#5a6a8a;margin-top:0.75rem">You can also browse and request media through <strong style="color:#8892b0">Seerr</strong>, a visual catalog with posters, ratings, and trailers.</p>
-    </div>
+            <h2 style="margin-top:1.25rem">FAQ</h2>
+            <div class="faq-item"><strong>How long until content appears?</strong><br>
+            Up to ~2 hours (hourly sync + download + 15-min Plex scan).</div>
 
-    <div class="section">
-        <h2>FAQ</h2>
-        <div style="font-size:0.9rem;color:#8892b0;line-height:1.7">
-            <p style="margin-bottom:0.75rem"><strong style="color:#e0e0e0">How long until something appears in Plex?</strong><br>
-            The server checks your watchlist every hour, downloads take time, and Plex scans every 15 minutes. Total: up to ~2 hours.</p>
+            <div class="faq-item"><strong>Movies still in theaters?</strong><br>
+            Add to your watchlist &mdash; it downloads once a digital release is out.</div>
 
-            <p style="margin-bottom:0.75rem"><strong style="color:#e0e0e0">Can I request something still in theaters?</strong><br>
-            Yes, add it to your watchlist. It won't download until a digital release is available, then it's grabbed automatically.</p>
+            <div class="faq-item"><strong>How to remove content?</strong><br>
+            Remove from Trakt watchlist or delete in Plex. Both fully automatic.</div>
 
-            <p style="margin-bottom:0.75rem"><strong style="color:#e0e0e0">How do I remove something?</strong><br>
-            Remove it from your Trakt watchlist &mdash; the server will delete it from Plex within ~2 hours. Or delete it directly in Plex.</p>
+            <div class="faq-item"><strong>Storage limit?</strong><br>
+            Guests share a quota. Watched content auto-cleans after 30 days.</div>
 
-            <p style="margin-bottom:0.75rem"><strong style="color:#e0e0e0">Is there a storage limit?</strong><br>
-            Yes, guests share a storage quota. Watched content is automatically cleaned up after 30 days to free space.</p>
+            <div class="faq-item"><strong>Why VPN?</strong><br>
+            The VPN securely connects your device to the server. Plex won't work without it.</div>
 
-            <p style="margin-bottom:0.75rem"><strong style="color:#e0e0e0">Do I need a VPN?</strong><br>
-            Yes. After approval you'll get a VPN config file to connect securely. Plex won't work without it.</p>
-
-            <p><strong style="color:#e0e0e0">What quality are the downloads?</strong><br>
-            The server prefers 1080p releases with English subtitles included. 4K is only used as a fallback.</p>
+            <div class="faq-item"><strong>Quality?</strong><br>
+            1080p preferred with English subtitles. 4K only as fallback.</div>
         </div>
-    </div>
+
+        <!-- Column 3: Join form -->
+        <div class="card">
+            <h2>Request Access</h2>
+
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% for category, message in messages %}
+                    <div class="flash {{ category }}">{{ message }}</div>
+                {% endfor %}
+            {% endwith %}
+
+            <form method="POST">
+                <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+                <label for="name">Your name</label>
+                <input type="text" id="name" name="name" placeholder="e.g. Alex" required>
+                <label for="email">Email</label>
+                <input type="email" id="email" name="email" placeholder="Must match your Plex account" required>
+                <div class="hint">Use the same email as your Plex account</div>
+                <label for="trakt_username">Trakt username</label>
+                <input type="text" id="trakt_username" name="trakt_username" placeholder="e.g. alex123" required>
+                <div class="hint">Find it at trakt.tv/users/me</div>
+                <div class="cf-turnstile" data-sitekey="{{ turnstile_site_key }}" data-theme="dark" style="margin-top:1.25rem"></div>
+                <button type="submit">Request Access</button>
+            </form>
+            <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+        </div>
     </div>
 </body>
 </html>
