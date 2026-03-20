@@ -30,7 +30,7 @@ fi
 
 SONARR_GUEST_URL="http://localhost:8990"
 RADARR_GUEST_URL="http://localhost:7879"
-DB_PATH="${STATUSPAGE_DB_PATH:-/home/janoslaszlo/Documents/mediaserver/config/statuspage/statuspage.db}"
+DB_PATH="${STATUSPAGE_DB_PATH:-/config/statuspage/statuspage.db}"
 STATE_FILE="/var/tmp/mediaserver-guest-notify.json"
 
 log() {

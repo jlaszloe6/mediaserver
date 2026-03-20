@@ -21,4 +21,4 @@ GitHub wiki auto-displays the page title from the filename. Do not start wiki pa
 
 ## Project Separation
 
-Business projects (Forgejo at `git.e6integrations.hu`) and hobby projects (GitHub) are completely isolated. Never mix content, memories, or context between them.
+Business projects (hosted on Forgejo) and hobby projects (hosted on GitHub) are completely isolated. Never mix content, memories, or context between them.
