@@ -97,6 +97,52 @@
         .flash.error { background: rgba(233,69,96,0.15); color: #e94560; }
         .empty { color: #8892b0; font-size: 0.85rem; font-style: italic; }
 
+        /* Remove confirmation modal */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.7);
+            z-index: 100;
+            align-items: center;
+            justify-content: center;
+        }
+        .modal-overlay.active { display: flex; }
+        .modal {
+            background: #16213e;
+            border-radius: 12px;
+            padding: 2rem;
+            max-width: 420px;
+            width: 90%;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+        }
+        .modal h3 { color: #e94560; font-size: 1.1rem; margin-bottom: 1rem; }
+        .modal p { color: #8892b0; font-size: 0.9rem; line-height: 1.6; margin-bottom: 1rem; }
+        .modal ul { color: #8892b0; font-size: 0.85rem; line-height: 1.8; padding-left: 1.2rem; margin-bottom: 1.25rem; }
+        .modal ul strong { color: #e0e0e0; }
+        .modal-confirm {
+            display: flex; gap: 0.5rem; align-items: center; margin-bottom: 1.25rem;
+        }
+        .modal-confirm input[type="text"] {
+            flex: 1; padding: 0.6rem 0.8rem; background: #0a0e1a;
+            border: 1px solid #1a3a5c; border-radius: 8px;
+            color: #e0e0e0; font-size: 0.9rem; outline: none;
+        }
+        .modal-confirm input:focus { border-color: #e94560; }
+        .modal-actions { display: flex; gap: 0.75rem; justify-content: flex-end; }
+        .modal-actions .btn-cancel {
+            padding: 0.5rem 1rem; background: transparent; border: 1px solid #2a2a4a;
+            color: #8892b0; border-radius: 6px; cursor: pointer; font-size: 0.85rem;
+        }
+        .modal-actions .btn-cancel:hover { border-color: #8892b0; }
+        .modal-actions .btn-confirm-remove {
+            padding: 0.5rem 1rem; background: #e94560; border: none;
+            color: #fff; border-radius: 6px; cursor: pointer; font-size: 0.85rem; font-weight: 600;
+            opacity: 0.4; pointer-events: none;
+        }
+        .modal-actions .btn-confirm-remove.enabled { opacity: 1; pointer-events: auto; }
+        .modal-actions .btn-confirm-remove.enabled:hover { background: #c73a52; }
+
         @media (max-width: 600px) {
             .container { padding: 1rem 0.5rem; }
             .approval-card { flex-direction: column; gap: 0.75rem; }
@@ -212,11 +258,7 @@
                             </td>
                             <td>
                                 {% if g.active %}
-                                <form action="{{ url_for('admin_invite_remove', guest_id=g.id) }}" method="post" style="margin:0"
-                                      onsubmit="return confirm('Remove {{ g.name }}? This will delete their Trakt import lists, revoke Plex library access, and remove their VPN client.')">
-                                    <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
-                                    <button type="submit" class="btn btn-remove">Remove</button>
-                                </form>
+                                <button class="btn btn-remove" onclick="showRemoveModal('{{ g.name }}', '{{ url_for('admin_invite_remove', guest_id=g.id) }}')">Remove</button>
                                 {% endif %}
                             </td>
                         </tr>
@@ -229,5 +271,63 @@
             {% endif %}
         </div>
     </div>
+
+    <!-- Remove confirmation modal -->
+    <div class="modal-overlay" id="remove-modal">
+        <div class="modal">
+            <h3>Remove Guest</h3>
+            <p>This will permanently remove <strong id="modal-guest-name"></strong> and:</p>
+            <ul>
+                <li><strong>Delete</strong> their Trakt import lists from Sonarr-Guest and Radarr-Guest</li>
+                <li><strong>Revoke</strong> Plex library access (Guest TV &amp; Guest Movies)</li>
+                <li><strong>Delete</strong> their WireGuard VPN client</li>
+            </ul>
+            <p style="font-size:0.85rem">Type the guest's name to confirm:</p>
+            <div class="modal-confirm">
+                <input type="text" id="modal-confirm-input" placeholder="Type name here" autocomplete="off">
+            </div>
+            <div class="modal-actions">
+                <button class="btn-cancel" onclick="hideRemoveModal()">Cancel</button>
+                <form id="modal-remove-form" method="post" style="margin:0">
+                    <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+                    <button type="submit" class="btn-confirm-remove" id="modal-confirm-btn" disabled>Remove Guest</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    var _removeGuestName = '';
+
+    function showRemoveModal(name, action) {
+        _removeGuestName = name;
+        document.getElementById('modal-guest-name').textContent = name;
+        document.getElementById('modal-remove-form').action = action;
+        document.getElementById('modal-confirm-input').value = '';
+        document.getElementById('modal-confirm-btn').classList.remove('enabled');
+        document.getElementById('modal-confirm-btn').disabled = true;
+        document.getElementById('remove-modal').classList.add('active');
+        document.getElementById('modal-confirm-input').focus();
+    }
+
+    function hideRemoveModal() {
+        document.getElementById('remove-modal').classList.remove('active');
+    }
+
+    document.getElementById('modal-confirm-input').addEventListener('input', function() {
+        var btn = document.getElementById('modal-confirm-btn');
+        if (this.value === _removeGuestName) {
+            btn.classList.add('enabled');
+            btn.disabled = false;
+        } else {
+            btn.classList.remove('enabled');
+            btn.disabled = true;
+        }
+    });
+
+    document.getElementById('remove-modal').addEventListener('click', function(e) {
+        if (e.target === this) hideRemoveModal();
+    });
+    </script>
 </body>
 </html>
