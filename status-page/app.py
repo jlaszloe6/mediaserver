@@ -995,14 +995,19 @@ def create_wg_client(guest_name):
     return clients[-1]["id"]
 
 
-def send_guest_welcome(email, name):
+def send_guest_welcome(email, name, onboard_token):
+    setup_url = f"{BASE_URL}/onboard/{onboard_token}"
     _send_email(email, "Welcome to the Media Server!", f"""\
 <html>
 <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
 <h1 style="color: #1a1a2e; border-bottom: 2px solid #e94560; padding-bottom: 10px;">Welcome to the Media Server, {name}!</h1>
-<h2 style="color: #16213e;">Getting Started with Plex</h2>
-<p>Download the <strong>Plex</strong> app on your phone, TV, or streaming device. Sign in with your Plex account. You'll see two libraries: <strong>Guest TV</strong> and <strong>Guest Movies</strong>.</p>
-<h2 style="color: #16213e;">Adding Content via Trakt</h2>
+<h2 style="color: #16213e;">1. Set Up VPN (required)</h2>
+<p><strong>Plex will not work without the VPN.</strong> Visit your setup page to download the VPN config file and follow the instructions:</p>
+<p style="margin: 15px 0;"><a href="{setup_url}" style="background: #e94560; color: #fff; padding: 10px 20px; border-radius: 6px; text-decoration: none; font-weight: 600;">Open Setup Page</a></p>
+<p style="font-size: 13px; color: #888;">Bookmark this link &mdash; you can always come back to download your VPN config or review the setup instructions.</p>
+<h2 style="color: #16213e;">2. Install Plex</h2>
+<p>Download the <strong>Plex</strong> app on your phone, TV, or streaming device. <strong>Enable the VPN first</strong>, then sign in with your Plex account. You'll see two libraries: <strong>Guest TV</strong> and <strong>Guest Movies</strong>.</p>
+<h2 style="color: #16213e;">3. Add Content via Trakt</h2>
 <p>Your Trakt watchlist is connected. To add movies or TV shows:</p>
 <ol style="line-height: 1.8;">
 <li>Go to <a href="https://trakt.tv">trakt.tv</a></li>
@@ -1251,7 +1256,7 @@ def _finalize_onboard(guest):
         app.logger.error(f"WireGuard client creation failed for {guest['name']}: {e}")
 
     try:
-        send_guest_welcome(guest["email"], guest["name"])
+        send_guest_welcome(guest["email"], guest["name"], guest["onboard_token"])
     except Exception as e:
         app.logger.error(f"Welcome email failed for {guest['email']}: {e}")
 
