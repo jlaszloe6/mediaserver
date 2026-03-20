@@ -34,6 +34,17 @@
             transition: color 0.2s, border-color 0.2s;
         }
         .logout:hover { color: #e94560; border-color: #e94560; }
+        .guide-btn {
+            background: transparent;
+            color: #8892b0;
+            font-size: 0.9rem;
+            padding: 0.4rem 0.8rem;
+            border: 1px solid #2a2a4a;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: color 0.2s, border-color 0.2s;
+        }
+        .guide-btn:hover { color: #2ecc71; border-color: #2ecc71; }
 
         .section {
             background: #16213e;
@@ -153,6 +164,15 @@
 
         .empty { color: #8892b0; font-size: 0.85rem; font-style: italic; }
 
+        .flash {
+            padding: 0.75rem 1rem;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+            font-size: 0.9rem;
+        }
+        .flash.info { background: rgba(100,150,255,0.15); color: #8ab4f8; }
+        .flash.error { background: rgba(233,69,96,0.15); color: #e94560; }
+
         @media (max-width: 600px) {
             .stats { grid-template-columns: 1fr; }
             .container { padding: 1rem 0.5rem; }
@@ -165,8 +185,22 @@
     <div class="container">
         <header>
             <h1>Media Server Status</h1>
-            <a href="{{ url_for('logout') }}" class="logout">Log out</a>
+            <div style="display:flex;gap:0.5rem;align-items:center">
+                <form action="{{ url_for('send_guide') }}" method="post" style="margin:0">
+                    <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+                    <button type="submit" class="guide-btn" title="Email yourself the quick actions user manual">Send Guide</button>
+                </form>
+                <a href="{{ url_for('logout') }}" class="logout">Log out</a>
+            </div>
         </header>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            {% for category, message in messages %}
+                <div class="flash {{ category }}">{{ message }}</div>
+            {% endfor %}
+        {% endif %}
+        {% endwith %}
 
         <!-- Service Health -->
         <div class="section">

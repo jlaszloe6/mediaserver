@@ -1,4 +1,4 @@
-freya-mediaserver.duckdns.org {
+{$CADDY_DOMAIN_PLEX} {
 	tls {
 		dns duckdns {env.DUCKDNS_TOKEN}
 	}
@@ -13,7 +13,7 @@ freya-mediaserver.duckdns.org {
 	}
 }
 
-freya-seerr.duckdns.org {
+{$CADDY_DOMAIN_SEERR} {
 	tls {
 		dns duckdns {env.DUCKDNS_TOKEN}
 	}
@@ -28,7 +28,7 @@ freya-seerr.duckdns.org {
 	}
 }
 
-freya-status.duckdns.org {
+{$CADDY_DOMAIN_STATUS} {
 	tls {
 		dns duckdns {env.DUCKDNS_TOKEN}
 	}

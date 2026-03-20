@@ -424,6 +424,70 @@ def auth(token):
     return redirect(url_for("dashboard"))
 
 
+@app.route("/send-guide", methods=["POST"])
+@login_required
+def send_guide():
+    if not check_csrf():
+        abort(403)
+    email = session["user_email"]
+    try:
+        send_user_guide(email)
+        flash("Quick Actions guide sent to your email.", "info")
+    except Exception as e:
+        app.logger.error(f"Failed to send guide: {e}")
+        flash("Failed to send guide. Please try again later.", "error")
+    return redirect(url_for("dashboard"))
+
+
+def send_user_guide(email):
+    html = """\
+<html>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+<h1 style="color: #1a1a2e; border-bottom: 2px solid #e94560; padding-bottom: 10px;">Media Server Quick Actions</h1>
+
+<h2 style="color: #16213e;">Adding Movies &amp; TV Shows</h2>
+<table style="width: 100%; border-collapse: collapse; margin-bottom: 20px;">
+<tr style="background: #f5f5f5;"><td style="padding: 10px; border: 1px solid #ddd;"><strong>Trakt Watchlist</strong> (recommended)</td><td style="padding: 10px; border: 1px solid #ddd;">Go to <a href="https://trakt.tv">trakt.tv</a> &rarr; search &rarr; click bookmark icon. Picked up within 1 hour.</td></tr>
+<tr><td style="padding: 10px; border: 1px solid #ddd;"><strong>Seerr</strong></td><td style="padding: 10px; border: 1px solid #ddd;">Browse and request via the Seerr app. Sign in with your Plex account.</td></tr>
+</table>
+
+<h2 style="color: #16213e;">Removing Content</h2>
+<table style="width: 100%; border-collapse: collapse; margin-bottom: 20px;">
+<tr style="background: #f5f5f5;"><td style="padding: 10px; border: 1px solid #ddd;"><strong>Remove from Trakt</strong></td><td style="padding: 10px; border: 1px solid #ddd;">Remove from watchlist &rarr; auto-deleted within ~2 hours</td></tr>
+<tr><td style="padding: 10px; border: 1px solid #ddd;"><strong>Delete from Plex</strong></td><td style="padding: 10px; border: 1px solid #ddd;">Three dots (&hellip;) &rarr; Delete. Cleaned up within 30 minutes.</td></tr>
+</table>
+
+<h2 style="color: #16213e;">Watching</h2>
+<ul style="line-height: 1.8;">
+<li><strong>Plex apps</strong> &mdash; Install on phone, TV, streaming device, or game console. Sign in with your Plex account.</li>
+<li><strong>Web browser</strong> &mdash; Use the Plex web URL (ask your admin).</li>
+<li><strong>Quality</strong> &mdash; Set the Plex player to <strong>Original</strong> quality for best results. This avoids buffering.</li>
+<li><strong>Subtitles</strong> &mdash; Most downloads include English subtitles. Toggle them in the Plex player.</li>
+</ul>
+
+<h2 style="color: #16213e;">Good to Know</h2>
+<ul style="line-height: 1.8;">
+<li>Watched content is <strong>automatically removed after 30 days</strong> to free space.</li>
+<li>Want to rewatch? Just add it to your Trakt watchlist again.</li>
+<li>New releases download once a digital version is available (not while in theaters).</li>
+<li>TV series: all existing episodes download, and new ones download as they air.</li>
+</ul>
+
+<hr style="border: none; border-top: 1px solid #ddd; margin: 20px 0;">
+<p style="color: #888; font-size: 12px;">Sent from Media Server Status Page</p>
+</body>
+</html>"""
+
+    msg = MIMEText(html, "html")
+    msg["Subject"] = "Media Server - Quick Actions Guide"
+    msg["From"] = SMTP_FROM
+    msg["To"] = email
+    with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+        server.starttls()
+        server.login(SMTP_USER, SMTP_PASSWORD)
+        server.send_message(msg)
+
+
 @app.route("/logout")
 def logout():
     session.clear()
