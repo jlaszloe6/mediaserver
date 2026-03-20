@@ -357,6 +357,18 @@ sync_to_trakt() {
 
 sync_to_trakt
 
+# --- Phase 4: Clean up orphaned Transmission torrents ---
+# After deleting items from Sonarr/Radarr, their files are gone but torrents linger.
+# Remove torrents whose files no longer exist and seeding obligation is met.
+
+log "=== Transmission orphan cleanup ==="
+CLEANUP_ARGS=""
+$DRY_RUN && CLEANUP_ARGS="--dry-run"
+"$SCRIPT_DIR/transmission-cleanup.sh" $CLEANUP_ARGS 2>&1 | while IFS= read -r line; do log "$line"; done || {
+    log "WARN: transmission-cleanup.sh had errors"
+    ERRORS=$((ERRORS + 1))
+}
+
 if [ "$ERRORS" -gt 0 ]; then
     log "=== Done with $ERRORS error(s) ==="
     exit 1
