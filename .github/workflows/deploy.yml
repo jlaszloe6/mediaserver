@@ -1,0 +1,85 @@
+name: Deploy to freya-pc
+
+on:
+  push:
+    branches: [master]
+    paths-ignore:
+      - '*.md'
+      - '.gitignore'
+      - '.env.example'
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, freya-pc]
+    steps:
+      - name: Pull latest changes
+        working-directory: /home/janoslaszlo/Documents/mediaserver
+        run: git pull origin master
+
+      - name: Detect changed services
+        id: changes
+        working-directory: /home/janoslaszlo/Documents/mediaserver
+        run: |
+          BEFORE=${{ github.event.before }}
+          AFTER=${{ github.sha }}
+
+          rebuild_statuspage=false
+          rebuild_cron=false
+          rebuild_caddy=false
+
+          changed=$(git diff --name-only "$BEFORE" "$AFTER" 2>/dev/null || echo "")
+
+          if echo "$changed" | grep -q '^status-page/'; then
+            rebuild_statuspage=true
+          fi
+          if echo "$changed" | grep -qE '^(cron/|scripts/)'; then
+            rebuild_cron=true
+          fi
+          if echo "$changed" | grep -q '^caddy/'; then
+            rebuild_caddy=true
+          fi
+
+          echo "rebuild_statuspage=$rebuild_statuspage" >> "$GITHUB_OUTPUT"
+          echo "rebuild_cron=$rebuild_cron" >> "$GITHUB_OUTPUT"
+          echo "rebuild_caddy=$rebuild_caddy" >> "$GITHUB_OUTPUT"
+          echo "any_rebuild=$([ "$rebuild_statuspage" = true ] || [ "$rebuild_cron" = true ] || [ "$rebuild_caddy" = true ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+          echo "Changed files:"
+          echo "$changed"
+          echo "Rebuild: statuspage=$rebuild_statuspage cron=$rebuild_cron caddy=$rebuild_caddy"
+
+      - name: Build and restart statuspage
+        if: steps.changes.outputs.rebuild_statuspage == 'true'
+        working-directory: /home/janoslaszlo/Documents/mediaserver
+        run: docker compose up -d --build --no-deps statuspage
+
+      - name: Build and restart cron
+        if: steps.changes.outputs.rebuild_cron == 'true'
+        working-directory: /home/janoslaszlo/Documents/mediaserver
+        run: docker compose up -d --build --no-deps cron
+
+      - name: Build and restart caddy
+        if: steps.changes.outputs.rebuild_caddy == 'true'
+        working-directory: /home/janoslaszlo/Documents/mediaserver
+        run: docker compose up -d --build --no-deps caddy
+
+      - name: Verify services healthy
+        if: steps.changes.outputs.any_rebuild == 'true'
+        working-directory: /home/janoslaszlo/Documents/mediaserver
+        run: |
+          sleep 10
+          failed=false
+          for svc in statuspage cron caddy; do
+            status=$(docker inspect --format='{{.State.Status}}' "$svc" 2>/dev/null || echo "not found")
+            echo "$svc: $status"
+            if [ "$status" != "running" ]; then
+              echo "::error::$svc is not running!"
+              failed=true
+            fi
+          done
+          if [ "$failed" = true ]; then exit 1; fi
+          echo "All rebuilt services are running."
+
+      - name: No rebuild needed
+        if: steps.changes.outputs.any_rebuild == 'false'
+        run: echo "No custom-build services changed. Config/compose-only update pulled."
