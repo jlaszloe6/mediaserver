@@ -1,6 +1,6 @@
 # Media Server
 
-Docker Compose stack running on **freya-pc** (192.168.1.14). Code repo on development machine, deployed via GitHub Actions self-hosted runner.
+Docker Compose stack running on the server (`$SERVER_IP`). Code repo on development machine, deployed via GitHub Actions self-hosted runner.
 
 ## Stack
 
@@ -14,12 +14,12 @@ Guest instances: Sonarr-Guest, Radarr-Guest, Prunarr-Guest
 - Docker service names for inter-container communication: `prowlarr`, `sonarr`, `radarr`, `transmission`, `flaresolverr`
 
 ### Storage & Boot
-- Media on NFS (`192.168.1.76:/volume1/cluster-data/mediaserver`) — inotify doesn't work over NFS
+- Media on NFS (NAS) — inotify doesn't work over NFS
 - Docker depends on `remote-fs.target` via drop-in `/etc/systemd/system/docker.service.d/wait-for-nfs.conf`
 - Volume mappings: Sonarr/Radarr → `/data`, Transmission → `/downloads`, Plex → `/tv` + `/movies`
 
 ## CI/CD
-- GitHub Actions self-hosted runner on freya-pc
+- GitHub Actions self-hosted runner on the server
 - Deploy workflow detects changed custom-build services (statuspage, cron, caddy, dnsmasq) and rebuilds only those
 - `docker-compose.yml` changes trigger `docker compose up -d --no-build --no-recreate` for new services
 - Master branch is protected — all changes go through PRs
@@ -97,14 +97,15 @@ Guest instances: Sonarr-Guest, Radarr-Guest, Prunarr-Guest
 - Cron container needs Docker socket (`/var/run/docker.sock`) for `docker exec`
 
 ## dnsmasq (LAN DNS)
-- Custom Alpine build, host network, binds to `192.168.1.14:53` only
+- Custom Alpine build, host network, binds to `$SERVER_IP:53` only
 - Overrides DuckDNS domains to LAN IP (solves hairpin NAT)
-- Forwards all other queries to router (`192.168.1.1`)
+- Forwards all other queries to `$DNS_UPSTREAM`
+- Config templated via `envsubst` at container start
 
 ## WireGuard VPN (wg-easy)
 - wg-easy API: create returns `{"success": true}`, must fetch client list for ID
 - `WG_PASSWORD` env var used by onboarding to auto-create guest clients
-- Split tunnel: `AllowedIPs: 192.168.1.0/24, 10.13.13.0/24`
+- Split tunnel: `AllowedIPs: $LAN_SUBNET, 10.13.13.0/24`
 - DNAT rules in WG_POST_UP for localhost-bound services
 - Host requires `route_localnet=1` sysctl
 

@@ -1,14 +1,14 @@
 # Bind only to the LAN IP (avoids conflict with systemd-resolved on 127.0.0.53)
-listen-address=192.168.1.14
+listen-address=${SERVER_IP}
 bind-interfaces
 
 # Forward all queries to the home router
-server=192.168.1.1
+server=${DNS_UPSTREAM}
 
-# Override DuckDNS domains to resolve to freya-pc on LAN
-address=/freya-mediaserver.duckdns.org/192.168.1.14
-address=/freya-seerr.duckdns.org/192.168.1.14
-address=/freya-status.duckdns.org/192.168.1.14
+# Override DuckDNS domains to resolve to server on LAN
+address=/${CADDY_DOMAIN_PLEX}/${SERVER_IP}
+address=/${CADDY_DOMAIN_SEERR}/${SERVER_IP}
+address=/${CADDY_DOMAIN_STATUS}/${SERVER_IP}
 
 # Don't read /etc/resolv.conf (avoid loops)
 no-resolv
