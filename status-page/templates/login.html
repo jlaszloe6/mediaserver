@@ -92,8 +92,10 @@
             <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
             <label for="email">Email address</label>
             <input type="email" id="email" name="email" placeholder="you@example.com" required autofocus>
+            <div class="cf-turnstile" data-sitekey="{{ turnstile_site_key }}" data-theme="dark" style="margin-top:1.25rem"></div>
             <button type="submit">Send Login Link</button>
         </form>
+        <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
     </div>
 </body>
 </html>

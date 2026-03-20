@@ -102,8 +102,10 @@
             <label for="trakt_username">Trakt username</label>
             <input type="text" id="trakt_username" name="trakt_username" placeholder="e.g. alex123" required>
             <div class="hint">Find it at trakt.tv/users/me</div>
+            <div class="cf-turnstile" data-sitekey="{{ turnstile_site_key }}" data-theme="dark" style="margin-top:1.25rem"></div>
             <button type="submit">Request Access</button>
         </form>
+        <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
     </div>
 </body>
 </html>
