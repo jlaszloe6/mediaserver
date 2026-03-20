@@ -8,7 +8,17 @@
 }
 
 (geoip_hungary) {
+	@allowed {
+		remote_ip 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 127.0.0.0/8
+	}
+	@geoip_allowed {
+		maxmind_geolocation {
+			db_path "/data/geolite2/GeoLite2-Country.mmdb"
+			allow_countries HU
+		}
+	}
 	@blocked {
+		not remote_ip 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 127.0.0.0/8
 		not maxmind_geolocation {
 			db_path "/data/geolite2/GeoLite2-Country.mmdb"
 			allow_countries HU
