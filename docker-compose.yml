@@ -201,6 +201,26 @@ services:
     restart: unless-stopped
 
 
+  dnsmasq:
+    # dnsmasq — LAN DNS override for DuckDNS domains (resolves to freya-pc instead of public IP)
+    image: jpillora/dnsmasq@sha256:e3be01237a76e8e46dada2a42d5c439fdbeae5a98b52c61f4eae3a3e43ff3a69
+    container_name: dnsmasq
+    ports:
+      - "53:53/udp"
+      - "53:53/tcp"
+      - "127.0.0.1:5380:8080"
+    volumes:
+      - ./dnsmasq/dnsmasq.conf:/etc/dnsmasq.conf:ro
+    environment:
+      - HTTP_USER=admin
+      - HTTP_PASS=${DNSMASQ_PASSWORD:-admin}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "nslookup freya-status.duckdns.org 127.0.0.1 > /dev/null 2>&1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
   uptime-kuma:
     # uptime-kuma v1
     image: louislam/uptime-kuma@sha256:3d632903e6af34139a37f18055c4f1bfd9b7205ae1138f1e5e8940ddc1d176f9
