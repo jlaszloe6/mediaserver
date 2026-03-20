@@ -65,6 +65,10 @@ RADARR_TRAKT_CLIENT_ID = os.environ.get("RADARR_TRAKT_CLIENT_ID", "")
 WG_EASY_URL = "http://localhost:51821"
 WG_PASSWORD = os.environ.get("WG_PASSWORD", "")
 
+# Cloudflare Turnstile
+TURNSTILE_SITE_KEY = os.environ.get("TURNSTILE_SITE_KEY", "")
+TURNSTILE_SECRET_KEY = os.environ.get("TURNSTILE_SECRET_KEY", "")
+
 # SMTP
 SMTP_SERVER = os.environ.get("SMTP_SERVER", "smtp-relay.brevo.com")
 SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
@@ -76,6 +80,23 @@ SMTP_FROM = os.environ.get("SMTP_FROM", "")
 _rate_limits = {}
 RATE_LIMIT_MAX = 3
 RATE_LIMIT_WINDOW = 600  # 10 minutes
+
+
+def verify_turnstile(token):
+    """Verify Cloudflare Turnstile response. Returns True if valid or if Turnstile is not configured."""
+    if not TURNSTILE_SECRET_KEY:
+        return True
+    try:
+        r = requests.post("https://challenges.cloudflare.com/turnstile/v0/siteverify",
+                          data={"secret": TURNSTILE_SECRET_KEY, "response": token}, timeout=5)
+        return r.json().get("success", False)
+    except Exception:
+        return False
+
+
+@app.context_processor
+def inject_turnstile():
+    return {"turnstile_site_key": TURNSTILE_SITE_KEY}
 
 API_TIMEOUT = 3
 
@@ -478,6 +499,9 @@ def login():
     if request.method == "POST":
         if not check_csrf():
             abort(403)
+        if not verify_turnstile(request.form.get("cf-turnstile-response", "")):
+            flash("Verification failed. Please try again.", "error")
+            return render_template("login.html")
         email = request.form.get("email", "").strip().lower()
         if not email:
             flash("Please enter your email.", "error")
@@ -997,6 +1021,9 @@ def onboard():
     if request.method == "POST":
         if not check_csrf():
             abort(403)
+        if not verify_turnstile(request.form.get("cf-turnstile-response", "")):
+            flash("Verification failed. Please try again.", "error")
+            return render_template("onboard.html")
         name = request.form.get("name", "").strip()
         email = request.form.get("email", "").strip().lower()
         trakt_username = request.form.get("trakt_username", "").strip()

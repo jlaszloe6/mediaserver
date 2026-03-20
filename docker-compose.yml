@@ -258,6 +258,8 @@ services:
       - SONARR_TRAKT_CLIENT_ID=${SONARR_TRAKT_CLIENT_ID}
       - RADARR_TRAKT_CLIENT_ID=${RADARR_TRAKT_CLIENT_ID}
       - WG_PASSWORD=${WG_PASSWORD}
+      - TURNSTILE_SITE_KEY=${TURNSTILE_SITE_KEY}
+      - TURNSTILE_SECRET_KEY=${TURNSTILE_SECRET_KEY}
       - TRAKT_LOG=/logs/trakt-sync.log
     volumes:
       - ./config/statuspage:/app/data
