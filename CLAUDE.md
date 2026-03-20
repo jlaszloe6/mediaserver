@@ -112,5 +112,8 @@ Guest instances: Sonarr-Guest, Radarr-Guest, Prunarr-Guest
 ## Guest System
 - Separate Sonarr-Guest/Radarr-Guest/Prunarr-Guest pipeline
 - Shared storage quota (`GUEST_QUOTA_GB`), enforced by `guest-quota.sh`
-- Self-service onboarding: form → admin approval → Trakt auth (2x) → VPN auto-create → Plex auto-share
+- Self-service onboarding: form (Turnstile captcha) → admin approval → Trakt auth (2x) → VPN auto-create → Plex auto-share
 - `ADMIN_EMAILS` controls who gets onboarding notifications
+- Plex sharing uses plex.tv section IDs (NOT local library keys) — fetch from `https://plex.tv/api/servers/{machineId}`
+- Guest removal fully cleans up: Trakt import lists + Plex share revoke + WireGuard VPN client delete
+- Removal requires type-to-confirm modal (guest name)
