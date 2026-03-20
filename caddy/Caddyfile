@@ -1,7 +1,3 @@
-{
-	order maxmind_geolocation first
-}
-
 (security_headers) {
 	header {
 		Strict-Transport-Security "max-age=31536000;"
@@ -12,10 +8,12 @@
 }
 
 (geoip_hungary) {
-	maxmind_geolocation {
-		db_path "/data/geolite2/GeoLite2-Country.mmdb"
+	@blocked {
+		not maxmind_geolocation {
+			db_path "/data/geolite2/GeoLite2-Country.mmdb"
+			allow_countries HU
+		}
 	}
-	@blocked not maxmind_geolocation country HU
 	respond @blocked 403
 }
 
