@@ -12,6 +12,9 @@
 # Phase 3: Reverse-sync — pushes all monitored items from Sonarr/Radarr to each
 #           user's Trakt watchlist. This ensures Seerr requests appear in Trakt.
 #
+# Phase 4: Clean up orphaned Transmission torrents.
+#
+# Runs for both owner and guest instances (if guest API keys are set).
 # Run hourly via cron. The cleanup catches items unmonitored in the previous run.
 
 DRY_RUN=false
@@ -27,18 +30,16 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ENV_FILE="$SCRIPT_DIR/../.env"
 if [ -f "$ENV_FILE" ]; then
-    # Export only the variables we need
     SONARR_KEY=$(grep -m1 '^SONARR_API_KEY=' "$ENV_FILE" | cut -d= -f2-)
     RADARR_KEY=$(grep -m1 '^RADARR_API_KEY=' "$ENV_FILE" | cut -d= -f2-)
     SONARR_TRAKT_CLIENT_ID=$(grep -m1 '^SONARR_TRAKT_CLIENT_ID=' "$ENV_FILE" | cut -d= -f2-)
     RADARR_TRAKT_CLIENT_ID=$(grep -m1 '^RADARR_TRAKT_CLIENT_ID=' "$ENV_FILE" | cut -d= -f2-)
+    SONARR_GUEST_KEY=$(grep -m1 '^SONARR_GUEST_API_KEY=' "$ENV_FILE" | cut -d= -f2- || true)
+    RADARR_GUEST_KEY=$(grep -m1 '^RADARR_GUEST_API_KEY=' "$ENV_FILE" | cut -d= -f2- || true)
 else
     echo "ERROR: .env file not found at $ENV_FILE" >&2
     exit 1
 fi
-
-SONARR_URL="http://localhost:8989"
-RADARR_URL="http://localhost:7878"
 
 ERRORS=0
 
@@ -49,10 +50,19 @@ log() {
 BACKUP_DIR="/var/tmp/mediaserver-trakt-backup"
 mkdir -p "$BACKUP_DIR"
 
+# --- Build instance list ---
+# Format: "label|sonarr_url|sonarr_key|radarr_url|radarr_key"
+INSTANCES="owner|http://localhost:8989|$SONARR_KEY|http://localhost:7878|$RADARR_KEY"
+if [ -n "$SONARR_GUEST_KEY" ] && [ -n "$RADARR_GUEST_KEY" ]; then
+    INSTANCES="$INSTANCES
+guest|http://localhost:8990|$SONARR_GUEST_KEY|http://localhost:7879|$RADARR_GUEST_KEY"
+fi
+
 cycle_trakt_lists() {
     local service_name="$1"
     local base_url="$2"
     local api_key="$3"
+    local backup_label="$4"
 
     log "Processing $service_name..."
 
@@ -70,7 +80,7 @@ cycle_trakt_lists() {
 
     if [ -z "$trakt_ids" ]; then
         # Try to restore from backup
-        local backup_file="$BACKUP_DIR/${service_name,,}-lists.json"
+        local backup_file="$BACKUP_DIR/${backup_label}-lists.json"
         if [ -f "$backup_file" ]; then
             log "No Trakt import lists found — restoring from backup..."
             local backed_up
@@ -99,7 +109,7 @@ cycle_trakt_lists() {
     fi
 
     # Save backup of all Trakt list configs (with tokens) before any deletion
-    local backup_file="$BACKUP_DIR/${service_name,,}-lists.json"
+    local backup_file="$BACKUP_DIR/${backup_label}-lists.json"
     echo "$lists" | jq '[.[] | select(.listType == "trakt") | del(.id)]' > "$backup_file"
 
     for id in $trakt_ids; do
@@ -175,19 +185,6 @@ trigger_sync() {
     log "Triggered ImportListSync on $service_name"
 }
 
-log "=== Trakt import list force-refresh ==="
-
-cycle_trakt_lists "Sonarr" "$SONARR_URL" "$SONARR_KEY"
-cycle_trakt_lists "Radarr" "$RADARR_URL" "$RADARR_KEY"
-
-trigger_sync "Sonarr" "$SONARR_URL" "$SONARR_KEY"
-trigger_sync "Radarr" "$RADARR_URL" "$RADARR_KEY"
-
-# --- Phase 2: Cleanup unmonitored items ---
-# Items removed from Trakt become unmonitored (keepAndUnmonitor).
-# Delete them from Sonarr/Radarr along with their files.
-# Note: items unmonitored in THIS run's sync will be caught on the NEXT run.
-
 cleanup_unmonitored() {
     local service_name="$1"
     local base_url="$2"
@@ -237,28 +234,24 @@ cleanup_unmonitored() {
     log "  Cleaned up $count unmonitored item(s) from $service_name"
 }
 
-log "=== Cleanup unmonitored items ==="
-
-cleanup_unmonitored "Sonarr" "$SONARR_URL" "$SONARR_KEY" "series" "addImportListExclusion"
-cleanup_unmonitored "Radarr" "$RADARR_URL" "$RADARR_KEY" "movie" "addImportExclusion"
-
-# --- Phase 3: Reverse-sync monitored items to Trakt watchlists ---
-# Pushes all monitored movies/shows from Sonarr/Radarr to each user's Trakt
-# watchlist. This ensures items added via Seerr (or manually) appear in Trakt.
-# Tokens are extracted from Sonarr's existing Trakt import lists.
-
 sync_to_trakt() {
-    log "=== Reverse-sync to Trakt watchlists ==="
+    local instance_label="$1"
+    local sonarr_url="$2"
+    local sonarr_key="$3"
+    local radarr_url="$4"
+    local radarr_key="$5"
+
+    log "=== Reverse-sync to Trakt watchlists ($instance_label) ==="
 
     if [ -z "${SONARR_TRAKT_CLIENT_ID:-}" ]; then
         log "WARN: SONARR_TRAKT_CLIENT_ID not set in .env, skipping reverse-sync"
         return 0
     fi
 
-    # Extract per-user tokens from Sonarr's Trakt import lists
+    # Extract per-user tokens from this instance's Sonarr Trakt import lists
     local lists
-    lists=$(curl -sf -H "X-Api-Key: $SONARR_KEY" "$SONARR_URL/api/v3/importlist") || {
-        log "ERROR: Failed to fetch import lists from Sonarr for token extraction"
+    lists=$(curl -sf -H "X-Api-Key: $sonarr_key" "$sonarr_url/api/v3/importlist") || {
+        log "ERROR: Failed to fetch import lists from Sonarr ($instance_label) for token extraction"
         ERRORS=$((ERRORS + 1))
         return 1
     }
@@ -277,11 +270,11 @@ sync_to_trakt() {
         return 0
     fi
 
-    # Fetch all monitored movies from Radarr (tmdbId + imdbId)
+    # Fetch all monitored movies from this instance's Radarr
     local movies_payload=""
     local movies
-    movies=$(curl -sf -H "X-Api-Key: $RADARR_KEY" "$RADARR_URL/api/v3/movie") || {
-        log "ERROR: Failed to fetch movies from Radarr"
+    movies=$(curl -sf -H "X-Api-Key: $radarr_key" "$radarr_url/api/v3/movie") || {
+        log "ERROR: Failed to fetch movies from Radarr ($instance_label)"
         ERRORS=$((ERRORS + 1))
         movies="[]"
     }
@@ -294,13 +287,13 @@ sync_to_trakt() {
 
     local movie_count
     movie_count=$(echo "$movies_payload" | jq 'length')
-    log "  Found $movie_count monitored movies in Radarr"
+    log "  Found $movie_count monitored movies in Radarr ($instance_label)"
 
-    # Fetch all monitored series from Sonarr (tvdbId + imdbId)
+    # Fetch all monitored series from this instance's Sonarr
     local shows_payload=""
     local series
-    series=$(curl -sf -H "X-Api-Key: $SONARR_KEY" "$SONARR_URL/api/v3/series") || {
-        log "ERROR: Failed to fetch series from Sonarr"
+    series=$(curl -sf -H "X-Api-Key: $sonarr_key" "$sonarr_url/api/v3/series") || {
+        log "ERROR: Failed to fetch series from Sonarr ($instance_label)"
         ERRORS=$((ERRORS + 1))
         series="[]"
     }
@@ -313,7 +306,7 @@ sync_to_trakt() {
 
     local show_count
     show_count=$(echo "$shows_payload" | jq 'length')
-    log "  Found $show_count monitored series in Sonarr"
+    log "  Found $show_count monitored series in Sonarr ($instance_label)"
 
     # Sync to each user's Trakt watchlist
     while IFS= read -r entry; do
@@ -355,7 +348,27 @@ sync_to_trakt() {
     done <<< "$user_tokens"
 }
 
-sync_to_trakt
+# --- Run all phases for each instance ---
+
+while IFS= read -r instance; do
+    [ -z "$instance" ] && continue
+    IFS='|' read -r label sonarr_url sonarr_key radarr_url radarr_key <<< "$instance"
+
+    log "=== Trakt import list force-refresh ($label) ==="
+
+    cycle_trakt_lists "Sonarr ($label)" "$sonarr_url" "$sonarr_key" "${label}-sonarr"
+    cycle_trakt_lists "Radarr ($label)" "$radarr_url" "$radarr_key" "${label}-radarr"
+
+    trigger_sync "Sonarr ($label)" "$sonarr_url" "$sonarr_key"
+    trigger_sync "Radarr ($label)" "$radarr_url" "$radarr_key"
+
+    log "=== Cleanup unmonitored items ($label) ==="
+
+    cleanup_unmonitored "Sonarr ($label)" "$sonarr_url" "$sonarr_key" "series" "addImportListExclusion"
+    cleanup_unmonitored "Radarr ($label)" "$radarr_url" "$radarr_key" "movie" "addImportExclusion"
+
+    sync_to_trakt "$label" "$sonarr_url" "$sonarr_key" "$radarr_url" "$radarr_key"
+done <<< "$INSTANCES"
 
 # --- Phase 4: Clean up orphaned Transmission torrents ---
 # After deleting items from Sonarr/Radarr, their files are gone but torrents linger.
@@ -368,6 +381,14 @@ $DRY_RUN && CLEANUP_ARGS="--dry-run"
     log "WARN: transmission-cleanup.sh had errors"
     ERRORS=$((ERRORS + 1))
 }
+
+# --- Guest quota check ---
+if [ -n "$SONARR_GUEST_KEY" ] && [ -n "$RADARR_GUEST_KEY" ]; then
+    log "=== Guest quota check ==="
+    "$SCRIPT_DIR/guest-quota.sh" 2>&1 | while IFS= read -r line; do log "$line"; done || {
+        log "WARN: guest-quota.sh had errors"
+    }
+fi
 
 if [ "$ERRORS" -gt 0 ]; then
     log "=== Done with $ERRORS error(s) ==="

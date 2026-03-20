@@ -30,13 +30,20 @@ ENV_FILE="$SCRIPT_DIR/../.env"
 if [ -f "$ENV_FILE" ]; then
     SONARR_KEY=$(grep -m1 '^SONARR_API_KEY=' "$ENV_FILE" | cut -d= -f2-)
     RADARR_KEY=$(grep -m1 '^RADARR_API_KEY=' "$ENV_FILE" | cut -d= -f2-)
+    SONARR_GUEST_KEY=$(grep -m1 '^SONARR_GUEST_API_KEY=' "$ENV_FILE" | cut -d= -f2- || true)
+    RADARR_GUEST_KEY=$(grep -m1 '^RADARR_GUEST_API_KEY=' "$ENV_FILE" | cut -d= -f2- || true)
 else
     echo "ERROR: .env file not found at $ENV_FILE" >&2
     exit 1
 fi
 
-SONARR_URL="http://localhost:8989"
-RADARR_URL="http://localhost:7878"
+# Instance configs: "sonarr_url|sonarr_key|radarr_url|radarr_key"
+INSTANCE_CONFIGS="http://localhost:8989|$SONARR_KEY|http://localhost:7878|$RADARR_KEY"
+if [ -n "$SONARR_GUEST_KEY" ] && [ -n "$RADARR_GUEST_KEY" ]; then
+    INSTANCE_CONFIGS="$INSTANCE_CONFIGS
+http://localhost:8990|$SONARR_GUEST_KEY|http://localhost:7879|$RADARR_GUEST_KEY"
+fi
+
 TRANSMISSION_URL="http://localhost:9091/transmission/rpc"
 
 # --- Hit-and-run configuration ---
@@ -104,29 +111,41 @@ SEED_RATIO_LIMIT=$(transmission_rpc "$SID" \
     | jq -r '.arguments.seedRatioLimit // 2.0')
 log "Session seed ratio limit: $SEED_RATIO_LIMIT"
 
-# --- Build orphan detection data ---
+# --- Build orphan detection data (from ALL instances) ---
 QUEUE_HASHES=$(mktemp)
-{
-    curl -sf -H "X-Api-Key: $SONARR_KEY" "$SONARR_URL/api/v3/queue?pageSize=200" 2>/dev/null \
-        | jq -r '.records[].downloadId // empty' 2>/dev/null
-    curl -sf -H "X-Api-Key: $RADARR_KEY" "$RADARR_URL/api/v3/queue?pageSize=200" 2>/dev/null \
-        | jq -r '.records[].downloadId // empty' 2>/dev/null
-} | tr '[:upper:]' '[:lower:]' | sort -u > "$QUEUE_HASHES"
-
 RADARR_IDS=$(mktemp)
 SONARR_IDS=$(mktemp)
-curl -sf -H "X-Api-Key: $RADARR_KEY" "$RADARR_URL/api/v3/movie" 2>/dev/null \
-    | jq -r '.[].id' > "$RADARR_IDS"
-curl -sf -H "X-Api-Key: $SONARR_KEY" "$SONARR_URL/api/v3/series" 2>/dev/null \
-    | jq -r '.[].id' > "$SONARR_IDS"
-
 HISTORY_MAP=$(mktemp)
-{
-    curl -sf -H "X-Api-Key: $RADARR_KEY" "$RADARR_URL/api/v3/history?pageSize=500" 2>/dev/null \
-        | jq -r '.records[] | select(.downloadId != null) | "R:" + (.downloadId | ascii_downcase) + ":" + (.movieId | tostring)' 2>/dev/null
-    curl -sf -H "X-Api-Key: $SONARR_KEY" "$SONARR_URL/api/v3/history?pageSize=500" 2>/dev/null \
-        | jq -r '.records[] | select(.downloadId != null) | "S:" + (.downloadId | ascii_downcase) + ":" + (.seriesId | tostring)' 2>/dev/null
-} | sort -u > "$HISTORY_MAP"
+
+while IFS= read -r inst; do
+    [ -z "$inst" ] && continue
+    IFS='|' read -r s_url s_key r_url r_key <<< "$inst"
+
+    # Queue hashes
+    curl -sf -H "X-Api-Key: $s_key" "$s_url/api/v3/queue?pageSize=200" 2>/dev/null \
+        | jq -r '.records[].downloadId // empty' 2>/dev/null >> "$QUEUE_HASHES" || true
+    curl -sf -H "X-Api-Key: $r_key" "$r_url/api/v3/queue?pageSize=200" 2>/dev/null \
+        | jq -r '.records[].downloadId // empty' 2>/dev/null >> "$QUEUE_HASHES" || true
+
+    # Library IDs
+    curl -sf -H "X-Api-Key: $r_key" "$r_url/api/v3/movie" 2>/dev/null \
+        | jq -r '.[].id' >> "$RADARR_IDS" || true
+    curl -sf -H "X-Api-Key: $s_key" "$s_url/api/v3/series" 2>/dev/null \
+        | jq -r '.[].id' >> "$SONARR_IDS" || true
+
+    # History mapping
+    curl -sf -H "X-Api-Key: $r_key" "$r_url/api/v3/history?pageSize=500" 2>/dev/null \
+        | jq -r '.records[] | select(.downloadId != null) | "R:" + (.downloadId | ascii_downcase) + ":" + (.movieId | tostring)' 2>/dev/null >> "$HISTORY_MAP" || true
+    curl -sf -H "X-Api-Key: $s_key" "$s_url/api/v3/history?pageSize=500" 2>/dev/null \
+        | jq -r '.records[] | select(.downloadId != null) | "S:" + (.downloadId | ascii_downcase) + ":" + (.seriesId | tostring)' 2>/dev/null >> "$HISTORY_MAP" || true
+done <<< "$INSTANCE_CONFIGS"
+
+# Deduplicate and normalize
+sort -u -o "$QUEUE_HASHES" "$QUEUE_HASHES"
+tr '[:upper:]' '[:lower:]' < "$QUEUE_HASHES" > "$QUEUE_HASHES.tmp" && mv "$QUEUE_HASHES.tmp" "$QUEUE_HASHES"
+sort -u -o "$RADARR_IDS" "$RADARR_IDS"
+sort -u -o "$SONARR_IDS" "$SONARR_IDS"
+sort -u -o "$HISTORY_MAP" "$HISTORY_MAP"
 
 # --- Get torrents (with tracker info) ---
 TMPFILE=$(mktemp)

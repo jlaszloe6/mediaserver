@@ -11,6 +11,7 @@
 # 4. Removes those items from Sonarr/Radarr with import exclusion
 #    (prevents Trakt from re-importing them)
 #
+# Runs for both owner and guest instances (if guest API keys are set).
 # Run via cron every 30 minutes. On first run, only saves state (no deletions).
 
 DRY_RUN=false
@@ -28,16 +29,14 @@ ENV_FILE="$SCRIPT_DIR/../.env"
 if [ -f "$ENV_FILE" ]; then
     SONARR_KEY=$(grep -m1 '^SONARR_API_KEY=' "$ENV_FILE" | cut -d= -f2-)
     RADARR_KEY=$(grep -m1 '^RADARR_API_KEY=' "$ENV_FILE" | cut -d= -f2-)
+    SONARR_GUEST_KEY=$(grep -m1 '^SONARR_GUEST_API_KEY=' "$ENV_FILE" | cut -d= -f2- || true)
+    RADARR_GUEST_KEY=$(grep -m1 '^RADARR_GUEST_API_KEY=' "$ENV_FILE" | cut -d= -f2- || true)
 else
     echo "ERROR: .env file not found at $ENV_FILE" >&2
     exit 1
 fi
 
-SONARR_URL="http://localhost:8989"
-RADARR_URL="http://localhost:7878"
-
 STATE_DIR="/var/tmp/mediaserver-cleanup"
-STATE_FILE="$STATE_DIR/file-state.json"
 mkdir -p "$STATE_DIR"
 
 ERRORS=0
@@ -45,6 +44,13 @@ ERRORS=0
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >&2
 }
+
+# --- Build instance list ---
+INSTANCES="owner|http://localhost:8989|$SONARR_KEY|http://localhost:7878|$RADARR_KEY"
+if [ -n "$SONARR_GUEST_KEY" ] && [ -n "$RADARR_GUEST_KEY" ]; then
+    INSTANCES="$INSTANCES
+guest|http://localhost:8990|$SONARR_GUEST_KEY|http://localhost:7879|$RADARR_GUEST_KEY"
+fi
 
 # Trigger a disk rescan and wait for completion (up to 2 minutes)
 trigger_rescan() {
@@ -217,41 +223,49 @@ process_series() {
     echo "$current_state"
 }
 
-log "=== Plex deletion cleanup ==="
+# --- Process each instance ---
 
-# Step 1: Trigger disk rescans
-log "Rescanning disk..."
-trigger_rescan "Radarr" "$RADARR_URL" "$RADARR_KEY" "RescanMovie"
-trigger_rescan "Sonarr" "$SONARR_URL" "$SONARR_KEY" "RescanSeries"
+while IFS= read -r instance; do
+    [ -z "$instance" ] && continue
+    IFS='|' read -r label sonarr_url sonarr_key radarr_url radarr_key <<< "$instance"
 
-# Step 2: Load previous state
-prev_movies="{}"
-prev_series="{}"
-if [ -f "$STATE_FILE" ]; then
-    prev_movies=$(jq '.movies // {}' "$STATE_FILE")
-    prev_series=$(jq '.series // {}' "$STATE_FILE")
-    log "Loaded previous state from $STATE_FILE"
-else
-    log "No previous state found — first run, saving baseline only"
-fi
+    STATE_FILE="$STATE_DIR/file-state-${label}.json"
 
-# Step 3: Process and detect deletions (skip cleanup on first run)
-log "Checking Radarr movies..."
-new_movies=$(process_movies "$RADARR_URL" "$RADARR_KEY" "$prev_movies")
+    log "=== Plex deletion cleanup ($label) ==="
 
-log "Checking Sonarr series..."
-new_series=$(process_series "$SONARR_URL" "$SONARR_KEY" "$prev_series")
+    # Step 1: Trigger disk rescans
+    log "Rescanning disk..."
+    trigger_rescan "Radarr ($label)" "$radarr_url" "$radarr_key" "RescanMovie"
+    trigger_rescan "Sonarr ($label)" "$sonarr_url" "$sonarr_key" "RescanSeries"
 
-# Step 4: Save current state
-jq -n \
-    --argjson movies "$new_movies" \
-    --argjson series "$new_series" \
-    '{movies: $movies, series: $series}' > "$STATE_FILE"
+    # Step 2: Load previous state
+    prev_movies="{}"
+    prev_series="{}"
+    if [ -f "$STATE_FILE" ]; then
+        prev_movies=$(jq '.movies // {}' "$STATE_FILE")
+        prev_series=$(jq '.series // {}' "$STATE_FILE")
+        log "Loaded previous state from $STATE_FILE"
+    else
+        log "No previous state found — first run, saving baseline only"
+    fi
 
-log "State saved to $STATE_FILE"
+    # Step 3: Process and detect deletions (skip cleanup on first run)
+    log "Checking Radarr ($label) movies..."
+    new_movies=$(process_movies "$radarr_url" "$radarr_key" "$prev_movies")
+
+    log "Checking Sonarr ($label) series..."
+    new_series=$(process_series "$sonarr_url" "$sonarr_key" "$prev_series")
+
+    # Step 4: Save current state
+    jq -n \
+        --argjson movies "$new_movies" \
+        --argjson series "$new_series" \
+        '{movies: $movies, series: $series}' > "$STATE_FILE"
+
+    log "State saved to $STATE_FILE"
+done <<< "$INSTANCES"
 
 # --- Clean up orphaned Transmission torrents ---
-# After deleting items from Sonarr/Radarr, their files are gone but torrents linger.
 log "=== Transmission orphan cleanup ==="
 CLEANUP_ARGS=""
 $DRY_RUN && CLEANUP_ARGS="--dry-run"

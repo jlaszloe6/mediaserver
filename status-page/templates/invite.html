@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Guest Management - Media Server</title>
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #e0e0e0;
+            min-height: 100vh;
+        }
+        .container { max-width: 900px; margin: 0 auto; padding: 2rem 1rem; }
+        header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; }
+        header h1 { font-size: 1.5rem; color: #fff; }
+        .back-link {
+            color: #8892b0; text-decoration: none; font-size: 0.9rem;
+            padding: 0.4rem 0.8rem; border: 1px solid #2a2a4a; border-radius: 6px;
+            transition: color 0.2s, border-color 0.2s;
+        }
+        .back-link:hover { color: #e94560; border-color: #e94560; }
+
+        .section {
+            background: #16213e; border-radius: 12px; padding: 1.5rem;
+            margin-bottom: 1.25rem; box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+        }
+        .section h2 {
+            font-size: 1.1rem; color: #fff; margin-bottom: 1rem;
+            padding-bottom: 0.5rem; border-bottom: 1px solid #1a3a5c;
+        }
+
+        .url-box {
+            display: flex; gap: 0.5rem; align-items: center;
+        }
+        .url-box input {
+            flex: 1; padding: 0.6rem 0.8rem; background: #0a0e1a;
+            border: 1px solid #1a3a5c; border-radius: 8px;
+            color: #8ab4f8; font-family: monospace; font-size: 0.85rem;
+            outline: none;
+        }
+        .url-box button {
+            padding: 0.6rem 1rem; background: #0f3460; color: #8892b0;
+            border: 1px solid #1a3a5c; border-radius: 8px; cursor: pointer;
+            font-size: 0.85rem; transition: all 0.2s;
+        }
+        .url-box button:hover { color: #2ecc71; border-color: #2ecc71; }
+
+        .approval-card {
+            background: #0f3460; border-radius: 8px; padding: 1rem; margin-bottom: 0.75rem;
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        .approval-info { font-size: 0.9rem; }
+        .approval-info strong { color: #fff; }
+        .approval-info span { color: #8892b0; font-size: 0.8rem; }
+        .approval-actions { display: flex; gap: 0.5rem; }
+
+        .btn {
+            display: inline-block; padding: 0.45rem 0.9rem; border: none;
+            border-radius: 6px; font-size: 0.8rem; font-weight: 600;
+            cursor: pointer; transition: background 0.2s; text-decoration: none;
+        }
+        .btn-approve { background: #2ecc71; color: #fff; }
+        .btn-approve:hover { background: #27ae60; }
+        .btn-reject { background: transparent; border: 1px solid #e94560; color: #e94560; }
+        .btn-reject:hover { background: rgba(233,69,96,0.1); }
+        .btn-plex { background: #e5a00d; color: #1a1a2e; }
+        .btn-plex:hover { background: #c8900b; }
+        .btn-remove { background: transparent; border: 1px solid #e94560; color: #e94560; }
+        .btn-remove:hover { background: rgba(233,69,96,0.1); }
+
+        table { width: 100%; border-collapse: collapse; }
+        th { text-align: left; color: #8892b0; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; padding: 0.5rem 0.75rem; }
+        td { padding: 0.6rem 0.75rem; border-top: 1px solid #1a3a5c; font-size: 0.85rem; }
+
+        .badge {
+            padding: 0.2rem 0.5rem; border-radius: 12px; font-size: 0.7rem; font-weight: 600;
+        }
+        .badge-active { background: rgba(46,204,113,0.15); color: #2ecc71; }
+        .badge-pending { background: rgba(229,160,13,0.15); color: #e5a00d; }
+        .badge-auth { background: rgba(100,150,255,0.15); color: #8ab4f8; }
+        .badge-complete { background: rgba(46,204,113,0.15); color: #2ecc71; }
+        .badge-inactive { background: rgba(233,69,96,0.15); color: #e94560; }
+
+        .plex-warn {
+            background: rgba(229,160,13,0.1); border: 1px solid rgba(229,160,13,0.3);
+            border-radius: 6px; padding: 0.5rem 0.75rem; font-size: 0.8rem;
+            color: #e5a00d; margin-top: 0.5rem;
+        }
+
+        .flash {
+            padding: 0.75rem 1rem; border-radius: 8px; margin-bottom: 1rem; font-size: 0.9rem;
+        }
+        .flash.info { background: rgba(100,150,255,0.15); color: #8ab4f8; }
+        .flash.error { background: rgba(233,69,96,0.15); color: #e94560; }
+        .empty { color: #8892b0; font-size: 0.85rem; font-style: italic; }
+
+        @media (max-width: 600px) {
+            .container { padding: 1rem 0.5rem; }
+            .approval-card { flex-direction: column; gap: 0.75rem; }
+            table { font-size: 0.8rem; }
+            th, td { padding: 0.4rem; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Guest Management</h1>
+            <a href="{{ url_for('dashboard') }}" class="back-link">Back to Dashboard</a>
+        </header>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            {% for category, message in messages %}
+                <div class="flash {{ category }}">{{ message }}</div>
+            {% endfor %}
+        {% endif %}
+        {% endwith %}
+
+        <!-- Onboarding URL -->
+        <div class="section">
+            <h2>Onboarding Link</h2>
+            <p style="font-size:0.85rem;color:#8892b0;margin-bottom:0.75rem">Share this link with potential guests:</p>
+            <div class="url-box">
+                <input type="text" value="{{ onboard_url }}" readonly id="onboard-url">
+                <button onclick="navigator.clipboard.writeText(document.getElementById('onboard-url').value);this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500)">Copy</button>
+            </div>
+        </div>
+
+        <!-- Pending Approvals -->
+        {% if pending %}
+        <div class="section">
+            <h2>Pending Approvals ({{ pending|length }})</h2>
+            {% for g in pending %}
+            <div class="approval-card">
+                <div class="approval-info">
+                    <strong>{{ g.name }}</strong><br>
+                    <span>{{ g.email }} &middot; Trakt: {{ g.trakt_username }} &middot; {{ g.invited_at[:10] if g.invited_at else '' }}</span>
+                </div>
+                <div class="approval-actions">
+                    <form action="{{ url_for('admin_invite_approve', guest_id=g.id) }}" method="post" style="margin:0">
+                        <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+                        <button type="submit" class="btn btn-approve">Approve</button>
+                    </form>
+                    <form action="{{ url_for('admin_invite_reject', guest_id=g.id) }}" method="post" style="margin:0">
+                        <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+                        <button type="submit" class="btn btn-reject">Reject</button>
+                    </form>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        <!-- Guest List -->
+        <div class="section">
+            <h2>Guests</h2>
+            {% if guests %}
+
+            {% set needs_plex = guests | selectattr('status', 'equalto', 'complete') | rejectattr('plex_shared') | list %}
+            {% if needs_plex %}
+            <div class="plex-warn">
+                Action needed: {{ needs_plex|length }} guest(s) need Plex library sharing. Go to Plex Settings &gt; Users &amp; Sharing, share only <strong>Guest TV</strong> and <strong>Guest Movies</strong>, then click "Mark Shared" below.
+            </div>
+            {% endif %}
+
+            <div style="overflow-x:auto;margin-top:0.75rem">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Email</th>
+                            <th>Trakt</th>
+                            <th>Status</th>
+                            <th>Plex</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for g in guests %}
+                        <tr>
+                            <td>{{ g.name }}</td>
+                            <td>{{ g.email }}</td>
+                            <td>{{ g.trakt_username }}</td>
+                            <td>
+                                {% if g.status == 'complete' and g.active %}
+                                    <span class="badge badge-complete">Complete</span>
+                                {% elif g.status == 'approved' %}
+                                    <span class="badge badge-pending">Awaiting Auth</span>
+                                {% elif g.status in ('trakt_tv_auth', 'trakt_movie_auth') %}
+                                    <span class="badge badge-auth">Authenticating</span>
+                                {% elif g.status == 'rejected' or not g.active %}
+                                    <span class="badge badge-inactive">Inactive</span>
+                                {% else %}
+                                    <span class="badge badge-pending">{{ g.status }}</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if g.status == 'complete' and not g.plex_shared %}
+                                    <form action="{{ url_for('admin_invite_plex_shared', guest_id=g.id) }}" method="post" style="margin:0">
+                                        <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+                                        <button type="submit" class="btn btn-plex">Mark Shared</button>
+                                    </form>
+                                {% elif g.plex_shared %}
+                                    <span style="color:#2ecc71;font-size:0.85rem">Shared</span>
+                                {% else %}
+                                    <span style="color:#5a6a8a;font-size:0.85rem">-</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if g.active %}
+                                <form action="{{ url_for('admin_invite_remove', guest_id=g.id) }}" method="post" style="margin:0"
+                                      onsubmit="return confirm('Remove {{ g.name }}? This will delete their Trakt import lists.')">
+                                    <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+                                    <button type="submit" class="btn btn-remove">Remove</button>
+                                </form>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+                <p class="empty">No guests yet. Share the onboarding link above to get started.</p>
+            {% endif %}
+        </div>
+    </div>
+</body>
+</html>

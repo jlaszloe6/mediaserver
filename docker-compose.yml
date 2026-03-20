@@ -15,6 +15,8 @@ services:
       - ./config/plex:/config
       - ${MEDIA_ROOT}/media/tv:/tv
       - ${MEDIA_ROOT}/media/movies:/movies
+      - ${MEDIA_ROOT}/media/guest-tv:/guest-tv
+      - ${MEDIA_ROOT}/media/guest-movies:/guest-movies
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:32400/identity"]
@@ -231,10 +233,17 @@ services:
       - SMTP_USER=${SMTP_USER}
       - SMTP_PASSWORD=${SMTP_PASSWORD}
       - SMTP_FROM=${SMTP_FROM}
+      - ADMIN_EMAILS=${ADMIN_EMAILS}
+      - SONARR_GUEST_API_KEY=${SONARR_GUEST_API_KEY}
+      - RADARR_GUEST_API_KEY=${RADARR_GUEST_API_KEY}
+      - GUEST_QUOTA_GB=${GUEST_QUOTA_GB}
+      - SONARR_TRAKT_CLIENT_ID=${SONARR_TRAKT_CLIENT_ID}
+      - RADARR_TRAKT_CLIENT_ID=${RADARR_TRAKT_CLIENT_ID}
+      - WG_PASSWORD=${WG_PASSWORD}
       - TRAKT_LOG=/logs/trakt-sync.log
     volumes:
       - ./config/statuspage:/app/data
-      - /tmp/trakt-sync.log:/logs/trakt-sync.log:ro
+      - cron-logs:/logs:ro
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/login"]
@@ -260,8 +269,8 @@ services:
       - WG_DEFAULT_DNS=192.168.1.1
       - WG_ALLOWED_IPS=192.168.1.0/24, 10.13.13.0/24
       - WG_PERSISTENT_KEEPALIVE=25
-      - WG_POST_UP=iptables -t nat -A POSTROUTING -s 10.13.13.0/24 ! -o wg0 -j MASQUERADE; iptables -t nat -A POSTROUTING -s 10.13.13.0/24 -d 127.0.0.1 -j MASQUERADE; iptables -A FORWARD -i wg0 -j ACCEPT; iptables -A FORWARD -o wg0 -j ACCEPT; iptables -t nat -A PREROUTING -i wg0 -d 192.168.1.14 -p tcp --dport 8989 -j DNAT --to-destination 127.0.0.1:8989; iptables -t nat -A PREROUTING -i wg0 -d 192.168.1.14 -p tcp --dport 7878 -j DNAT --to-destination 127.0.0.1:7878; iptables -t nat -A PREROUTING -i wg0 -d 192.168.1.14 -p tcp --dport 9696 -j DNAT --to-destination 127.0.0.1:9696; iptables -t nat -A PREROUTING -i wg0 -d 192.168.1.14 -p tcp --dport 9091 -j DNAT --to-destination 127.0.0.1:9091; iptables -t nat -A PREROUTING -i wg0 -d 192.168.1.14 -p tcp --dport 8191 -j DNAT --to-destination 127.0.0.1:8191
-      - WG_POST_DOWN=iptables -t nat -D POSTROUTING -s 10.13.13.0/24 ! -o wg0 -j MASQUERADE; iptables -t nat -D POSTROUTING -s 10.13.13.0/24 -d 127.0.0.1 -j MASQUERADE; iptables -D FORWARD -i wg0 -j ACCEPT; iptables -D FORWARD -o wg0 -j ACCEPT; iptables -t nat -D PREROUTING -i wg0 -d 192.168.1.14 -p tcp --dport 8989 -j DNAT --to-destination 127.0.0.1:8989; iptables -t nat -D PREROUTING -i wg0 -d 192.168.1.14 -p tcp --dport 7878 -j DNAT --to-destination 127.0.0.1:7878; iptables -t nat -D PREROUTING -i wg0 -d 192.168.1.14 -p tcp --dport 9696 -j DNAT --to-destination 127.0.0.1:9696; iptables -t nat -D PREROUTING -i wg0 -d 192.168.1.14 -p tcp --dport 9091 -j DNAT --to-destination 127.0.0.1:9091; iptables -t nat -D PREROUTING -i wg0 -d 192.168.1.14 -p tcp --dport 8191 -j DNAT --to-destination 127.0.0.1:8191
+      - WG_POST_UP=iptables -t nat -A POSTROUTING -s 10.13.13.0/24 ! -o wg0 -j MASQUERADE; iptables -t nat -A POSTROUTING -s 10.13.13.0/24 -d 127.0.0.1 -j MASQUERADE; iptables -A FORWARD -i wg0 -j ACCEPT; iptables -A FORWARD -o wg0 -j ACCEPT; iptables -t nat -A PREROUTING -i wg0 -d 192.168.1.14 -p tcp --dport 8989 -j DNAT --to-destination 127.0.0.1:8989; iptables -t nat -A PREROUTING -i wg0 -d 192.168.1.14 -p tcp --dport 7878 -j DNAT --to-destination 127.0.0.1:7878; iptables -t nat -A PREROUTING -i wg0 -d 192.168.1.14 -p tcp --dport 8990 -j DNAT --to-destination 127.0.0.1:8990; iptables -t nat -A PREROUTING -i wg0 -d 192.168.1.14 -p tcp --dport 7879 -j DNAT --to-destination 127.0.0.1:7879; iptables -t nat -A PREROUTING -i wg0 -d 192.168.1.14 -p tcp --dport 9696 -j DNAT --to-destination 127.0.0.1:9696; iptables -t nat -A PREROUTING -i wg0 -d 192.168.1.14 -p tcp --dport 9091 -j DNAT --to-destination 127.0.0.1:9091; iptables -t nat -A PREROUTING -i wg0 -d 192.168.1.14 -p tcp --dport 8191 -j DNAT --to-destination 127.0.0.1:8191
+      - WG_POST_DOWN=iptables -t nat -D POSTROUTING -s 10.13.13.0/24 ! -o wg0 -j MASQUERADE; iptables -t nat -D POSTROUTING -s 10.13.13.0/24 -d 127.0.0.1 -j MASQUERADE; iptables -D FORWARD -i wg0 -j ACCEPT; iptables -D FORWARD -o wg0 -j ACCEPT; iptables -t nat -D PREROUTING -i wg0 -d 192.168.1.14 -p tcp --dport 8989 -j DNAT --to-destination 127.0.0.1:8989; iptables -t nat -D PREROUTING -i wg0 -d 192.168.1.14 -p tcp --dport 7878 -j DNAT --to-destination 127.0.0.1:7878; iptables -t nat -D PREROUTING -i wg0 -d 192.168.1.14 -p tcp --dport 8990 -j DNAT --to-destination 127.0.0.1:8990; iptables -t nat -D PREROUTING -i wg0 -d 192.168.1.14 -p tcp --dport 7879 -j DNAT --to-destination 127.0.0.1:7879; iptables -t nat -D PREROUTING -i wg0 -d 192.168.1.14 -p tcp --dport 9696 -j DNAT --to-destination 127.0.0.1:9696; iptables -t nat -D PREROUTING -i wg0 -d 192.168.1.14 -p tcp --dport 9091 -j DNAT --to-destination 127.0.0.1:9091; iptables -t nat -D PREROUTING -i wg0 -d 192.168.1.14 -p tcp --dport 8191 -j DNAT --to-destination 127.0.0.1:8191
       - UI_TRAFFIC_STATS=true
       - UI_CHART_TYPE=1
     volumes:
@@ -284,3 +293,90 @@ services:
       - TAUTULLI_URL=http://localhost:8181
       - LOG_LEVEL=INFO
     restart: unless-stopped
+
+  sonarr-guest:
+    # sonarr-guest — guest pipeline (same image as sonarr)
+    image: lscr.io/linuxserver/sonarr@sha256:21c1c3d52248589bb064f5adafec18cad45812d7a01d317472955eef051e619b
+    container_name: sonarr-guest
+    depends_on:
+      - transmission
+      - prowlarr
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Budapest
+    volumes:
+      - ./config/sonarr-guest:/config
+      - ${MEDIA_ROOT}:/data
+    ports:
+      - "127.0.0.1:8990:8989"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8989/ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  radarr-guest:
+    # radarr-guest — guest pipeline (same image as radarr)
+    image: lscr.io/linuxserver/radarr@sha256:ca43905eaf2dd11425efdcfe184892e43806b1ae0a830440c825cecbc2629cfb
+    container_name: radarr-guest
+    depends_on:
+      - transmission
+      - prowlarr
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Budapest
+    volumes:
+      - ./config/radarr-guest:/config
+      - ${MEDIA_ROOT}:/data
+    ports:
+      - "127.0.0.1:7879:7878"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7878/ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  cron:
+    build:
+      context: .
+      dockerfile: cron/Dockerfile
+    container_name: cron
+    # host network required: scripts need to reach all services on localhost
+    network_mode: host
+    environment:
+      - TZ=Europe/Budapest
+      - STATUSPAGE_DB_PATH=/config/statuspage/statuspage.db
+    volumes:
+      - ./scripts:/scripts:ro
+      - ./.env:/config/.env:ro
+      - ./config/statuspage:/config/statuspage:ro
+      - ${MEDIA_ROOT}:/mnt/mediaserver:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - cron-state:/var/tmp
+      - cron-logs:/var/log/cron
+    restart: unless-stopped
+
+  prunarr-guest:
+    # prunarr-guest — guest pipeline (same image as prunarr)
+    image: ghcr.io/haijeploeg/prunarr@sha256:d7a164cd2b35aedd7c916db1dd8898370af13a5099f6f8a1659406bcef42829d
+    container_name: prunarr-guest
+    # host network required: needs to reach guest Sonarr, guest Radarr, and Tautulli on localhost
+    network_mode: host
+    entrypoint: ["sh", "-c", "while true; do sleep 86400; done"]
+    environment:
+      - RADARR_API_KEY=${RADARR_GUEST_API_KEY}
+      - RADARR_URL=http://localhost:7879
+      - SONARR_API_KEY=${SONARR_GUEST_API_KEY}
+      - SONARR_URL=http://localhost:8990
+      - TAUTULLI_API_KEY=${TAUTULLI_API_KEY}
+      - TAUTULLI_URL=http://localhost:8181
+      - LOG_LEVEL=INFO
+    restart: unless-stopped
+
+volumes:
+  cron-state:
+  cron-logs:

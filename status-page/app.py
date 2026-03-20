@@ -11,9 +11,12 @@ from datetime import datetime, timedelta, timezone
 from email.mime.text import MIMEText
 from functools import wraps
 
+import xml.etree.ElementTree as ET
+
 import requests
 from flask import (
     Flask,
+    Response,
     abort,
     flash,
     g,
@@ -29,9 +32,11 @@ app.secret_key = os.environ["SECRET_KEY"]
 
 # Config
 ALLOWED_EMAILS = [e.strip().lower() for e in os.environ.get("ALLOWED_EMAILS", "").split(",") if e.strip()]
+ADMIN_EMAILS = [e.strip().lower() for e in os.environ.get("ADMIN_EMAILS", "").split(",") if e.strip()]
 BASE_URL = os.environ.get("BASE_URL", "http://localhost:8080")
 DB_PATH = os.environ.get("DB_PATH", "/app/data/statuspage.db")
 TRAKT_LOG = os.environ.get("TRAKT_LOG", "/tmp/trakt-sync.log")
+GUEST_QUOTA_GB = int(os.environ.get("GUEST_QUOTA_GB", "100"))
 
 # API endpoints (all on localhost since we're on host network)
 SONARR_URL = "http://localhost:8989"
@@ -47,6 +52,18 @@ TAUTULLI_URL = "http://localhost:8181"
 TAUTULLI_KEY = os.environ.get("TAUTULLI_API_KEY", "")
 SEERR_URL = "http://localhost:5055"
 UPTIME_KUMA_URL = "http://localhost:3001"
+
+# Guest pipeline
+SONARR_GUEST_URL = "http://localhost:8990"
+SONARR_GUEST_KEY = os.environ.get("SONARR_GUEST_API_KEY", "")
+RADARR_GUEST_URL = "http://localhost:7879"
+RADARR_GUEST_KEY = os.environ.get("RADARR_GUEST_API_KEY", "")
+SONARR_TRAKT_CLIENT_ID = os.environ.get("SONARR_TRAKT_CLIENT_ID", "")
+RADARR_TRAKT_CLIENT_ID = os.environ.get("RADARR_TRAKT_CLIENT_ID", "")
+
+# WireGuard (wg-easy API)
+WG_EASY_URL = "http://localhost:51821"
+WG_PASSWORD = os.environ.get("WG_PASSWORD", "")
 
 # SMTP
 SMTP_SERVER = os.environ.get("SMTP_SERVER", "smtp-relay.brevo.com")
@@ -100,7 +117,34 @@ def init_db():
             timestamp TEXT DEFAULT (datetime('now')),
             data_json TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS guests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            email TEXT NOT NULL,
+            trakt_username TEXT NOT NULL,
+            invited_at TEXT DEFAULT (datetime('now')),
+            active INTEGER DEFAULT 0,
+            onboard_token TEXT,
+            status TEXT DEFAULT 'pending_approval',
+            plex_shared INTEGER DEFAULT 0,
+            trakt_device_data TEXT,
+            wg_client_id TEXT
+        );
     """)
+    # Migrate existing rows: add new columns if missing (idempotent)
+    for col, typ, default in [
+        ("onboard_token", "TEXT", None),
+        ("status", "TEXT", "'complete'"),
+        ("plex_shared", "INTEGER", "1"),
+        ("trakt_device_data", "TEXT", None),
+        ("wg_client_id", "TEXT", None),
+    ]:
+        try:
+            default_clause = f" DEFAULT {default}" if default else ""
+            conn.execute(f"ALTER TABLE guests ADD COLUMN {col} {typ}{default_clause}")
+        except sqlite3.OperationalError:
+            pass
+    conn.commit()
     conn.close()
 
 
@@ -159,6 +203,21 @@ def check_csrf():
     return token and token == session.get("_csrf")
 
 
+def _is_active_guest_email(email):
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        row = conn.execute("SELECT id FROM guests WHERE email = ? AND active = 1", (email.lower(),)).fetchone()
+        conn.close()
+        return row is not None
+    except Exception:
+        return False
+
+
+def is_guest():
+    email = session.get("user_email", "").lower()
+    return email and email not in ALLOWED_EMAILS and _is_active_guest_email(email)
+
+
 app.jinja_env.globals["csrf_token"] = generate_csrf
 
 
@@ -183,6 +242,12 @@ def fetch_service_health():
         ("Seerr", f"{SEERR_URL}/api/v1/status"),
         ("Uptime Kuma", f"{UPTIME_KUMA_URL}/api/entry-page"),
     ]
+    if SONARR_GUEST_KEY:
+        checks.append(("Sonarr-Guest", f"{SONARR_GUEST_URL}/ping"))
+    if RADARR_GUEST_KEY:
+        checks.append(("Radarr-Guest", f"{RADARR_GUEST_URL}/ping"))
+    if WG_PASSWORD:
+        checks.append(("WireGuard", f"{WG_EASY_URL}/"))
     results = []
     with ThreadPoolExecutor(max_workers=8) as ex:
         futs = {ex.submit(ping_service, name, url): name for name, url in checks}
@@ -259,7 +324,7 @@ def fetch_transmission_torrents():
             json={
                 "method": "torrent-get",
                 "arguments": {
-                    "fields": ["name", "percentDone", "rateDownload", "rateUpload", "eta", "status"],
+                    "fields": ["name", "percentDone", "rateDownload", "rateUpload", "eta", "status", "doneDate", "uploadRatio", "downloadDir", "isPrivate", "trackers"],
                 },
             },
             timeout=API_TIMEOUT,
@@ -268,6 +333,66 @@ def fetch_transmission_torrents():
         return data.get("arguments", {}).get("torrents", [])
     except Exception:
         return None
+
+
+def fetch_guest_series():
+    try:
+        r = requests.get(f"{SONARR_GUEST_URL}/api/v3/series", headers={"X-Api-Key": SONARR_GUEST_KEY}, timeout=API_TIMEOUT)
+        return r.json()
+    except Exception:
+        return None
+
+
+def fetch_guest_movies():
+    try:
+        r = requests.get(f"{RADARR_GUEST_URL}/api/v3/movie", headers={"X-Api-Key": RADARR_GUEST_KEY}, timeout=API_TIMEOUT)
+        return r.json()
+    except Exception:
+        return None
+
+
+def fetch_guest_sonarr_history():
+    try:
+        since = (datetime.now(timezone.utc) - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        r = requests.get(
+            f"{SONARR_GUEST_URL}/api/v3/history/since",
+            params={"date": since, "includeSeries": "true", "includeEpisode": "true"},
+            headers={"X-Api-Key": SONARR_GUEST_KEY}, timeout=API_TIMEOUT,
+        )
+        return r.json()
+    except Exception:
+        return None
+
+
+def fetch_guest_radarr_history():
+    try:
+        since = (datetime.now(timezone.utc) - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        r = requests.get(
+            f"{RADARR_GUEST_URL}/api/v3/history/since",
+            params={"date": since, "includeMovie": "true"},
+            headers={"X-Api-Key": RADARR_GUEST_KEY}, timeout=API_TIMEOUT,
+        )
+        return r.json()
+    except Exception:
+        return None
+
+
+def fetch_guest_quota_usage():
+    """Return guest storage usage in bytes by querying guest Radarr/Sonarr."""
+    total = 0
+    try:
+        r = requests.get(f"{RADARR_GUEST_URL}/api/v3/movie", headers={"X-Api-Key": RADARR_GUEST_KEY}, timeout=API_TIMEOUT)
+        for m in r.json():
+            total += m.get("sizeOnDisk", 0)
+    except Exception:
+        pass
+    try:
+        r = requests.get(f"{SONARR_GUEST_URL}/api/v3/series", headers={"X-Api-Key": SONARR_GUEST_KEY}, timeout=API_TIMEOUT)
+        for s in r.json():
+            total += s.get("statistics", {}).get("sizeOnDisk", 0)
+    except Exception:
+        pass
+    return total
 
 
 def fetch_trakt_log():
@@ -358,7 +483,7 @@ def login():
             flash("Please enter your email.", "error")
             return render_template("login.html")
 
-        if email not in ALLOWED_EMAILS:
+        if email not in ALLOWED_EMAILS and not _is_active_guest_email(email):
             # Don't reveal whether email is valid
             flash("If that email is registered, a login link has been sent.", "info")
             return render_template("login.html")
@@ -495,12 +620,95 @@ def logout():
     return redirect(url_for("login"))
 
 
+HNR_HOURS = 72  # nCore H&R policy
+
+
+def _format_torrents(raw_torrents, guest_only=False):
+    """Format Transmission torrent data for display. If guest_only, filter to guest categories."""
+    torrents = []
+    now_ts = time.time()
+    for t in (raw_torrents or []):
+        if guest_only:
+            dl_dir = t.get("downloadDir", "")
+            if "guest-sonarr" not in dl_dir and "guest-radarr" not in dl_dir:
+                continue
+        status_map = {0: "Stopped", 1: "Queued", 2: "Verifying", 3: "Queued", 4: "Downloading", 5: "Queued", 6: "Seeding"}
+        status_code = t.get("status")
+        eta = t.get("eta", -1)
+        ratio = t.get("uploadRatio", 0)
+        done_date = t.get("doneDate", 0)
+        is_private = t.get("isPrivate", False)
+
+        # ETA (download remaining)
+        if status_code == 6:
+            eta_str = "-"
+        elif eta > 0:
+            eta_str = str(timedelta(seconds=eta))
+        elif eta == 0:
+            eta_str = "Done"
+        else:
+            eta_str = "-"
+
+        # H&R remaining (only for private trackers with completed downloads)
+        hnr_str = "-"
+        if is_private and done_date and done_date > 0:
+            seeded_secs = int(now_ts - done_date)
+            required_secs = HNR_HOURS * 3600
+            remaining = required_secs - seeded_secs
+            if remaining > 0:
+                hnr_str = str(timedelta(seconds=remaining))
+            else:
+                hnr_str = "Done"
+
+        torrents.append({
+            "name": t.get("name", "Unknown"),
+            "percent": round(t.get("percentDone", 0) * 100, 1),
+            "down": _format_speed(t.get("rateDownload", 0)),
+            "up": _format_speed(t.get("rateUpload", 0)),
+            "eta": eta_str,
+            "status": status_map.get(status_code, "Unknown"),
+            "hnr": hnr_str,
+            "ratio": f"{ratio:.2f}",
+        })
+    return torrents
+
+
+def _format_activity(sonarr_history, radarr_history):
+    """Format Sonarr/Radarr history into activity list."""
+    activity = []
+    for item in (sonarr_history or []):
+        series_title = item.get("series", {}).get("title", "Unknown")
+        ep = item.get("episode", {})
+        ep_label = f"S{ep.get('seasonNumber', 0):02d}E{ep.get('episodeNumber', 0):02d}" if ep else ""
+        activity.append({
+            "time": item.get("date", ""),
+            "type": "tv",
+            "title": f"{series_title} {ep_label}".strip(),
+            "event": item.get("eventType", ""),
+        })
+    for item in (radarr_history or []):
+        activity.append({
+            "time": item.get("date", ""),
+            "type": "movie",
+            "title": item.get("movie", {}).get("title", item.get("sourceTitle", "Unknown")),
+            "event": item.get("eventType", ""),
+        })
+    activity.sort(key=lambda x: x["time"], reverse=True)
+    return activity
+
+
 @app.route("/")
 @login_required
 def dashboard():
     email = session["user_email"]
+    guest_view = is_guest()
 
-    # Fetch all data in parallel
+    if guest_view:
+        return _guest_dashboard(email)
+    return _owner_dashboard(email)
+
+
+def _owner_dashboard(email):
     results = {}
     with ThreadPoolExecutor(max_workers=8) as ex:
         futures = {
@@ -519,57 +727,14 @@ def dashboard():
             except Exception:
                 results[key] = None
 
-    # Library stats
     series = results.get("series") or []
     movies = results.get("movies") or []
     total_episodes = sum(s.get("statistics", {}).get("episodeFileCount", 0) for s in series)
 
-    # Build and save snapshot
     snapshot = build_snapshot(series, movies)
     prev_snapshot, prev_timestamp = get_previous_snapshot(email)
     diff = compute_diff(prev_snapshot, snapshot)
     save_snapshot(email, snapshot)
-
-    # Merge and sort history
-    activity = []
-    for item in (results.get("sonarr_history") or []):
-        series_title = item.get("series", {}).get("title", "Unknown")
-        ep = item.get("episode", {})
-        ep_label = f"S{ep.get('seasonNumber', 0):02d}E{ep.get('episodeNumber', 0):02d}" if ep else ""
-        activity.append({
-            "time": item.get("date", ""),
-            "type": "tv",
-            "title": f"{series_title} {ep_label}".strip(),
-            "event": item.get("eventType", ""),
-        })
-    for item in (results.get("radarr_history") or []):
-        activity.append({
-            "time": item.get("date", ""),
-            "type": "movie",
-            "title": item.get("movie", {}).get("title", item.get("sourceTitle", "Unknown")),
-            "event": item.get("eventType", ""),
-        })
-    activity.sort(key=lambda x: x["time"], reverse=True)
-
-    # Format torrents
-    torrents = []
-    for t in (results.get("torrents") or []):
-        status_map = {0: "Stopped", 1: "Queued", 2: "Verifying", 3: "Queued", 4: "Downloading", 5: "Queued", 6: "Seeding"}
-        eta = t.get("eta", -1)
-        if eta > 0:
-            eta_str = str(timedelta(seconds=eta))
-        elif eta == 0:
-            eta_str = "Done"
-        else:
-            eta_str = "-"
-        torrents.append({
-            "name": t.get("name", "Unknown"),
-            "percent": round(t.get("percentDone", 0) * 100, 1),
-            "down": _format_speed(t.get("rateDownload", 0)),
-            "up": _format_speed(t.get("rateUpload", 0)),
-            "eta": eta_str,
-            "status": status_map.get(t.get("status"), "Unknown"),
-        })
 
     return render_template(
         "dashboard.html",
@@ -577,12 +742,78 @@ def dashboard():
         movie_count=len(movies),
         series_count=len(series),
         episode_count=total_episodes,
-        torrents=torrents,
-        activity=activity[:20],
+        torrents=_format_torrents(results.get("torrents")),
+        activity=_format_activity(results.get("sonarr_history"), results.get("radarr_history"))[:20],
         diff=diff,
         prev_timestamp=prev_timestamp,
         trakt_log=results.get("trakt_log"),
+        is_admin=is_admin(),
+        is_guest=False,
     )
+
+
+def _guest_dashboard(email):
+    results = {}
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        futures = {
+            ex.submit(fetch_service_health): "health",
+            ex.submit(fetch_guest_series): "series",
+            ex.submit(fetch_guest_movies): "movies",
+            ex.submit(fetch_guest_sonarr_history): "sonarr_history",
+            ex.submit(fetch_guest_radarr_history): "radarr_history",
+            ex.submit(fetch_transmission_torrents): "torrents",
+            ex.submit(fetch_guest_quota_usage): "quota_usage",
+        }
+        for fut in as_completed(futures):
+            key = futures[fut]
+            try:
+                results[key] = fut.result()
+            except Exception:
+                results[key] = None
+
+    series = results.get("series") or []
+    movies = results.get("movies") or []
+    total_episodes = sum(s.get("statistics", {}).get("episodeFileCount", 0) for s in series)
+
+    snapshot = build_snapshot(series, movies)
+    prev_snapshot, prev_timestamp = get_previous_snapshot(email)
+    diff = compute_diff(prev_snapshot, snapshot)
+    save_snapshot(email, snapshot)
+
+    quota_usage = results.get("quota_usage") or 0
+    quota_gb_used = round(quota_usage / 1073741824, 1)
+
+    return render_template(
+        "dashboard.html",
+        health=results.get("health") or [],
+        movie_count=len(movies),
+        series_count=len(series),
+        episode_count=total_episodes,
+        torrents=_format_torrents(results.get("torrents"), guest_only=True),
+        activity=_format_activity(results.get("sonarr_history"), results.get("radarr_history"))[:20],
+        diff=diff,
+        prev_timestamp=prev_timestamp,
+        trakt_log=None,
+        is_admin=is_admin(),
+        is_guest=True,
+        quota_gb_used=quota_gb_used,
+        quota_gb_total=GUEST_QUOTA_GB,
+    )
+
+
+def is_admin():
+    return session.get("user_email", "").lower() in ADMIN_EMAILS
+
+
+def admin_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if "user_email" not in session:
+            return redirect(url_for("login"))
+        if not is_admin():
+            abort(403)
+        return f(*args, **kwargs)
+    return decorated
 
 
 def _format_speed(bps):
@@ -592,6 +823,547 @@ def _format_speed(bps):
     if kbps > 1024:
         return f"{kbps/1024:.1f} MB/s"
     return f"{kbps:.0f} KB/s"
+
+
+# --- Guest Onboarding (self-service) ---
+
+TRAKT_API_BASE = "https://api.trakt.tv"
+
+
+def _send_email(to, subject, html):
+    msg = MIMEText(html, "html")
+    msg["Subject"] = subject
+    msg["From"] = SMTP_FROM
+    msg["To"] = to
+    with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+        server.starttls()
+        server.login(SMTP_USER, SMTP_PASSWORD)
+        server.send_message(msg)
+
+
+def _get_guest_by_token(token):
+    db = get_db()
+    return db.execute("SELECT * FROM guests WHERE onboard_token = ?", (token,)).fetchone()
+
+
+def _create_sonarr_import_list(trakt_username, access_token, refresh_token, expires_iso):
+    payload = {
+        "enableAutomaticAdd": True, "searchForMissingEpisodes": True,
+        "shouldMonitor": "all", "monitorNewItems": "all",
+        "rootFolderPath": "/data/media/guest-tv", "qualityProfileId": 1,
+        "seriesType": "standard", "seasonFolder": True,
+        "name": f"Trakt - {trakt_username}",
+        "implementation": "TraktUserImport", "configContract": "TraktUserSettings", "listType": "trakt",
+        "fields": [
+            {"name": "accessToken", "value": access_token},
+            {"name": "refreshToken", "value": refresh_token},
+            {"name": "expires", "value": expires_iso},
+            {"name": "authUser", "value": trakt_username},
+            {"name": "traktListType", "value": 0},
+            {"name": "username", "value": ""}, {"name": "limit", "value": 100},
+        ], "tags": [],
+    }
+    r = requests.post(
+        f"{SONARR_GUEST_URL}/api/v3/importlist?forceSave=true",
+        headers={"X-Api-Key": SONARR_GUEST_KEY, "Content-Type": "application/json"},
+        json=payload, timeout=10,
+    )
+    if r.status_code not in (200, 201):
+        raise RuntimeError(f"Sonarr: HTTP {r.status_code}")
+
+
+def _create_radarr_import_list(trakt_username, access_token, refresh_token, expires_iso):
+    payload = {
+        "enabled": True, "enableAuto": True, "monitor": "movieOnly",
+        "rootFolderPath": "/data/media/guest-movies", "qualityProfileId": 1,
+        "searchOnAdd": True, "minimumAvailability": "released",
+        "name": f"Trakt - {trakt_username}",
+        "implementation": "TraktUserImport", "configContract": "TraktUserSettings", "listType": "trakt",
+        "fields": [
+            {"name": "accessToken", "value": access_token},
+            {"name": "refreshToken", "value": refresh_token},
+            {"name": "expires", "value": expires_iso},
+            {"name": "authUser", "value": trakt_username},
+            {"name": "traktListType", "value": 0},
+            {"name": "username", "value": ""}, {"name": "limit", "value": 100},
+        ], "tags": [],
+    }
+    r = requests.post(
+        f"{RADARR_GUEST_URL}/api/v3/importlist?forceSave=true",
+        headers={"X-Api-Key": RADARR_GUEST_KEY, "Content-Type": "application/json"},
+        json=payload, timeout=10,
+    )
+    if r.status_code not in (200, 201):
+        raise RuntimeError(f"Radarr: HTTP {r.status_code}")
+
+
+def share_plex_guest_libraries(guest_email):
+    """Invite a Plex user and share only Guest TV / Guest Movies libraries via v1 API."""
+    if not PLEX_TOKEN:
+        raise RuntimeError("PLEX_TOKEN not configured")
+
+    machine_id = ET.fromstring(
+        requests.get(f"{PLEX_URL}/identity", params={"X-Plex-Token": PLEX_TOKEN}, timeout=API_TIMEOUT).text
+    ).get("machineIdentifier")
+    if not machine_id:
+        raise RuntimeError("Could not get Plex machine identifier")
+
+    root = ET.fromstring(
+        requests.get(f"{PLEX_URL}/library/sections", params={"X-Plex-Token": PLEX_TOKEN}, timeout=API_TIMEOUT).text
+    )
+    guest_section_ids = [int(d.get("key")) for d in root.findall("Directory") if d.get("title") in ("Guest TV", "Guest Movies")]
+    if not guest_section_ids:
+        raise RuntimeError("Guest TV / Guest Movies libraries not found in Plex")
+
+    # Use Plex v1 API with JSON body — correctly filters library sections
+    r = requests.post(
+        f"https://plex.tv/api/servers/{machine_id}/shared_servers?X-Plex-Token={PLEX_TOKEN}",
+        headers={"Content-Type": "application/json", "X-Plex-Client-Identifier": "mediaserver-statuspage"},
+        json={
+            "server_id": machine_id,
+            "shared_server": {
+                "library_section_ids": guest_section_ids,
+                "invited_email": guest_email,
+                "sharing_settings": {},
+            },
+        },
+        timeout=15,
+    )
+    if r.status_code in (200, 201):
+        app.logger.info(f"Shared Plex guest libraries with {guest_email}")
+    elif "already" in r.text.lower():
+        app.logger.info(f"Plex libraries already shared with {guest_email}")
+    else:
+        raise RuntimeError(f"Plex sharing API returned HTTP {r.status_code}: {r.text[:200]}")
+
+
+def _wg_easy_session():
+    """Get an authenticated session for wg-easy API."""
+    s = requests.Session()
+    r = s.post(f"{WG_EASY_URL}/api/session", json={"password": WG_PASSWORD}, timeout=5)
+    r.raise_for_status()
+    return s
+
+
+def create_wg_client(guest_name):
+    """Create a WireGuard client in wg-easy and return its ID."""
+    if not WG_PASSWORD:
+        raise RuntimeError("WG_PASSWORD not configured")
+    s = _wg_easy_session()
+    r = s.post(f"{WG_EASY_URL}/api/wireguard/client", json={"name": guest_name}, timeout=5)
+    r.raise_for_status()
+    client = r.json()
+    return client["id"]
+
+
+def send_guest_welcome(email, name):
+    _send_email(email, "Welcome to the Media Server!", f"""\
+<html>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+<h1 style="color: #1a1a2e; border-bottom: 2px solid #e94560; padding-bottom: 10px;">Welcome to the Media Server, {name}!</h1>
+<h2 style="color: #16213e;">Getting Started with Plex</h2>
+<p>Download the <strong>Plex</strong> app on your phone, TV, or streaming device. Sign in with your Plex account. You'll see two libraries: <strong>Guest TV</strong> and <strong>Guest Movies</strong>.</p>
+<h2 style="color: #16213e;">Adding Content via Trakt</h2>
+<p>Your Trakt watchlist is connected. To add movies or TV shows:</p>
+<ol style="line-height: 1.8;">
+<li>Go to <a href="https://trakt.tv">trakt.tv</a></li>
+<li>Search for what you want to watch</li>
+<li>Click the bookmark icon to add to your watchlist</li>
+<li>It will appear in Plex within 1&ndash;2 hours</li>
+</ol>
+<h2 style="color: #16213e;">Good to Know</h2>
+<ul style="line-height: 1.8;">
+<li>Storage: <strong>{GUEST_QUOTA_GB} GB shared</strong> across all guests.</li>
+<li>Watched content is <strong>automatically removed after 30 days</strong> to free space.</li>
+<li>Want to rewatch something? Just add it to your Trakt watchlist again.</li>
+<li>New releases download once a digital version is available (not while in theaters).</li>
+<li>TV series: all existing episodes download, and new ones arrive as they air.</li>
+</ul>
+<hr style="border: none; border-top: 1px solid #ddd; margin: 20px 0;">
+<p style="color: #888; font-size: 12px;">Sent from Media Server Status Page</p>
+</body>
+</html>""")
+
+
+# --- Public onboarding routes (no auth) ---
+
+@app.route("/onboard", methods=["GET", "POST"])
+def onboard():
+    if request.method == "POST":
+        if not check_csrf():
+            abort(403)
+        name = request.form.get("name", "").strip()
+        email = request.form.get("email", "").strip().lower()
+        trakt_username = request.form.get("trakt_username", "").strip()
+
+        if not name or not email or not trakt_username:
+            flash("All fields are required.", "error")
+            return render_template("onboard.html")
+
+        if is_rate_limited(email):
+            flash("Too many attempts. Please wait a few minutes.", "error")
+            return render_template("onboard.html")
+        record_attempt(email)
+
+        db = get_db()
+        existing = db.execute(
+            "SELECT id, onboard_token FROM guests WHERE email = ? AND status != 'rejected' AND active = 0",
+            (email,),
+        ).fetchone()
+        if existing and existing["onboard_token"]:
+            return redirect(url_for("onboard_status", token=existing["onboard_token"]))
+
+        token = secrets.token_urlsafe(32)
+        db.execute(
+            "INSERT INTO guests (name, email, trakt_username, onboard_token, status, active) VALUES (?, ?, ?, ?, 'pending_approval', 0)",
+            (name, email, trakt_username, token),
+        )
+        db.commit()
+
+        # Notify admins
+        try:
+            for admin_email in ADMIN_EMAILS:
+                _send_email(admin_email, f"New guest request: {name}", f"""\
+<html><body style="font-family: sans-serif; color: #333; max-width: 500px; margin: 0 auto; padding: 20px;">
+<h2>New Guest Request</h2>
+<p><strong>Name:</strong> {name}<br><strong>Email:</strong> {email}<br><strong>Trakt:</strong> {trakt_username}</p>
+<p><a href="{BASE_URL}/admin/invite">Review and approve</a></p>
+</body></html>""")
+        except Exception as e:
+            app.logger.error(f"Failed to notify admins: {e}")
+
+        return redirect(url_for("onboard_status", token=token))
+
+    return render_template("onboard.html")
+
+
+@app.route("/onboard/<token>")
+def onboard_status(token):
+    guest = _get_guest_by_token(token)
+    if not guest:
+        abort(404)
+    device_data = json.loads(guest["trakt_device_data"]) if guest["trakt_device_data"] else None
+    return render_template("onboard_status.html", guest=guest, device_data=device_data, quota_gb=GUEST_QUOTA_GB)
+
+
+@app.route("/onboard/<token>/start-trakt", methods=["POST"])
+def onboard_start_trakt(token):
+    if not check_csrf():
+        abort(403)
+    guest = _get_guest_by_token(token)
+    if not guest or guest["status"] != "approved":
+        abort(400)
+
+    try:
+        resp = requests.post(
+            f"{TRAKT_API_BASE}/oauth/device/code",
+            json={"client_id": SONARR_TRAKT_CLIENT_ID}, timeout=10,
+        )
+        resp.raise_for_status()
+        dd = resp.json()
+    except Exception:
+        flash("Failed to start Trakt authorization. Try again.", "error")
+        return redirect(url_for("onboard_status", token=token))
+
+    db = get_db()
+    db.execute(
+        "UPDATE guests SET status = 'trakt_tv_auth', trakt_device_data = ? WHERE id = ?",
+        (json.dumps({"device_code": dd["device_code"], "user_code": dd["user_code"],
+                      "interval": dd.get("interval", 5), "expires_in": dd.get("expires_in", 600),
+                      "started_at": time.time()}), guest["id"]),
+    )
+    db.commit()
+    return redirect(url_for("onboard_status", token=token))
+
+
+@app.route("/onboard/<token>/poll", methods=["POST"])
+def onboard_poll(token):
+    guest = _get_guest_by_token(token)
+    if not guest or guest["status"] not in ("trakt_tv_auth", "trakt_movie_auth"):
+        return {"status": "error", "message": "Invalid state"}, 400
+
+    dd = json.loads(guest["trakt_device_data"]) if guest["trakt_device_data"] else None
+    if not dd:
+        return {"status": "error", "message": "No device data"}, 400
+
+    elapsed = time.time() - dd["started_at"]
+    if elapsed > dd["expires_in"]:
+        db = get_db()
+        db.execute("UPDATE guests SET status = 'approved', trakt_device_data = NULL WHERE id = ?", (guest["id"],))
+        db.commit()
+        return {"status": "expired", "message": "Authorization timed out. Click Start to try again."}
+
+    is_tv = guest["status"] == "trakt_tv_auth"
+    client_id = SONARR_TRAKT_CLIENT_ID if is_tv else RADARR_TRAKT_CLIENT_ID
+
+    try:
+        resp = requests.post(
+            f"{TRAKT_API_BASE}/oauth/device/token",
+            json={"code": dd["device_code"], "client_id": client_id}, timeout=10,
+        )
+    except Exception:
+        label = "TV Shows" if is_tv else "Movies"
+        return {"status": "pending", "message": f"Waiting for authorization ({label})..."}
+
+    if resp.status_code == 200:
+        td = resp.json()
+        access_token = td.get("access_token", "")
+        refresh_token = td.get("refresh_token", "")
+        expires_at = td.get("created_at", 0) + td.get("expires_in", 0)
+        expires_iso = datetime.fromtimestamp(expires_at, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if expires_at else ""
+
+        db = get_db()
+
+        if is_tv:
+            # Create Sonarr import list, then start Radarr phase
+            try:
+                _create_sonarr_import_list(guest["trakt_username"], access_token, refresh_token, expires_iso)
+            except Exception as e:
+                app.logger.error(f"Sonarr import list failed: {e}")
+
+            try:
+                resp2 = requests.post(
+                    f"{TRAKT_API_BASE}/oauth/device/code",
+                    json={"client_id": RADARR_TRAKT_CLIENT_ID}, timeout=10,
+                )
+                resp2.raise_for_status()
+                dd2 = resp2.json()
+            except Exception as e:
+                app.logger.error(f"Radarr device code failed: {e}")
+                # Skip to complete without Radarr
+                db.execute("UPDATE guests SET status = 'complete', active = 1, trakt_device_data = NULL WHERE id = ?", (guest["id"],))
+                db.commit()
+                _finalize_onboard(guest)
+                return {"status": "done", "message": "Setup complete (Movies auth skipped)."}
+
+            db.execute(
+                "UPDATE guests SET status = 'trakt_movie_auth', trakt_device_data = ? WHERE id = ?",
+                (json.dumps({"device_code": dd2["device_code"], "user_code": dd2["user_code"],
+                              "interval": dd2.get("interval", 5), "expires_in": dd2.get("expires_in", 600),
+                              "started_at": time.time()}), guest["id"]),
+            )
+            db.commit()
+            return {
+                "status": "phase2",
+                "message": "TV Shows authorized! Now authorize Movies.",
+                "user_code": dd2["user_code"],
+                "interval": dd2.get("interval", 5),
+            }
+        else:
+            # Create Radarr import list, finalize
+            try:
+                _create_radarr_import_list(guest["trakt_username"], access_token, refresh_token, expires_iso)
+            except Exception as e:
+                app.logger.error(f"Radarr import list failed: {e}")
+
+            db.execute("UPDATE guests SET status = 'complete', active = 1, trakt_device_data = NULL WHERE id = ?", (guest["id"],))
+            db.commit()
+            _finalize_onboard(guest)
+            return {"status": "done", "message": "Setup complete!"}
+
+    elif resp.status_code == 400:
+        label = "TV Shows" if is_tv else "Movies"
+        return {"status": "pending", "message": f"Waiting for authorization ({label})..."}
+    elif resp.status_code in (404, 409, 410):
+        db = get_db()
+        db.execute("UPDATE guests SET status = 'approved', trakt_device_data = NULL WHERE id = ?", (guest["id"],))
+        db.commit()
+        return {"status": "expired", "message": "Authorization expired. Click Start to try again."}
+    elif resp.status_code == 418:
+        return {"status": "denied", "message": "Authorization was denied."}
+    elif resp.status_code == 429:
+        return {"status": "pending", "message": "Polling too fast, slowing down..."}
+    else:
+        return {"status": "pending", "message": f"Unexpected response ({resp.status_code}), retrying..."}
+
+
+def _finalize_onboard(guest):
+    """Plex sharing + VPN client + welcome email + admin notification after both Trakt auths complete."""
+    plex_ok = False
+    try:
+        share_plex_guest_libraries(guest["email"])
+        plex_ok = True
+        db = get_db()
+        db.execute("UPDATE guests SET plex_shared = 1 WHERE id = ?", (guest["id"],))
+        db.commit()
+    except Exception as e:
+        app.logger.error(f"Plex sharing failed for {guest['email']}: {e}")
+
+    # Create WireGuard VPN client
+    try:
+        wg_id = create_wg_client(guest["name"])
+        db = get_db()
+        db.execute("UPDATE guests SET wg_client_id = ? WHERE id = ?", (wg_id, guest["id"]))
+        db.commit()
+    except Exception as e:
+        app.logger.error(f"WireGuard client creation failed for {guest['name']}: {e}")
+
+    try:
+        send_guest_welcome(guest["email"], guest["name"])
+    except Exception as e:
+        app.logger.error(f"Welcome email failed for {guest['email']}: {e}")
+
+    # Notify admins
+    plex_note = "Plex libraries shared automatically." if plex_ok else "<strong>ACTION NEEDED:</strong> Share Guest TV &amp; Guest Movies with this guest in Plex Settings &gt; Users &amp; Sharing."
+    try:
+        for admin_email in ADMIN_EMAILS:
+            _send_email(admin_email, f"Guest onboarding complete: {guest['name']}", f"""\
+<html><body style="font-family: sans-serif; color: #333; max-width: 500px; margin: 0 auto; padding: 20px;">
+<h2>Guest Onboarding Complete</h2>
+<p><strong>{guest['name']}</strong> ({guest['email']}) has completed Trakt authorization.</p>
+<p>{plex_note}</p>
+<p><a href="{BASE_URL}/admin/invite">Manage guests</a></p>
+</body></html>""")
+    except Exception as e:
+        app.logger.error(f"Failed to notify admins: {e}")
+
+
+@app.route("/onboard/<token>/vpn/qr")
+def onboard_vpn_qr(token):
+    guest = _get_guest_by_token(token)
+    if not guest or guest["status"] != "complete" or not guest["wg_client_id"]:
+        abort(404)
+    try:
+        s = _wg_easy_session()
+        r = s.get(f"{WG_EASY_URL}/api/wireguard/client/{guest['wg_client_id']}/qrcode.svg", timeout=5)
+        r.raise_for_status()
+        return Response(r.content, mimetype="image/svg+xml")
+    except Exception:
+        abort(500)
+
+
+@app.route("/onboard/<token>/vpn/config")
+def onboard_vpn_config(token):
+    guest = _get_guest_by_token(token)
+    if not guest or guest["status"] != "complete" or not guest["wg_client_id"]:
+        abort(404)
+    try:
+        s = _wg_easy_session()
+        r = s.get(f"{WG_EASY_URL}/api/wireguard/client/{guest['wg_client_id']}/configuration", timeout=5)
+        r.raise_for_status()
+        return Response(
+            r.content,
+            mimetype="application/octet-stream",
+            headers={"Content-Disposition": f"attachment; filename=MediaServer-{guest['name']}.conf"},
+        )
+    except Exception:
+        abort(500)
+
+
+# --- Admin guest management ---
+
+@app.route("/admin/invite")
+@admin_required
+def admin_invite():
+    db = get_db()
+    pending = db.execute("SELECT * FROM guests WHERE status = 'pending_approval' ORDER BY invited_at DESC").fetchall()
+    active = db.execute("SELECT * FROM guests WHERE status NOT IN ('pending_approval', 'rejected') ORDER BY active DESC, invited_at DESC").fetchall()
+    return render_template("invite.html", pending=pending, guests=active, quota_gb=GUEST_QUOTA_GB, onboard_url=f"{BASE_URL}/onboard")
+
+
+@app.route("/admin/invite/approve/<int:guest_id>", methods=["POST"])
+@admin_required
+def admin_invite_approve(guest_id):
+    if not check_csrf():
+        abort(403)
+    db = get_db()
+    guest = db.execute("SELECT * FROM guests WHERE id = ?", (guest_id,)).fetchone()
+    if not guest:
+        flash("Guest not found.", "error")
+        return redirect(url_for("admin_invite"))
+
+    db.execute("UPDATE guests SET status = 'approved' WHERE id = ?", (guest_id,))
+    db.commit()
+
+    try:
+        _send_email(guest["email"], "You're approved! Continue your setup", f"""\
+<html><body style="font-family: sans-serif; color: #333; max-width: 500px; margin: 0 auto; padding: 20px;">
+<h2>You're Approved!</h2>
+<p>Hi {guest['name']}, your request to join the Media Server has been approved.</p>
+<p>Continue your setup here:</p>
+<p><a href="{BASE_URL}/onboard/{guest['onboard_token']}" style="display:inline-block;padding:12px 24px;background:#e94560;color:#fff;text-decoration:none;border-radius:8px;font-weight:600;">Continue Setup</a></p>
+</body></html>""")
+    except Exception as e:
+        app.logger.error(f"Failed to send approval email: {e}")
+        flash("Approved, but failed to send email.", "error")
+
+    flash(f"Guest '{guest['name']}' approved.", "info")
+    return redirect(url_for("admin_invite"))
+
+
+@app.route("/admin/invite/reject/<int:guest_id>", methods=["POST"])
+@admin_required
+def admin_invite_reject(guest_id):
+    if not check_csrf():
+        abort(403)
+    db = get_db()
+    guest = db.execute("SELECT * FROM guests WHERE id = ?", (guest_id,)).fetchone()
+    if not guest:
+        flash("Guest not found.", "error")
+        return redirect(url_for("admin_invite"))
+
+    db.execute("UPDATE guests SET status = 'rejected' WHERE id = ?", (guest_id,))
+    db.commit()
+
+    try:
+        _send_email(guest["email"], "Media Server access update", f"""\
+<html><body style="font-family: sans-serif; color: #333; max-width: 500px; margin: 0 auto; padding: 20px;">
+<p>Hi {guest['name']}, your request to join the Media Server was not approved at this time. Contact the admin if you have questions.</p>
+</body></html>""")
+    except Exception:
+        pass
+
+    flash(f"Guest '{guest['name']}' rejected.", "info")
+    return redirect(url_for("admin_invite"))
+
+
+@app.route("/admin/invite/plex-shared/<int:guest_id>", methods=["POST"])
+@admin_required
+def admin_invite_plex_shared(guest_id):
+    if not check_csrf():
+        abort(403)
+    db = get_db()
+    db.execute("UPDATE guests SET plex_shared = 1 WHERE id = ?", (guest_id,))
+    db.commit()
+    flash("Marked Plex libraries as shared.", "info")
+    return redirect(url_for("admin_invite"))
+
+
+@app.route("/admin/invite/remove/<int:guest_id>", methods=["POST"])
+@admin_required
+def admin_invite_remove(guest_id):
+    if not check_csrf():
+        abort(403)
+
+    db = get_db()
+    guest = db.execute("SELECT * FROM guests WHERE id = ?", (guest_id,)).fetchone()
+    if not guest:
+        flash("Guest not found.", "error")
+        return redirect(url_for("admin_invite"))
+
+    trakt_username = guest["trakt_username"]
+    list_name = f"Trakt - {trakt_username}"
+
+    for service, base_url, api_key in [
+        ("Sonarr", SONARR_GUEST_URL, SONARR_GUEST_KEY),
+        ("Radarr", RADARR_GUEST_URL, RADARR_GUEST_KEY),
+    ]:
+        if not api_key:
+            continue
+        try:
+            r = requests.get(f"{base_url}/api/v3/importlist", headers={"X-Api-Key": api_key}, timeout=API_TIMEOUT)
+            if r.status_code == 200:
+                for lst in r.json():
+                    if lst.get("name") == list_name:
+                        requests.delete(f"{base_url}/api/v3/importlist/{lst['id']}", headers={"X-Api-Key": api_key}, timeout=API_TIMEOUT)
+        except Exception as e:
+            app.logger.error(f"Failed to remove import list from {service}: {e}")
+
+    db.execute("UPDATE guests SET active = 0, status = 'rejected' WHERE id = ?", (guest_id,))
+    db.commit()
+
+    flash(f"Guest '{trakt_username}' deactivated and import lists removed.", "info")
+    return redirect(url_for("admin_invite"))
 
 
 # --- Startup ---

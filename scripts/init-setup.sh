@@ -9,7 +9,7 @@
 #   - Plex signed in and libraries created via browser
 #   - PLEX_TOKEN set in .env
 #
-# Usage: ./scripts/init-setup.sh [--trakt] [--dry-run]
+# Usage: ./scripts/init-setup.sh [--trakt] [--guest] [--dry-run]
 
 set -euo pipefail
 
@@ -21,6 +21,7 @@ CONFIG_DIR="$PROJECT_DIR/config"
 ERRORS=0
 DRY_RUN=false
 DO_TRAKT=false
+DO_GUEST=false
 
 # Trakt client IDs (loaded from .env)
 SONARR_TRAKT_CLIENT_ID=$(grep -m1 '^SONARR_TRAKT_CLIENT_ID=' "$ENV_FILE" | cut -d= -f2-)
@@ -104,12 +105,14 @@ parse_response() {
 for arg in "$@"; do
     case "$arg" in
         --trakt)   DO_TRAKT=true ;;
+        --guest)   DO_GUEST=true ;;
         --dry-run) DRY_RUN=true ;;
         -h|--help)
             echo "Usage: init-setup.sh [OPTIONS]"
             echo ""
             echo "Options:"
             echo "  --trakt     Run interactive Trakt OAuth device-code flow"
+            echo "  --guest     Configure guest Sonarr/Radarr instances"
             echo "  --dry-run   Show what would be configured without making changes"
             echo "  -h, --help  Show this help message"
             exit 0
@@ -134,7 +137,9 @@ echo ""
 log_info "Reading API keys from service configs..."
 
 get_api_key() {
-    local service="$1" config_path="$CONFIG_DIR/$service/config.xml" env_var="${2:-}"
+    local service="$1"
+    local config_path="$CONFIG_DIR/$service/config.xml"
+    local env_var="${2:-}"
     local key
     if [ ! -f "$config_path" ]; then
         log_err "$service config.xml not found at $config_path — is the container running?"
@@ -171,6 +176,9 @@ if [ -z "$PROWLARR_KEY" ] || [ -z "$SONARR_KEY" ] || [ -z "$RADARR_KEY" ]; then
 fi
 
 log_ok "API keys loaded (Prowlarr, Sonarr, Radarr)"
+
+# When --guest is passed without --trakt, skip owner sections 2-8
+if ! $DO_GUEST; then
 
 # --- Section 2: Wait for services ---
 
@@ -795,7 +803,260 @@ else
     fi
 fi
 
-# --- Section 9: Trakt integration (interactive) ---
+fi  # end of "if ! $DO_GUEST" (skip owner sections when --guest)
+
+# --- Section 9: Guest pipeline ---
+
+if $DO_GUEST; then
+    echo ""
+    log_info "=== Configuring Guest Pipeline ==="
+
+    # Read guest API keys from config.xml
+    SONARR_GUEST_KEY=$(get_api_key "sonarr-guest" "SONARR_GUEST_API_KEY") || true
+    RADARR_GUEST_KEY=$(get_api_key "radarr-guest" "RADARR_GUEST_API_KEY") || true
+
+    if [ -z "$SONARR_GUEST_KEY" ] || [ -z "$RADARR_GUEST_KEY" ]; then
+        log_err "Guest API keys not found. Ensure sonarr-guest and radarr-guest containers have started."
+    else
+        log_ok "Guest API keys loaded"
+
+        wait_for_service "Sonarr-Guest" "http://localhost:8990/api/v3/health" "$SONARR_GUEST_KEY"
+        wait_for_service "Radarr-Guest" "http://localhost:7879/api/v3/health" "$RADARR_GUEST_KEY"
+
+        # Guest Sonarr: root folder
+        echo ""
+        log_info "=== Configuring Guest Sonarr ==="
+
+        existing_roots=$(curl -sf -H "X-Api-Key: $SONARR_GUEST_KEY" "http://localhost:8990/api/v3/rootfolder")
+        guest_sonarr_root=$(echo "$existing_roots" | jq -r '.[] | select(.path == "/data/media/guest-tv") | .id')
+
+        if [ -z "$guest_sonarr_root" ]; then
+            if $DRY_RUN; then
+                log_info "[DRY RUN] Would add Guest Sonarr root folder /data/media/guest-tv"
+            else
+                parse_response "$(api_call POST "http://localhost:8990/api/v3/rootfolder" "$SONARR_GUEST_KEY" '{"path":"/data/media/guest-tv"}')"
+                if [ "$RESP_CODE" = "200" ] || [ "$RESP_CODE" = "201" ]; then
+                    log_ok "Added Guest Sonarr root folder /data/media/guest-tv"
+                else
+                    log_err "Failed to add Guest Sonarr root folder (HTTP $RESP_CODE): $RESP_BODY"
+                fi
+            fi
+        else
+            log_ok "Guest Sonarr root folder already configured"
+        fi
+
+        # Guest Sonarr: download client
+        existing_dl=$(curl -sf -H "X-Api-Key: $SONARR_GUEST_KEY" "http://localhost:8990/api/v3/downloadclient")
+        guest_sonarr_dl=$(echo "$existing_dl" | jq -r '.[] | select(.name == "Transmission") | .id')
+
+        if [ -z "$guest_sonarr_dl" ]; then
+            guest_sonarr_dl_payload=$(cat <<GSDEOF
+{
+  "enable": true,
+  "protocol": "torrent",
+  "priority": 1,
+  "removeCompletedDownloads": false,
+  "removeFailedDownloads": false,
+  "name": "Transmission",
+  "implementation": "Transmission",
+  "configContract": "TransmissionSettings",
+  "fields": [
+    {"name": "host", "value": "transmission"},
+    {"name": "port", "value": 9091},
+    {"name": "useSsl", "value": false},
+    {"name": "urlBase", "value": "/transmission/rpc"},
+    {"name": "tvCategory", "value": "guest-sonarr"},
+    {"name": "recentTvPriority", "value": 0},
+    {"name": "olderTvPriority", "value": 0},
+    {"name": "addPaused", "value": false}
+  ],
+  "tags": []
+}
+GSDEOF
+)
+            if $DRY_RUN; then
+                log_info "[DRY RUN] Would add Transmission to Guest Sonarr (category: guest-sonarr)"
+            else
+                parse_response "$(api_call POST "http://localhost:8990/api/v3/downloadclient" "$SONARR_GUEST_KEY" "$guest_sonarr_dl_payload")"
+                if [ "$RESP_CODE" = "200" ] || [ "$RESP_CODE" = "201" ]; then
+                    log_ok "Added Transmission as Guest Sonarr download client (category: guest-sonarr)"
+                else
+                    log_err "Failed to add Transmission to Guest Sonarr (HTTP $RESP_CODE): $RESP_BODY"
+                fi
+            fi
+        else
+            log_ok "Transmission already configured in Guest Sonarr"
+        fi
+
+        # Guest Sonarr: listSyncLevel
+        if ! $DRY_RUN; then
+            parse_response "$(api_call PUT "http://localhost:8990/api/v3/config/importlist" "$SONARR_GUEST_KEY" '{"listSyncLevel":"keepAndUnmonitor","id":1}')"
+            if [ "$RESP_CODE" = "200" ] || [ "$RESP_CODE" = "202" ]; then
+                log_ok "Set Guest Sonarr listSyncLevel to keepAndUnmonitor"
+            else
+                log_warn "Could not set listSyncLevel on Guest Sonarr (HTTP $RESP_CODE)"
+            fi
+        fi
+
+        # Guest Radarr: root folder
+        echo ""
+        log_info "=== Configuring Guest Radarr ==="
+
+        existing_roots=$(curl -sf -H "X-Api-Key: $RADARR_GUEST_KEY" "http://localhost:7879/api/v3/rootfolder")
+        guest_radarr_root=$(echo "$existing_roots" | jq -r '.[] | select(.path == "/data/media/guest-movies") | .id')
+
+        if [ -z "$guest_radarr_root" ]; then
+            if $DRY_RUN; then
+                log_info "[DRY RUN] Would add Guest Radarr root folder /data/media/guest-movies"
+            else
+                parse_response "$(api_call POST "http://localhost:7879/api/v3/rootfolder" "$RADARR_GUEST_KEY" '{"path":"/data/media/guest-movies"}')"
+                if [ "$RESP_CODE" = "200" ] || [ "$RESP_CODE" = "201" ]; then
+                    log_ok "Added Guest Radarr root folder /data/media/guest-movies"
+                else
+                    log_err "Failed to add Guest Radarr root folder (HTTP $RESP_CODE): $RESP_BODY"
+                fi
+            fi
+        else
+            log_ok "Guest Radarr root folder already configured"
+        fi
+
+        # Guest Radarr: download client
+        existing_dl=$(curl -sf -H "X-Api-Key: $RADARR_GUEST_KEY" "http://localhost:7879/api/v3/downloadclient")
+        guest_radarr_dl=$(echo "$existing_dl" | jq -r '.[] | select(.name == "Transmission") | .id')
+
+        if [ -z "$guest_radarr_dl" ]; then
+            guest_radarr_dl_payload=$(cat <<GRDEOF
+{
+  "enable": true,
+  "protocol": "torrent",
+  "priority": 1,
+  "removeCompletedDownloads": false,
+  "removeFailedDownloads": false,
+  "name": "Transmission",
+  "implementation": "Transmission",
+  "configContract": "TransmissionSettings",
+  "fields": [
+    {"name": "host", "value": "transmission"},
+    {"name": "port", "value": 9091},
+    {"name": "useSsl", "value": false},
+    {"name": "urlBase", "value": "/transmission/rpc"},
+    {"name": "movieCategory", "value": "guest-radarr"},
+    {"name": "recentMoviePriority", "value": 0},
+    {"name": "olderMoviePriority", "value": 0},
+    {"name": "addPaused", "value": false}
+  ],
+  "tags": []
+}
+GRDEOF
+)
+            if $DRY_RUN; then
+                log_info "[DRY RUN] Would add Transmission to Guest Radarr (category: guest-radarr)"
+            else
+                parse_response "$(api_call POST "http://localhost:7879/api/v3/downloadclient" "$RADARR_GUEST_KEY" "$guest_radarr_dl_payload")"
+                if [ "$RESP_CODE" = "200" ] || [ "$RESP_CODE" = "201" ]; then
+                    log_ok "Added Transmission as Guest Radarr download client (category: guest-radarr)"
+                else
+                    log_err "Failed to add Transmission to Guest Radarr (HTTP $RESP_CODE): $RESP_BODY"
+                fi
+            fi
+        else
+            log_ok "Transmission already configured in Guest Radarr"
+        fi
+
+        # Guest Radarr: listSyncLevel
+        if ! $DRY_RUN; then
+            parse_response "$(api_call PUT "http://localhost:7879/api/v3/config/importlist" "$RADARR_GUEST_KEY" '{"listSyncLevel":"keepAndUnmonitor","id":1}')"
+            if [ "$RESP_CODE" = "200" ] || [ "$RESP_CODE" = "202" ]; then
+                log_ok "Set Guest Radarr listSyncLevel to keepAndUnmonitor"
+            else
+                log_warn "Could not set listSyncLevel on Guest Radarr (HTTP $RESP_CODE)"
+            fi
+        fi
+
+        # Add guest instances to Prowlarr
+        echo ""
+        log_info "=== Adding Guest instances to Prowlarr ==="
+
+        existing_apps=$(curl -sf -H "X-Api-Key: $PROWLARR_KEY" "http://localhost:9696/api/v1/applications")
+
+        # Guest Sonarr in Prowlarr
+        guest_sonarr_app=$(echo "$existing_apps" | jq -r '.[] | select(.name == "Sonarr-Guest") | .id')
+        if [ -z "$guest_sonarr_app" ]; then
+            guest_sonarr_app_payload=$(cat <<GSAEOF
+{
+  "syncLevel": "fullSync",
+  "name": "Sonarr-Guest",
+  "implementation": "Sonarr",
+  "configContract": "SonarrSettings",
+  "fields": [
+    {"name": "prowlarrUrl", "value": "http://prowlarr:9696"},
+    {"name": "baseUrl", "value": "http://sonarr-guest:8989"},
+    {"name": "apiKey", "value": "$SONARR_GUEST_KEY"},
+    {"name": "syncCategories", "value": [5000,5010,5020,5030,5040,5045,5050,5060,5070,5080]},
+    {"name": "animeSyncCategories", "value": [5070]}
+  ],
+  "tags": []
+}
+GSAEOF
+)
+            if $DRY_RUN; then
+                log_info "[DRY RUN] Would add Sonarr-Guest to Prowlarr"
+            else
+                parse_response "$(api_call POST "http://localhost:9696/api/v1/applications" "$PROWLARR_KEY" "$guest_sonarr_app_payload")"
+                if [ "$RESP_CODE" = "200" ] || [ "$RESP_CODE" = "201" ]; then
+                    log_ok "Added Sonarr-Guest as Prowlarr application"
+                else
+                    log_err "Failed to add Sonarr-Guest to Prowlarr (HTTP $RESP_CODE): $RESP_BODY"
+                fi
+            fi
+        else
+            log_ok "Sonarr-Guest already configured in Prowlarr"
+        fi
+
+        # Guest Radarr in Prowlarr
+        guest_radarr_app=$(echo "$existing_apps" | jq -r '.[] | select(.name == "Radarr-Guest") | .id')
+        if [ -z "$guest_radarr_app" ]; then
+            guest_radarr_app_payload=$(cat <<GRAEOF
+{
+  "syncLevel": "fullSync",
+  "name": "Radarr-Guest",
+  "implementation": "Radarr",
+  "configContract": "RadarrSettings",
+  "fields": [
+    {"name": "prowlarrUrl", "value": "http://prowlarr:9696"},
+    {"name": "baseUrl", "value": "http://radarr-guest:7878"},
+    {"name": "apiKey", "value": "$RADARR_GUEST_KEY"},
+    {"name": "syncCategories", "value": [2000,2010,2020,2030,2040,2045,2050,2060,2070,2080,2090]}
+  ],
+  "tags": []
+}
+GRAEOF
+)
+            if $DRY_RUN; then
+                log_info "[DRY RUN] Would add Radarr-Guest to Prowlarr"
+            else
+                parse_response "$(api_call POST "http://localhost:9696/api/v1/applications" "$PROWLARR_KEY" "$guest_radarr_app_payload")"
+                if [ "$RESP_CODE" = "200" ] || [ "$RESP_CODE" = "201" ]; then
+                    log_ok "Added Radarr-Guest as Prowlarr application"
+                else
+                    log_err "Failed to add Radarr-Guest to Prowlarr (HTTP $RESP_CODE): $RESP_BODY"
+                fi
+            fi
+        else
+            log_ok "Radarr-Guest already configured in Prowlarr"
+        fi
+
+        # Trigger indexer sync
+        if ! $DRY_RUN; then
+            parse_response "$(api_call POST "http://localhost:9696/api/v1/command" "$PROWLARR_KEY" '{"name":"ApplicationIndexerSync"}')"
+            if [ "$RESP_CODE" = "200" ] || [ "$RESP_CODE" = "201" ]; then
+                log_ok "Triggered Prowlarr indexer sync (includes guest instances)"
+            fi
+        fi
+    fi
+fi
+
+# --- Section 10: Trakt integration (interactive) ---
 
 if $DO_TRAKT; then
     echo ""
@@ -996,7 +1257,7 @@ TLEOF
     fi
 fi
 
-# --- Section 10: Summary ---
+# --- Section 11: Summary ---
 
 echo ""
 echo "=== Setup Summary ==="
@@ -1014,6 +1275,9 @@ echo "  1. Plex: Sign in at http://localhost:32400/web and add /tv + /movies lib
 echo "  2. Seerr: Complete setup wizard at http://localhost:5055"
 if ! $DO_TRAKT; then
     echo "  3. Trakt: Re-run with --trakt flag to set up watchlist integration"
+fi
+if ! $DO_GUEST; then
+    echo "  5. Guest: Re-run with --guest flag after starting guest containers"
 fi
 echo "  4. Install cron jobs (see wiki Maintenance page):"
 echo "     crontab -e"

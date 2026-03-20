@@ -30,13 +30,19 @@ ENV_FILE="$SCRIPT_DIR/../.env"
 if [ -f "$ENV_FILE" ]; then
     SONARR_KEY=$(grep -m1 '^SONARR_API_KEY=' "$ENV_FILE" | cut -d= -f2-)
     RADARR_KEY=$(grep -m1 '^RADARR_API_KEY=' "$ENV_FILE" | cut -d= -f2-)
+    SONARR_GUEST_KEY=$(grep -m1 '^SONARR_GUEST_API_KEY=' "$ENV_FILE" | cut -d= -f2- || true)
+    RADARR_GUEST_KEY=$(grep -m1 '^RADARR_GUEST_API_KEY=' "$ENV_FILE" | cut -d= -f2- || true)
 else
     echo "ERROR: .env file not found at $ENV_FILE" >&2
     exit 1
 fi
 
-SONARR_URL="http://localhost:8989"
-RADARR_URL="http://localhost:7878"
+# Instance list: "label|sonarr_url|sonarr_key|radarr_url|radarr_key"
+QUEUE_INSTANCES="owner|http://localhost:8989|$SONARR_KEY|http://localhost:7878|$RADARR_KEY"
+if [ -n "$SONARR_GUEST_KEY" ] && [ -n "$RADARR_GUEST_KEY" ]; then
+    QUEUE_INSTANCES="$QUEUE_INSTANCES
+guest|http://localhost:8990|$SONARR_GUEST_KEY|http://localhost:7879|$RADARR_GUEST_KEY"
+fi
 
 SUSPICIOUS_EXTENSIONS="exe|msi|bat|scr|cmd|ps1|vbs|com|pif"
 
@@ -377,17 +383,24 @@ if [ -z "$SMTP_SERVER" ] || [ -z "$SMTP_TO" ] || [ -z "$SMTP_PASS" ]; then
     log "WARN: SMTP vars missing from .env — email alerts disabled"
 fi
 
-log "Checking for suspicious files..."
-handle_suspicious "Sonarr" "$SONARR_URL" "$SONARR_KEY"
-handle_suspicious "Radarr" "$RADARR_URL" "$RADARR_KEY"
+while IFS= read -r inst; do
+    [ -z "$inst" ] && continue
+    IFS='|' read -r label sonarr_url sonarr_key radarr_url radarr_key <<< "$inst"
 
-log "Checking for import-blocked items..."
-handle_import_blocked "Sonarr" "$SONARR_URL" "$SONARR_KEY" "series"
-handle_import_blocked "Radarr" "$RADARR_URL" "$RADARR_KEY" "movie"
+    log "--- Processing $label instance ---"
 
-log "Checking for stalled downloads..."
-handle_stalled "Sonarr" "$SONARR_URL" "$SONARR_KEY"
-handle_stalled "Radarr" "$RADARR_URL" "$RADARR_KEY"
+    log "Checking for suspicious files..."
+    handle_suspicious "Sonarr ($label)" "$sonarr_url" "$sonarr_key"
+    handle_suspicious "Radarr ($label)" "$radarr_url" "$radarr_key"
+
+    log "Checking for import-blocked items..."
+    handle_import_blocked "Sonarr ($label)" "$sonarr_url" "$sonarr_key" "series"
+    handle_import_blocked "Radarr ($label)" "$radarr_url" "$radarr_key" "movie"
+
+    log "Checking for stalled downloads..."
+    handle_stalled "Sonarr ($label)" "$sonarr_url" "$sonarr_key"
+    handle_stalled "Radarr ($label)" "$radarr_url" "$radarr_key"
+done <<< "$QUEUE_INSTANCES"
 
 # Send consolidated email if there were any issues
 if [ -n "$ALERT_MESSAGES" ]; then

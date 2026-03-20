@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Login - Media Server Status</title>
+    <title>Join - Media Server</title>
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -21,44 +21,30 @@
             border-radius: 12px;
             padding: 2.5rem;
             width: 100%;
-            max-width: 400px;
+            max-width: 420px;
             margin: 1rem;
             box-shadow: 0 8px 32px rgba(0,0,0,0.3);
         }
-        h1 {
-            font-size: 1.5rem;
-            margin-bottom: 0.5rem;
-            color: #fff;
-        }
-        .subtitle {
-            color: #8892b0;
-            font-size: 0.9rem;
-            margin-bottom: 2rem;
-        }
-        label {
-            display: block;
-            font-size: 0.85rem;
-            color: #8892b0;
-            margin-bottom: 0.5rem;
-        }
-        input[type="email"] {
+        h1 { font-size: 1.5rem; margin-bottom: 0.5rem; color: #fff; }
+        .subtitle { color: #8892b0; font-size: 0.9rem; margin-bottom: 2rem; line-height: 1.5; }
+        label { display: block; font-size: 0.85rem; color: #8892b0; margin-bottom: 0.4rem; margin-top: 0.75rem; }
+        input[type="text"], input[type="email"] {
             width: 100%;
-            padding: 0.75rem 1rem;
+            padding: 0.7rem 0.9rem;
             background: #0f3460;
             border: 1px solid #1a4a7a;
             border-radius: 8px;
             color: #e0e0e0;
-            font-size: 1rem;
+            font-size: 0.95rem;
             outline: none;
             transition: border-color 0.2s;
         }
-        input[type="email"]:focus {
-            border-color: #e94560;
-        }
+        input:focus { border-color: #e94560; }
+        .hint { font-size: 0.75rem; color: #5a6a8a; margin-top: 0.25rem; }
         button {
             width: 100%;
             padding: 0.75rem;
-            margin-top: 1.25rem;
+            margin-top: 1.5rem;
             background: #e94560;
             color: #fff;
             border: none;
@@ -72,27 +58,51 @@
         .flash {
             padding: 0.75rem 1rem;
             border-radius: 8px;
-            margin-bottom: 1.25rem;
+            margin-bottom: 1rem;
             font-size: 0.9rem;
         }
         .flash.info { background: rgba(100,150,255,0.15); color: #8ab4f8; }
         .flash.error { background: rgba(233,69,96,0.15); color: #e94560; }
+        .prereqs {
+            background: #0f3460;
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 1.5rem;
+            font-size: 0.85rem;
+            line-height: 1.6;
+        }
+        .prereqs strong { color: #fff; }
+        .prereqs a { color: #8ab4f8; }
     </style>
 </head>
 <body>
     <div class="card">
-        <h1>Media Server</h1>
-        <p class="subtitle">Enter your email to receive a login link.</p>
+        <h1>Join the Media Server</h1>
+        <p class="subtitle">Request access to stream movies and TV shows.</p>
+
         {% with messages = get_flashed_messages(with_categories=true) %}
             {% for category, message in messages %}
                 <div class="flash {{ category }}">{{ message }}</div>
             {% endfor %}
         {% endwith %}
+
+        <div class="prereqs">
+            <strong>Before you start, you'll need:</strong><br>
+            1. A <a href="https://plex.tv" target="_blank">Plex</a> account (free)<br>
+            2. A <a href="https://trakt.tv" target="_blank">Trakt</a> account (free)
+        </div>
+
         <form method="POST">
             <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
-            <label for="email">Email address</label>
-            <input type="email" id="email" name="email" placeholder="you@example.com" required autofocus>
-            <button type="submit">Send Login Link</button>
+            <label for="name">Your name</label>
+            <input type="text" id="name" name="name" placeholder="e.g. Alex" required>
+            <label for="email">Email</label>
+            <input type="email" id="email" name="email" placeholder="Must match your Plex account" required>
+            <div class="hint">Use the same email as your Plex account</div>
+            <label for="trakt_username">Trakt username</label>
+            <input type="text" id="trakt_username" name="trakt_username" placeholder="e.g. alex123" required>
+            <div class="hint">Find it at trakt.tv/users/me</div>
+            <button type="submit">Request Access</button>
         </form>
     </div>
 </body>
