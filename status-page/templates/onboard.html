@@ -12,21 +12,24 @@
             background: #1a1a2e;
             color: #e0e0e0;
             min-height: 100vh;
+            display: flex;
+            flex-direction: column;
         }
         .page-header {
             text-align: center;
-            padding: 2.5rem 1rem 1rem;
+            padding: 1.5rem 1rem 0.5rem;
         }
-        .page-header h1 { font-size: 1.8rem; color: #fff; margin-bottom: 0.5rem; }
-        .page-header p { color: #8892b0; font-size: 1rem; }
+        .page-header h1 { font-size: 1.5rem; color: #fff; margin-bottom: 0.25rem; }
+        .page-header p { color: #8892b0; font-size: 0.9rem; }
         .columns {
             display: grid;
             grid-template-columns: 1fr 1fr 1fr 1fr;
-            gap: 1.25rem;
+            gap: 1rem;
             max-width: 1400px;
-            margin: 1.5rem auto;
-            padding: 0 1rem 2rem;
+            margin: 1rem auto;
+            padding: 0 1rem;
             align-items: stretch;
+            flex: 1;
         }
         @media (max-width: 1100px) {
             .columns { grid-template-columns: 1fr 1fr; }
@@ -37,12 +40,12 @@
         .card {
             background: #16213e;
             border-radius: 12px;
-            padding: 1.75rem;
+            padding: 1.25rem;
             box-shadow: 0 4px 16px rgba(0,0,0,0.2);
             display: flex;
             flex-direction: column;
         }
-        .card h2 { font-size: 1.1rem; color: #fff; margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 1px solid #1a3a5c; }
+        .card h2 { font-size: 1rem; color: #fff; margin-bottom: 0.75rem; padding-bottom: 0.4rem; border-bottom: 1px solid #1a3a5c; }
         label { display: block; font-size: 0.85rem; color: #8892b0; margin-bottom: 0.4rem; margin-top: 0.75rem; }
         input[type="text"], input[type="email"] {
             width: 100%;
@@ -79,10 +82,10 @@
         }
         .flash.info { background: rgba(100,150,255,0.15); color: #8ab4f8; }
         .flash.error { background: rgba(233,69,96,0.15); color: #e94560; }
-        .info-list { line-height: 1.8; font-size: 0.9rem; color: #8892b0; padding-left: 1.2rem; }
-        .info-list li { margin-bottom: 0.25rem; }
+        .info-list { line-height: 1.6; font-size: 0.85rem; color: #8892b0; padding-left: 1.2rem; }
+        .info-list li { margin-bottom: 0.15rem; }
         .info-list strong { color: #e0e0e0; }
-        .faq-item { margin-bottom: 0.75rem; font-size: 0.9rem; color: #8892b0; line-height: 1.7; }
+        .faq-item { margin-bottom: 0.6rem; font-size: 0.85rem; color: #8892b0; line-height: 1.6; }
         .faq-item:last-child { margin-bottom: 0; }
         .faq-item strong { color: #e0e0e0; }
         .step-num {
@@ -99,7 +102,7 @@
             margin-right: 0.4rem;
         }
         .steps-list { list-style: none; padding: 0; }
-        .steps-list li { line-height: 1.8; font-size: 0.9rem; color: #8892b0; margin-bottom: 0.25rem; }
+        .steps-list li { line-height: 1.6; font-size: 0.85rem; color: #8892b0; margin-bottom: 0.15rem; }
         .steps-list strong { color: #e0e0e0; }
         .time-badge {
             display: inline-block;
@@ -122,6 +125,16 @@
         .prereqs strong { color: #fff; }
         .prereqs a { color: #8ab4f8; }
         a { color: #8ab4f8; }
+        .footer {
+            text-align: center;
+            padding: 1rem 1rem 1.5rem;
+            font-size: 0.8rem;
+            color: #5a6a8a;
+        }
+        .footer a { color: #8892b0; text-decoration: none; }
+        .footer a:hover { color: #8ab4f8; }
+        .footer .links { margin-bottom: 0.5rem; }
+        .footer .links a { margin: 0 0.75rem; }
     </style>
 </head>
 <body>
@@ -140,9 +153,9 @@
                 <li>It downloads and appears in <strong>Plex</strong>, ready to watch</li>
                 <li>30 days after watching, it's auto-removed to free space</li>
             </ol>
-            <p style="font-size:0.85rem;color:#5a6a8a;margin-top:1rem">You can also browse and request through <strong style="color:#8892b0">Seerr</strong>, a visual catalog with posters and ratings.</p>
-            <p style="font-size:0.85rem;color:#5a6a8a;margin-top:0.75rem">The server prefers <strong style="color:#8892b0">1080p</strong> releases with English subtitles. 4K is only used as a fallback when no 1080p version is available.</p>
-            <p style="font-size:0.85rem;color:#5a6a8a;margin-top:0.75rem">Guests share a storage quota. Watched content is automatically cleaned up after 30 days to keep space available for everyone.</p>
+            <p style="font-size:0.8rem;color:#5a6a8a;margin-top:0.75rem">You can also browse and request through <strong style="color:#8892b0">Seerr</strong>, a visual catalog with posters and ratings.</p>
+            <p style="font-size:0.8rem;color:#5a6a8a;margin-top:0.5rem">1080p preferred with English subtitles. 4K only as fallback.</p>
+            <p style="font-size:0.8rem;color:#5a6a8a;margin-top:0.5rem">Guests share a storage quota. Watched content auto-cleans after 30 days.</p>
         </div>
 
         <!-- Column 2: FAQ -->
@@ -171,7 +184,7 @@
         <div class="card">
             <h2>What to Expect</h2>
 
-            <p style="font-size:0.9rem;color:#8892b0;margin-bottom:1rem">The onboarding takes about <strong style="color:#e0e0e0">10 minutes</strong> of your time, plus a wait for admin approval.</p>
+            <p style="font-size:0.85rem;color:#8892b0;margin-bottom:0.75rem">About <strong style="color:#e0e0e0">10 minutes</strong> of your time, plus a wait for admin approval.</p>
 
             <ul class="steps-list">
                 <li><span class="step-num">1</span> Fill out the request form <span class="time-badge">1 min</span></li>
@@ -182,9 +195,8 @@
                 <li><span class="step-num">6</span> Install Plex and start watching</li>
             </ul>
 
-            <p style="font-size:0.85rem;color:#5a6a8a;margin-top:1rem">After approval, you'll get a link to continue setup. Everything is guided step by step &mdash; no technical knowledge needed.</p>
-
-            <p style="font-size:0.85rem;color:#5a6a8a;margin-top:0.75rem"><strong style="color:#8892b0">What you'll need after approval:</strong> your phone, laptop, or TV to install the WireGuard VPN app and the Plex app. The Trakt authorization is done in the browser.</p>
+            <p style="font-size:0.8rem;color:#5a6a8a;margin-top:0.75rem">After approval, you'll get a link to continue. Everything is guided &mdash; no technical knowledge needed.</p>
+            <p style="font-size:0.8rem;color:#5a6a8a;margin-top:0.5rem"><strong style="color:#8892b0">You'll need:</strong> WireGuard VPN app + Plex app on your device. Trakt auth is done in the browser.</p>
         </div>
 
         <!-- Column 4: Request Access -->
@@ -219,6 +231,14 @@
             </form>
             <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
         </div>
+    </div>
+
+    <div class="footer">
+        <div class="links">
+            <a href="https://github.com/jlaszloe6/mediaserver/wiki/User-Guide">User Guide</a>
+            <a href="https://github.com/jlaszloe6/mediaserver/wiki/Guest-System">Guest System</a>
+        </div>
+        <a href="https://github.com/jlaszloe6/mediaserver">github.com/jlaszloe6/mediaserver</a>
     </div>
 </body>
 </html>
