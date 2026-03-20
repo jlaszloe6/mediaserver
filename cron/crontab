@@ -17,6 +17,9 @@
 0 3 * * * docker exec prunarr prunarr movies remove --watched --days-watched 30 --force >> /var/log/cron/prunarr-movies.log 2>&1
 15 3 * * * docker exec prunarr prunarr series remove --watched --days-watched 30 --force >> /var/log/cron/prunarr-series.log 2>&1
 
+# GeoIP database update (weekly Sunday 2am) + reload Caddy
+0 2 * * 0 docker exec caddy /usr/local/bin/download-geodb.sh >> /var/log/cron/geodb-update.log 2>&1 && docker exec caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile >> /var/log/cron/geodb-update.log 2>&1
+
 # Prunarr guest (daily 4am)
 0 4 * * * docker exec prunarr-guest prunarr movies remove --watched --days-watched 30 --force >> /var/log/cron/prunarr-guest-movies.log 2>&1
 15 4 * * * docker exec prunarr-guest prunarr series remove --watched --days-watched 30 --force >> /var/log/cron/prunarr-guest-series.log 2>&1
