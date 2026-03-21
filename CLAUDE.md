@@ -86,7 +86,9 @@ Guest instances: Sonarr-Guest, Radarr-Guest, Prunarr-Guest
 - Cloudflare Turnstile captcha on login and onboard forms
 - Session cookies: Secure, HttpOnly, SameSite=Lax
 - Onboarding tokens expire after `ONBOARD_TOKEN_TTL_DAYS` (default: 7), reset on admin approval
-- Dashboard: service health, library stats, active downloads, recent activity, Trakt sync log
+- Dashboard: service health, library stats, active downloads, recent activity (local time, readable labels), Trakt sync log
+- Custom error pages (400, 403, 404, 500) with dark theme
+- Favicon logo on all pages (login, onboard, dashboard, guests, errors)
 - Guest view: filtered stats, quota bar, guest-only downloads
 - Self-service onboarding at `/onboard` with VPN auto-creation
 - Welcome email includes VPN setup as step 1 with link back to onboarding page for config download
