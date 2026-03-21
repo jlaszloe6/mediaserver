@@ -9,7 +9,7 @@ from config import (
     RADARR_GUEST_KEY, RADARR_GUEST_URL, SONARR_GUEST_KEY, SONARR_GUEST_URL,
 )
 from db import get_db
-from services.email import send_email
+from services.email import send_styled_email, _button
 from services.plex import revoke_plex_share
 from services.wireguard import delete_wg_client
 
@@ -41,13 +41,11 @@ def admin_invite_approve(guest_id):
     db.commit()
 
     try:
-        send_email(guest["email"], "You're approved! Continue your setup", f"""\
-<html><body style="font-family: sans-serif; color: #333; max-width: 500px; margin: 0 auto; padding: 20px;">
-<h2>You're Approved!</h2>
+        send_styled_email(guest["email"], "You're approved! Continue your setup", f"""\
+<p style="font-size:17px;color:#fff;">You're Approved!</p>
 <p>Hi {guest['name']}, your request to join the Media Server has been approved.</p>
 <p>Continue your setup here:</p>
-<p><a href="{BASE_URL}/onboard/{guest['onboard_token']}" style="display:inline-block;padding:12px 24px;background:#e94560;color:#fff;text-decoration:none;border-radius:8px;font-weight:600;">Continue Setup</a></p>
-</body></html>""")
+<p style="text-align:center;margin:16px 0;">{_button(f"{BASE_URL}/onboard/{guest['onboard_token']}", "Continue Setup")}</p>""")
     except Exception as e:
         current_app.logger.error(f"Failed to send approval email: {e}")
         flash("Approved, but failed to send email.", "error")
@@ -71,10 +69,8 @@ def admin_invite_reject(guest_id):
     db.commit()
 
     try:
-        send_email(guest["email"], "Media Server access update", f"""\
-<html><body style="font-family: sans-serif; color: #333; max-width: 500px; margin: 0 auto; padding: 20px;">
-<p>Hi {guest['name']}, your request to join the Media Server was not approved at this time. Contact the admin if you have questions.</p>
-</body></html>""")
+        send_styled_email(guest["email"], "Media Server access update",
+            f"<p>Hi {guest['name']}, your request to join the Media Server was not approved at this time. Contact the admin if you have questions.</p>")
     except Exception:
         pass
 
