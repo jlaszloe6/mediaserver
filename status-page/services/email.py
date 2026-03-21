@@ -59,6 +59,20 @@ def send_user_guide(email):
 <li><strong>Subtitles</strong> &mdash; Most downloads include English subtitles. Toggle them in the Plex player.</li>
 </ul>
 
+<h2 style="color: #16213e;">Remote Access (VPN)</h2>
+<ul style="line-height: 1.8;">
+<li><strong>VPN required</strong> &mdash; Plex will not work remotely without an active VPN connection.</li>
+<li>Install <strong>WireGuard</strong> on your device and import the .conf file you received during onboarding.</li>
+<li>Toggle the VPN on before opening Plex when you're away from home.</li>
+<li>On the home network, VPN is not needed.</li>
+</ul>
+
+<h2 style="color: #16213e;">Status Page</h2>
+<ul style="line-height: 1.8;">
+<li>Check what's downloading, library stats, and service health at the <strong>Status Page</strong>.</li>
+<li>Log in with your email &mdash; you'll receive a magic link (no password needed).</li>
+</ul>
+
 <h2 style="color: #16213e;">Good to Know</h2>
 <ul style="line-height: 1.8;">
 <li>Watched content is <strong>automatically removed after 30 days</strong> to free space.</li>
