@@ -4,3 +4,13 @@ __pycache__/
 .env
 .env.local
 .env.*.local
+
+# Runtime files (mediaserver user home dir)
+actions-runner/
+_diag/
+_work/
+svc.sh
+.gitconfig
+.lesshst
+.bash_history
+.docker/
