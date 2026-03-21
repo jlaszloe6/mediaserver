@@ -60,6 +60,7 @@
 </head>
 <body>
     <div class="card">
+        <img src="{{ url_for('static', filename='favicon.svg') }}" alt="" width="48" height="48" style="margin-bottom:0.5rem;">
         <div class="error-code">{{ code }}</div>
         <h1>{{ title }}</h1>
         <p class="message">{{ message }}</p>

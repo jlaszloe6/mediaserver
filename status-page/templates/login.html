@@ -81,6 +81,7 @@
 </head>
 <body>
     <div class="card">
+        <img src="{{ url_for('static', filename='favicon.svg') }}" alt="" width="48" height="48" style="margin-bottom:1rem;">
         <h1>Media Server</h1>
         <p class="subtitle">Enter your email to receive a login link.</p>
         {% with messages = get_flashed_messages(with_categories=true) %}
