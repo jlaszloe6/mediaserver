@@ -1,6 +1,6 @@
 import os
 
-from flask import Flask
+from flask import Flask, render_template
 
 import db
 import auth
@@ -26,6 +26,19 @@ app.register_blueprint(auth_bp)
 app.register_blueprint(dashboard_bp)
 app.register_blueprint(admin_bp)
 app.register_blueprint(onboard_bp)
+
+# Error pages
+ERROR_PAGES = {
+    400: ("Bad Request", "The server could not understand this request."),
+    403: ("Access Denied", "You don't have permission to access this page."),
+    404: ("Not Found", "The page you're looking for doesn't exist or has expired."),
+    500: ("Server Error", "Something went wrong on our end. Try again later."),
+}
+
+for code, (title, message) in ERROR_PAGES.items():
+    app.register_error_handler(code, lambda e, c=code, t=title, m=message: (
+        render_template("error.html", code=c, title=t, message=m), c
+    ))
 
 # Initialize database
 with app.app_context():
