@@ -11,13 +11,13 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ENV_FILE="$SCRIPT_DIR/../.env"
-if [ -f "$ENV_FILE" ]; then
-    MEDIA_ROOT=$(grep -m1 '^MEDIA_ROOT=' "$ENV_FILE" | cut -d= -f2-)
-    GUEST_QUOTA_GB=$(grep -m1 '^GUEST_QUOTA_GB=' "$ENV_FILE" | cut -d= -f2-)
-else
+if [ ! -f "$ENV_FILE" ]; then
     echo "ERROR: .env file not found at $ENV_FILE" >&2
     exit 1
 fi
+set -a
+source "$ENV_FILE"
+set +a
 
 MEDIA_ROOT="${MEDIA_ROOT:-/mnt/mediaserver}"
 GUEST_QUOTA_GB="${GUEST_QUOTA_GB:-100}"

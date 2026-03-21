@@ -11,18 +11,17 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ENV_FILE="$SCRIPT_DIR/../.env"
-if [ -f "$ENV_FILE" ]; then
-    SONARR_GUEST_KEY=$(grep -m1 '^SONARR_GUEST_API_KEY=' "$ENV_FILE" | cut -d= -f2- || true)
-    RADARR_GUEST_KEY=$(grep -m1 '^RADARR_GUEST_API_KEY=' "$ENV_FILE" | cut -d= -f2- || true)
-    SMTP_SERVER=$(grep -m1 '^SMTP_SERVER=' "$ENV_FILE" | cut -d= -f2-)
-    SMTP_PORT=$(grep -m1 '^SMTP_PORT=' "$ENV_FILE" | cut -d= -f2-)
-    SMTP_USER=$(grep -m1 '^SMTP_USER=' "$ENV_FILE" | cut -d= -f2-)
-    SMTP_PASS=$(grep -m1 '^SMTP_PASSWORD=' "$ENV_FILE" | cut -d= -f2-)
-    SMTP_FROM=$(grep -m1 '^SMTP_FROM=' "$ENV_FILE" | cut -d= -f2-)
-else
+if [ ! -f "$ENV_FILE" ]; then
     echo "ERROR: .env file not found" >&2
     exit 1
 fi
+set -a
+source "$ENV_FILE"
+set +a
+
+SONARR_GUEST_KEY="${SONARR_GUEST_API_KEY:-}"
+RADARR_GUEST_KEY="${RADARR_GUEST_API_KEY:-}"
+SMTP_PASS="$SMTP_PASSWORD"
 
 if [ -z "$SONARR_GUEST_KEY" ] || [ -z "$RADARR_GUEST_KEY" ]; then
     exit 0  # guest pipeline not configured
