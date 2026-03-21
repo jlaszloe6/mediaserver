@@ -422,6 +422,84 @@ if ! $DRY_RUN; then
     fi
 fi
 
+# --- Section 3.5: Custom formats and quality profiles ---
+
+echo ""
+log_info "=== Configuring Quality Profiles ==="
+
+setup_quality_profile() {
+    local url="$1" key="$2" svc="$3"
+
+    # Check if custom formats already exist
+    local existing_cf
+    existing_cf=$(curl -sf -H "X-Api-Key: $key" "$url/api/v3/customformat")
+    if echo "$existing_cf" | jq -e '.[] | select(.name == "Hungarian + Original")' > /dev/null 2>&1; then
+        log_ok "$svc custom formats already configured"
+    else
+        if $DRY_RUN; then
+            log_info "[DRY RUN] Would create custom formats in $svc"
+        else
+            local cf_specs='[
+                {"name":"Hungarian + Original","specifications":[{"name":"Hungarian Audio","implementation":"LanguageSpecification","fields":[{"name":"value","value":22}],"negate":false,"required":true},{"name":"English Audio","implementation":"LanguageSpecification","fields":[{"name":"value","value":1}],"negate":false,"required":true}]},
+                {"name":"English SRT Subs","specifications":[{"name":"English Sub","implementation":"LanguageSpecification","fields":[{"name":"value","value":1}],"negate":false,"required":true}]},
+                {"name":"Hungarian Only","specifications":[{"name":"Hungarian Audio","implementation":"LanguageSpecification","fields":[{"name":"value","value":22}],"negate":false,"required":true},{"name":"No English","implementation":"LanguageSpecification","fields":[{"name":"value","value":1}],"negate":true,"required":true}]},
+                {"name":"4K","specifications":[{"name":"4K Resolution","implementation":"ResolutionSpecification","fields":[{"name":"value","value":2160}],"negate":false,"required":true}]}
+            ]'
+            local cf
+            for cf in $(echo "$cf_specs" | jq -c '.[]'); do
+                local cfname
+                cfname=$(echo "$cf" | jq -r '.name')
+                parse_response "$(api_call POST "$url/api/v3/customformat" "$key" "$cf")"
+                if [ "$RESP_CODE" = "200" ] || [ "$RESP_CODE" = "201" ]; then
+                    log_ok "$svc: Created custom format '$cfname'"
+                else
+                    log_err "$svc: Failed to create '$cfname' (HTTP $RESP_CODE)"
+                fi
+            done
+        fi
+    fi
+
+    # Update HD-1080p profile to HD-1080p Max with custom format scores
+    local profile_name
+    profile_name=$(curl -sf -H "X-Api-Key: $key" "$url/api/v3/qualityprofile/4" | jq -r '.name')
+    if [ "$profile_name" = "HD-1080p Max" ]; then
+        log_ok "$svc quality profile 'HD-1080p Max' already configured"
+    else
+        if $DRY_RUN; then
+            log_info "[DRY RUN] Would update $svc quality profile to HD-1080p Max"
+        else
+            local formats
+            formats=$(curl -sf -H "X-Api-Key: $key" "$url/api/v3/customformat")
+            local ho es honly fk
+            ho=$(echo "$formats" | jq -r '.[] | select(.name=="Hungarian + Original") | .id')
+            es=$(echo "$formats" | jq -r '.[] | select(.name=="English SRT Subs") | .id')
+            honly=$(echo "$formats" | jq -r '.[] | select(.name=="Hungarian Only") | .id')
+            fk=$(echo "$formats" | jq -r '.[] | select(.name=="4K") | .id')
+
+            local profile updated
+            profile=$(curl -sf -H "X-Api-Key: $key" "$url/api/v3/qualityprofile/4")
+            updated=$(echo "$profile" | jq \
+                --argjson ho "$ho" --argjson es "$es" --argjson honly "$honly" --argjson fk "$fk" \
+                '.name = "HD-1080p Max" | .upgradeAllowed = true | .formatItems = [
+                    {format: $ho, name: "Hungarian + Original", score: 150},
+                    {format: $es, name: "English SRT Subs", score: 100},
+                    {format: $honly, name: "Hungarian Only", score: -50},
+                    {format: $fk, name: "4K", score: -200}
+                ]')
+
+            parse_response "$(api_call PUT "$url/api/v3/qualityprofile/4" "$key" "$updated")"
+            if [ "$RESP_CODE" = "200" ] || [ "$RESP_CODE" = "202" ]; then
+                log_ok "$svc: Updated quality profile to 'HD-1080p Max'"
+            else
+                log_err "$svc: Failed to update quality profile (HTTP $RESP_CODE)"
+            fi
+        fi
+    fi
+}
+
+setup_quality_profile "http://localhost:8989" "$SONARR_KEY" "Sonarr"
+setup_quality_profile "http://localhost:7878" "$RADARR_KEY" "Radarr"
+
 # --- Section 4: Configure Sonarr ---
 
 echo ""
