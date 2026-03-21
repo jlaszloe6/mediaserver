@@ -396,6 +396,7 @@ services:
       - ./.env:/config/.env:ro
       - ./config/statuspage:/config/statuspage:ro
       - ./config:/config/all-configs:ro
+      - ./.ssh:/config/ssh-keys:ro
       - ${MEDIA_ROOT}:/mnt/mediaserver
       - /var/run/docker.sock:/var/run/docker.sock
       - cron-state:/var/tmp

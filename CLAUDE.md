@@ -158,3 +158,10 @@ Guest instances: Sonarr-Guest, Radarr-Guest, Prunarr-Guest
 - All containers use `restart: unless-stopped` — auto-start after reboot
 - Docker waits for NFS via systemd `remote-fs.target` drop-in
 - `scripts/reboot-test.sh` verifies post-reboot health: NFS, containers, service endpoints, SQLite, cron, TLS, backups
+
+## Disaster Recovery
+- `scripts/server-setup.sh` provisions a fresh Ubuntu server (user, NFS, firewall, sysctl, PAM, systemd)
+- Backup includes: all service configs, .env, SSH deploy keys, SQLite snapshots
+- Full recovery procedure: fresh Ubuntu → `server-setup.sh` → clone repo → `restore.sh` → `init-setup.sh` → claim Plex (browser)
+- Plex claim and Seerr setup wizard require browser interaction (cannot be fully automated)
+- Trakt OAuth requires interactive device-code flow

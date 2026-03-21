@@ -177,6 +177,15 @@ log "  .env: copied"
 echo "" >> "$MANIFEST"
 echo "env_file: included" >> "$MANIFEST"
 
+# --- Copy SSH deploy keys ---
+
+if [ -d "/config/ssh-keys" ]; then
+    mkdir -p "$STAGING/ssh-keys"
+    cp /config/ssh-keys/id_deploy_* "$STAGING/ssh-keys/" 2>/dev/null && \
+        log "  ssh-keys: copied" || warn "ssh-keys: no deploy keys found"
+    echo "ssh_keys: included" >> "$MANIFEST"
+fi
+
 # --- List backed up directories ---
 
 echo "" >> "$MANIFEST"

@@ -218,6 +218,16 @@ restore_db "radarr-guest.db.backup" "radarr-guest/radarr.db"     "radarr-guest"
 restore_db "uptime-kuma.db.backup"  "uptime-kuma/kuma.db"        "uptime-kuma"
 restore_db "statuspage.db.backup"   "statuspage/statuspage.db"   "statuspage"
 
+# --- Restore SSH deploy keys ---
+
+if [ -d "$STAGING/ssh-keys" ]; then
+    mkdir -p "$PROJECT_DIR/.ssh"
+    cp "$STAGING/ssh-keys/"* "$PROJECT_DIR/.ssh/"
+    chmod 700 "$PROJECT_DIR/.ssh"
+    chmod 600 "$PROJECT_DIR/.ssh/id_deploy_"* 2>/dev/null
+    log "Restored SSH deploy keys"
+fi
+
 # --- Clean up WAL/SHM journals ---
 
 log "Cleaning stale SQLite journals..."
