@@ -1,6 +1,6 @@
 # Media Server
 
-Docker Compose stack running on the server (`$SERVER_IP`). Code repo on development machine, deployed via GitHub Actions self-hosted runner.
+Docker Compose stack running on the server (`$SERVER_IP`). Runtime directory: `/opt/mediaserver` (owned by dedicated `mediaserver` system user). Code repo on development machine, deployed via GitHub Actions self-hosted runner.
 
 ## Stack
 
@@ -18,8 +18,15 @@ Guest instances: Sonarr-Guest, Radarr-Guest, Prunarr-Guest
 - Docker depends on `remote-fs.target` via drop-in `/etc/systemd/system/docker.service.d/wait-for-nfs.conf`
 - Volume mappings: Sonarr/Radarr → `/data`, Transmission → `/downloads`, Plex → `/tv` + `/movies`
 
+## Runtime Separation
+- Runtime directory: `/opt/mediaserver` (NOT developer home directory)
+- Dedicated `mediaserver` system user (no login shell, in docker group) owns the runtime
+- Developer user (`janoslaszlo`) keeps code repo at `~/Documents/mediaserver`
+- PUID/PGID env vars in `.env` match the `mediaserver` user's UID/GID
+- Container file ownership aligns with the service user, not the developer
+
 ## CI/CD
-- GitHub Actions self-hosted runner on the server
+- GitHub Actions self-hosted runner on the server, working directory `/opt/mediaserver`
 - Deploy workflow detects changed custom-build services (statuspage, cron, caddy, dnsmasq) and rebuilds only those
 - `docker-compose.yml` changes trigger `docker compose up -d --no-build --no-recreate` for new services
 - Master branch is protected — all changes go through PRs
@@ -64,6 +71,7 @@ Guest instances: Sonarr-Guest, Radarr-Guest, Prunarr-Guest
 | `*/15 * * * *` | `guest-notify.sh` | Email guests on new content |
 | `0 3 * * *` | Prunarr movies/series | Cleanup watched 30+ days ago |
 | `0 4 * * *` | Prunarr-Guest movies/series | Guest watched cleanup |
+| `30 2 * * *` | `backup.sh` | Config backup to NAS |
 | `0 2 * * 0` | GeoIP DB update | Weekly refresh + Caddy reload |
 
 `transmission-cleanup.sh` runs at end of trakt-sync.sh and plex-cleanup.sh (no separate cron entry).
@@ -133,3 +141,20 @@ Guest instances: Sonarr-Guest, Radarr-Guest, Prunarr-Guest
 - Plex sharing uses plex.tv section IDs (NOT local library keys) — fetch from `https://plex.tv/api/servers/{machineId}`
 - Guest removal fully cleans up: Trakt import lists + Plex share revoke + WireGuard VPN client delete
 - Removal requires type-to-confirm modal (guest name)
+
+## Backup & Restore
+- Daily at 2:30 AM via `scripts/backup.sh` (runs in cron container)
+- Backups stored on NAS at `$BACKUP_DIR` (default: `$MEDIA_ROOT/backups`)
+- Retention: `$BACKUP_RETENTION_DAYS` (default: 14)
+- SQLite safe snapshots via `docker exec sqlite3 .backup` for Sonarr, Radarr, Prowlarr, Tautulli, guest instances
+- Statuspage DB backed up via cron container's own `sqlite3`; Uptime Kuma via file copy
+- Plex cache/metadata/logs excluded (regenerable), preferences and DBs included
+- `.env` file included in every backup
+- Manifest file tracks which services were backed up and any warnings
+- Restore: `scripts/restore.sh` (runs on host) — `--list`, `--dry-run`, latest or specific backup
+- Restore stops containers, extracts configs, restores SQLite backups, cleans WAL/SHM journals, restarts
+
+## Reboot Resilience
+- All containers use `restart: unless-stopped` — auto-start after reboot
+- Docker waits for NFS via systemd `remote-fs.target` drop-in
+- `scripts/reboot-test.sh` verifies post-reboot health: NFS, containers, service endpoints, SQLite, cron, TLS, backups
