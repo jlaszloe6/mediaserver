@@ -29,6 +29,11 @@ from flask import (
 
 app = Flask(__name__)
 app.secret_key = os.environ["SECRET_KEY"]
+app.config.update(
+    SESSION_COOKIE_SECURE=True,
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+)
 
 # Config
 ALLOWED_EMAILS = [e.strip().lower() for e in os.environ.get("ALLOWED_EMAILS", "").split(",") if e.strip()]
@@ -37,6 +42,7 @@ BASE_URL = os.environ.get("BASE_URL", "http://localhost:8080")
 DB_PATH = os.environ.get("DB_PATH", "/app/data/statuspage.db")
 TRAKT_LOG = os.environ.get("TRAKT_LOG", "/tmp/trakt-sync.log")
 GUEST_QUOTA_GB = int(os.environ.get("GUEST_QUOTA_GB", "100"))
+ONBOARD_TOKEN_TTL_DAYS = int(os.environ.get("ONBOARD_TOKEN_TTL_DAYS", "7"))
 
 # API endpoints (all on localhost since we're on host network)
 SONARR_URL = "http://localhost:8989"
@@ -146,6 +152,7 @@ def init_db():
             invited_at TEXT DEFAULT (datetime('now')),
             active INTEGER DEFAULT 0,
             onboard_token TEXT,
+            onboard_token_created_at TEXT,
             status TEXT DEFAULT 'pending_approval',
             plex_shared INTEGER DEFAULT 0,
             trakt_device_data TEXT,
@@ -159,6 +166,7 @@ def init_db():
         ("plex_shared", "INTEGER", "1"),
         ("trakt_device_data", "TEXT", None),
         ("wg_client_id", "TEXT", None),
+        ("onboard_token_created_at", "TEXT", None),
     ]:
         try:
             default_clause = f" DEFAULT {default}" if default else ""
@@ -867,7 +875,15 @@ def _send_email(to, subject, html):
 
 def _get_guest_by_token(token):
     db = get_db()
-    return db.execute("SELECT * FROM guests WHERE onboard_token = ?", (token,)).fetchone()
+    guest = db.execute("SELECT * FROM guests WHERE onboard_token = ?", (token,)).fetchone()
+    if not guest:
+        return None
+    created_at = guest["onboard_token_created_at"]
+    if created_at:
+        token_time = datetime.fromisoformat(created_at).replace(tzinfo=timezone.utc)
+        if datetime.now(timezone.utc) - token_time > timedelta(days=ONBOARD_TOKEN_TTL_DAYS):
+            return None
+    return guest
 
 
 def _create_sonarr_import_list(trakt_username, access_token, refresh_token, expires_iso):
@@ -1061,9 +1077,10 @@ def onboard():
             return redirect(url_for("onboard_status", token=existing["onboard_token"]))
 
         token = secrets.token_urlsafe(32)
+        now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         db.execute(
-            "INSERT INTO guests (name, email, trakt_username, onboard_token, status, active) VALUES (?, ?, ?, ?, 'pending_approval', 0)",
-            (name, email, trakt_username, token),
+            "INSERT INTO guests (name, email, trakt_username, onboard_token, onboard_token_created_at, status, active) VALUES (?, ?, ?, ?, ?, 'pending_approval', 0)",
+            (name, email, trakt_username, token, now_utc),
         )
         db.commit()
 
@@ -1329,7 +1346,8 @@ def admin_invite_approve(guest_id):
         flash("Guest not found.", "error")
         return redirect(url_for("admin_invite"))
 
-    db.execute("UPDATE guests SET status = 'approved' WHERE id = ?", (guest_id,))
+    now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    db.execute("UPDATE guests SET status = 'approved', onboard_token_created_at = ? WHERE id = ?", (now_utc, guest_id))
     db.commit()
 
     try:
