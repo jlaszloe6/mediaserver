@@ -12,7 +12,7 @@ from config import (
     RADARR_TRAKT_CLIENT_ID, SONARR_TRAKT_CLIENT_ID, TRAKT_API_BASE,
 )
 from db import get_db
-from services.email import send_email, send_guest_welcome
+from services.email import send_styled_email, send_guest_welcome, _button
 from services.plex import share_plex_guest_libraries
 from services.trakt import create_radarr_import_list, create_sonarr_import_list
 from services.wireguard import create_wg_client, get_client_config, get_client_qr
@@ -61,13 +61,11 @@ def _finalize_onboard(guest):
     plex_note = "Plex libraries shared automatically." if plex_ok else "<strong>ACTION NEEDED:</strong> Share Guest TV &amp; Guest Movies with this guest in Plex Settings &gt; Users &amp; Sharing."
     try:
         for admin_email in ADMIN_EMAILS:
-            send_email(admin_email, f"Guest onboarding complete: {guest['name']}", f"""\
-<html><body style="font-family: sans-serif; color: #333; max-width: 500px; margin: 0 auto; padding: 20px;">
-<h2>Guest Onboarding Complete</h2>
+            send_styled_email(admin_email, f"Guest onboarding complete: {guest['name']}", f"""\
+<p style="font-size:17px;color:#fff;">Guest Onboarding Complete</p>
 <p><strong>{guest['name']}</strong> ({guest['email']}) has completed Trakt authorization.</p>
 <p>{plex_note}</p>
-<p><a href="{BASE_URL}/admin/invite">Manage guests</a></p>
-</body></html>""")
+<p style="margin:16px 0;">{_button(f"{BASE_URL}/admin/invite", "Manage Guests")}</p>""")
     except Exception as e:
         current_app.logger.error(f"Failed to notify admins: {e}")
 
@@ -111,12 +109,10 @@ def onboard():
 
         try:
             for admin_email in ADMIN_EMAILS:
-                send_email(admin_email, f"New guest request: {name}", f"""\
-<html><body style="font-family: sans-serif; color: #333; max-width: 500px; margin: 0 auto; padding: 20px;">
-<h2>New Guest Request</h2>
+                send_styled_email(admin_email, f"New guest request: {name}", f"""\
+<p style="font-size:17px;color:#fff;">New Guest Request</p>
 <p><strong>Name:</strong> {name}<br><strong>Email:</strong> {email}<br><strong>Trakt:</strong> {trakt_username}</p>
-<p><a href="{BASE_URL}/admin/invite">Review and approve</a></p>
-</body></html>""")
+<p style="margin:16px 0;">{_button(f"{BASE_URL}/admin/invite", "Review and Approve")}</p>""")
         except Exception as e:
             current_app.logger.error(f"Failed to notify admins: {e}")
 

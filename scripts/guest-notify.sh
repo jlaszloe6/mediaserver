@@ -111,16 +111,26 @@ fi
 # Build email
 SUBJECT="New content available on Plex!"
 HTML_BODY="<html>
-<body style=\"font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;\">
-<div style=\"background: #1a1a2e; color: #e0e0e0; border-radius: 12px; padding: 2rem;\">
-    <h2 style=\"color: #fff; margin: 0 0 1rem 0; text-align: center;\">New content available!</h2>
-    <ul style=\"list-style: none; padding: 0; font-size: 1.1rem;\">
-    ${ITEMS}
-    </ul>
-    <p style=\"color: #8892b0; margin-top: 1.5rem; font-size: 0.9rem; text-align: center;\">Open Plex to start watching!</p>
-</div>
-<hr style=\"border: none; border-top: 1px solid #ddd; margin: 20px 0;\">
-<p style=\"color: #888; font-size: 12px;\">Sent from Media Server</p>
+<body style=\"margin:0;padding:0;background:#0f0f1a;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;\">
+<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#0f0f1a;padding:24px 0;\">
+<tr><td align=\"center\">
+<table width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"max-width:600px;width:100%;background:#16213e;border-radius:12px;overflow:hidden;\">
+<tr><td style=\"background:#1a1a2e;padding:20px 24px;border-bottom:2px solid #e94560;\">
+<span style=\"color:#fff;font-size:18px;font-weight:700;\">Media Server</span>
+</td></tr>
+<tr><td style=\"padding:24px;color:#e0e0e0;font-size:15px;line-height:1.6;\">
+<p style=\"font-size:17px;color:#fff;text-align:center;margin-bottom:16px;\">New content available!</p>
+<ul style=\"list-style:none;padding:0;font-size:1.1rem;\">
+${ITEMS}
+</ul>
+<p style=\"color:#5a6a8a;margin-top:1.5rem;font-size:0.9rem;text-align:center;\">Open Plex to start watching!</p>
+</td></tr>
+<tr><td style=\"padding:16px 24px;border-top:1px solid #1a3a5c;color:#5a6a8a;font-size:12px;text-align:center;\">
+Sent from Media Server Status Page
+</td></tr>
+</table>
+</td></tr>
+</table>
 </body>
 </html>"
 
