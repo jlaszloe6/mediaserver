@@ -188,13 +188,13 @@
             <h1>Media Server Status</h1>
             <div style="display:flex;gap:0.5rem;align-items:center">
                 {% if is_admin %}
-                <a href="{{ url_for('admin_invite') }}" class="guide-btn" style="text-decoration:none" title="Manage guest users">Guests</a>
+                <a href="{{ url_for('admin_bp.admin_invite') }}" class="guide-btn" style="text-decoration:none" title="Manage guest users">Guests</a>
                 {% endif %}
-                <form action="{{ url_for('send_guide') }}" method="post" style="margin:0">
+                <form action="{{ url_for('auth_bp.send_guide') }}" method="post" style="margin:0">
                     <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
                     <button type="submit" class="guide-btn" title="Email yourself the quick actions user manual">Send Guide</button>
                 </form>
-                <a href="{{ url_for('logout') }}" class="logout">Log out</a>
+                <a href="{{ url_for('auth_bp.logout') }}" class="logout">Log out</a>
             </div>
         </header>
 
