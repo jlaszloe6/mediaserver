@@ -260,6 +260,7 @@ add_indexer() {
     local fields
     fields=$(cat <<FEOF
 [
+    {"name": "definitionFile", "value": "$def_name"},
     {"name": "baseUrl", "value": "$base_url"},
     {"name": "torrentBaseSettings.preferMagnetUrl", "value": true}
     $extra_fields
