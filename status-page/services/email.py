@@ -44,7 +44,7 @@ def _heading(text):
 def send_email(to, subject, html):
     msg = MIMEText(html, "html")
     msg["Subject"] = subject
-    msg["From"] = SMTP_FROM
+    msg["From"] = f"Freya Media Server <{SMTP_FROM}>"
     msg["To"] = to
     with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
         server.starttls()
