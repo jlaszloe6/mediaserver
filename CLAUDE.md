@@ -90,6 +90,15 @@ Guest instances: Sonarr-Guest, Radarr-Guest, Prunarr-Guest
 - Guest view: filtered stats, quota bar, guest-only downloads
 - Self-service onboarding at `/onboard` with VPN auto-creation
 - Welcome email includes VPN setup as step 1 with link back to onboarding page for config download
+- All emails use dark theme template with logo, sender name "Freya Media Server"
+
+## Email Notifications
+- Sonarr/Radarr: onImportComplete, onUpgrade, onHealthIssue (onGrab disabled — low value noise)
+- Status page: login links, user guide, guest onboarding lifecycle emails
+- guest-notify.sh: per-guest content import notifications (every 15 min)
+- queue-cleanup.sh: owner alerts for suspicious files and stuck downloads
+- Seerr: per-user request status updates
+- `disable-ongrab.sh`: one-time utility to disable onGrab on existing installs via API
 
 ## Seerr
 - Image: `ghcr.io/seerr-team/seerr` (not Overseerr)
