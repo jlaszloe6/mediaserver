@@ -81,7 +81,11 @@ Guest instances: Sonarr-Guest, Radarr-Guest, Prunarr-Guest
 
 ## Status Page
 - Flask + SQLite, host network (port 8080), magic link auth
+- Modular structure: `app.py` (init) → `config.py`, `db.py`, `auth.py`, `services/*`, `routes/*`
+- Blueprints: `auth_bp`, `dashboard_bp`, `admin_bp`, `onboard_bp` — all `url_for` calls use blueprint prefix
 - Cloudflare Turnstile captcha on login and onboard forms
+- Session cookies: Secure, HttpOnly, SameSite=Lax
+- Onboarding tokens expire after `ONBOARD_TOKEN_TTL_DAYS` (default: 7), reset on admin approval
 - Dashboard: service health, library stats, active downloads, recent activity, Trakt sync log
 - Guest view: filtered stats, quota bar, guest-only downloads
 - Self-service onboarding at `/onboard` with VPN auto-creation
