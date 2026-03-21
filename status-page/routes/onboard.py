@@ -224,7 +224,7 @@ def onboard_poll(token):
                 current_app.logger.error(f"Radarr device code failed: {e}")
                 db.execute("UPDATE guests SET status = 'complete', active = 1, trakt_device_data = NULL WHERE id = ?", (guest["id"],))
                 db.commit()
-                _finalize_onboard(guest)
+                _finalize_onboard(_get_guest_by_token(token))
                 return {"status": "done", "message": "Setup complete (Movies auth skipped)."}
 
             db.execute(
@@ -248,7 +248,7 @@ def onboard_poll(token):
 
             db.execute("UPDATE guests SET status = 'complete', active = 1, trakt_device_data = NULL WHERE id = ?", (guest["id"],))
             db.commit()
-            _finalize_onboard(guest)
+            _finalize_onboard(_get_guest_by_token(token))
             return {"status": "done", "message": "Setup complete!"}
 
     elif resp.status_code == 400:
