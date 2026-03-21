@@ -656,7 +656,7 @@ else
             --argjson port "$SMTP_PORT" \
             --arg user "$SMTP_USER" \
             --arg pass "$SMTP_PASSWORD" \
-            --arg from "$SMTP_FROM" \
+            --arg from "Freya Media Server <$SMTP_FROM>" \
             --argjson to "$SMTP_TO_JSON" \
             '{
                 name: "Email",
@@ -700,7 +700,7 @@ else
             --argjson port "$SMTP_PORT" \
             --arg user "$SMTP_USER" \
             --arg pass "$SMTP_PASSWORD" \
-            --arg from "$SMTP_FROM" \
+            --arg from "Freya Media Server <$SMTP_FROM>" \
             --argjson to "$SMTP_TO_JSON" \
             '{
                 name: "Email",

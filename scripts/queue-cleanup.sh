@@ -79,7 +79,7 @@ send_email() {
         --mail-rcpt "$SMTP_TO" \
         --user "$SMTP_USER:$SMTP_PASS" \
         -T - <<EOF
-From: Media Server <$SMTP_FROM>
+From: Freya Media Server <$SMTP_FROM>
 To: $SMTP_TO
 Subject: $subject
 Content-Type: text/plain; charset=utf-8

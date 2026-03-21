@@ -145,7 +145,7 @@ while IFS='|' read -r name email; do
         --mail-rcpt "$email" \
         --user "$SMTP_USER:$SMTP_PASS" \
         -T - <<EOF
-From: Media Server <$SMTP_FROM>
+From: Freya Media Server <$SMTP_FROM>
 To: $email
 Subject: $SUBJECT
 Content-Type: text/html; charset=utf-8
