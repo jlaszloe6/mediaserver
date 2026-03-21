@@ -128,11 +128,11 @@ def login():
         if email not in ALLOWED_EMAILS and not _is_active_guest_email(email):
             # Don't reveal whether email is valid
             flash("If that email is registered, a login link has been sent.", "info")
-            return render_template("login.html")
+            return redirect(url_for("auth_bp.login"))
 
         if is_rate_limited(email):
             flash("Too many attempts. Please wait a few minutes.", "error")
-            return render_template("login.html")
+            return redirect(url_for("auth_bp.login"))
 
         record_attempt(email)
 
@@ -150,10 +150,10 @@ def login():
             from flask import current_app
             current_app.logger.error(f"Failed to send email: {e}")
             flash("Failed to send email. Please try again later.", "error")
-            return render_template("login.html")
+            return redirect(url_for("auth_bp.login"))
 
         flash("If that email is registered, a login link has been sent.", "info")
-        return render_template("login.html")
+        return redirect(url_for("auth_bp.login"))
 
     return render_template("login.html")
 
