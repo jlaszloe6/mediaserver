@@ -15,6 +15,7 @@ SONARR_KEY = os.environ.get("SONARR_API_KEY", "")
 RADARR_URL = "http://localhost:7878"
 RADARR_KEY = os.environ.get("RADARR_API_KEY", "")
 PLEX_URL = "http://localhost:32400"
+PLEX_EXTERNAL_URL = os.environ.get("PLEX_EXTERNAL_URL", "")
 PLEX_TOKEN = os.environ.get("PLEX_TOKEN", "")
 TRANSMISSION_URL = "http://localhost:9091/transmission/rpc"
 PROWLARR_URL = "http://localhost:9696"

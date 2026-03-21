@@ -2,8 +2,8 @@ import smtplib
 from email.mime.text import MIMEText
 
 from config import (
-    BASE_URL, GUEST_QUOTA_GB, SMTP_FROM, SMTP_PASSWORD, SMTP_PORT,
-    SMTP_SERVER, SMTP_USER,
+    BASE_URL, GUEST_QUOTA_GB, PLEX_EXTERNAL_URL, SMTP_FROM, SMTP_PASSWORD,
+    SMTP_PORT, SMTP_SERVER, SMTP_USER,
 )
 
 
@@ -84,17 +84,18 @@ def send_user_guide(email):
 
 {_heading('Watching')}
 <ul style="line-height:1.8;padding-left:20px;color:#e0e0e0;">
-<li><strong>Plex apps</strong> &mdash; Install on phone, TV, streaming device, or game console. Sign in with your Plex account.</li>
-<li><strong>Web browser</strong> &mdash; Use the Plex web URL (ask your admin).</li>
+<li><strong>Web browser</strong> (laptop/desktop/mobile) &mdash; Go to <strong>{PLEX_EXTERNAL_URL}</strong>. No VPN needed.</li>
+<li><strong>Plex app</strong> (phone app, Android TV) &mdash; Requires <strong>VPN</strong> &mdash; see below.</li>
 <li><strong>Quality</strong> &mdash; Set the Plex player to <strong>Original</strong> quality for best results.</li>
 <li><strong>Subtitles</strong> &mdash; Most downloads include English subtitles. Toggle them in the Plex player.</li>
 </ul>
 
-{_heading('Remote Access (VPN)')}
+{_heading('VPN (Plex App Only)')}
 <ul style="line-height:1.8;padding-left:20px;color:#e0e0e0;">
-<li><strong>VPN required</strong> &mdash; Plex will not work remotely without an active VPN connection.</li>
+<li>VPN is <strong>only needed for the Plex app</strong> on phones and Android TV.</li>
+<li>If you watch via <strong>web browser</strong>, you do <strong>not</strong> need VPN.</li>
 <li>Install <strong>WireGuard</strong> on your device and import the .conf file you received during onboarding.</li>
-<li>Toggle the VPN on before opening Plex when you're away from home.</li>
+<li>Toggle the VPN on before opening the Plex app when you're away from home.</li>
 <li>On the home network, VPN is not needed.</li>
 </ul>
 
@@ -119,13 +120,14 @@ def send_guest_welcome(email, name, onboard_token):
     body = f"""\
 <p style="font-size:17px;color:#fff;margin-bottom:16px;">Welcome, {name}!</p>
 
-{_heading('1. Set Up VPN (required)')}
-<p><strong style="color:#e94560;">Plex will not work without the VPN.</strong> Visit your setup page to download the VPN config file and follow the instructions:</p>
+{_heading('1. Watch via Browser (easiest)')}
+<p>Open <a href="https://{PLEX_EXTERNAL_URL}" style="color:#8ab4f8;">{PLEX_EXTERNAL_URL}</a> in any browser (laptop, desktop, or phone). Sign in with your Plex account. <strong>No VPN needed.</strong></p>
+
+{_heading('2. Plex App (phone/TV) &mdash; VPN required')}
+<p>If you prefer the <strong>Plex app</strong> on your phone or Android TV, you need a VPN connection first. Visit your setup page to download the VPN config:</p>
 <p style="text-align:center;margin:16px 0;">{_button(setup_url, 'Open Setup Page')}</p>
 <p style="color:#5a6a8a;font-size:13px;">Bookmark this link &mdash; you can always come back to download your VPN config.</p>
-
-{_heading('2. Install Plex')}
-<p>Download the <strong>Plex</strong> app on your phone, TV, or streaming device. <strong>Enable the VPN first</strong>, then sign in with your Plex account. You'll see two libraries: <strong>Guest TV</strong> and <strong>Guest Movies</strong>.</p>
+<p>Install <strong>WireGuard</strong>, import the config, enable the VPN, then open the Plex app. You'll see <strong>Guest TV</strong> and <strong>Guest Movies</strong>.</p>
 
 {_heading('3. Add Content via Trakt')}
 <p>Your Trakt watchlist is connected. To add movies or TV shows:</p>
