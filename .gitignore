@@ -1,4 +1,5 @@
 config/
+.ssh/
 __pycache__/
 .env
 .env.local

@@ -26,11 +26,11 @@ fi
 
 # --- Configuration (edit these) ---
 
-SERVER_IP="${SERVER_IP:-192.168.1.14}"
-NAS_IP="${NAS_IP:-192.168.1.76}"
-NAS_EXPORT="${NAS_EXPORT:-/volume1/cluster-data/mediaserver}"
+SERVER_IP="${SERVER_IP:?Set SERVER_IP}"
+NAS_IP="${NAS_IP:?Set NAS_IP}"
+NAS_EXPORT="${NAS_EXPORT:?Set NAS_EXPORT}"
 MOUNT_POINT="${MOUNT_POINT:-/mnt/mediaserver}"
-ADMIN_USER="${ADMIN_USER:-janoslaszlo}"
+ADMIN_USER="${ADMIN_USER:?Set ADMIN_USER}"
 
 echo "=== Media Server - Server Setup ==="
 echo "Server IP:  $SERVER_IP"
