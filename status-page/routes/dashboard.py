@@ -339,6 +339,19 @@ def _utc_to_local(iso_str):
         return iso_str
 
 
+_EVENT_LABELS = {
+    "grabbed": "Searching",
+    "downloadFolderImported": "Downloaded",
+    "downloadFailed": "Failed",
+    "episodeFileDeleted": "Deleted",
+    "episodeFileRenamed": "Renamed",
+    "movieFileDeleted": "Deleted",
+    "movieFileRenamed": "Renamed",
+    "movieImported": "Downloaded",
+    "seriesFolderImported": "Downloaded",
+}
+
+
 def _format_activity(sonarr_history, radarr_history):
     """Format Sonarr/Radarr history into activity list."""
     activity = []
@@ -346,18 +359,20 @@ def _format_activity(sonarr_history, radarr_history):
         series_title = item.get("series", {}).get("title", "Unknown")
         ep = item.get("episode", {})
         ep_label = f"S{ep.get('seasonNumber', 0):02d}E{ep.get('episodeNumber', 0):02d}" if ep else ""
+        raw_event = item.get("eventType", "")
         activity.append({
             "time": _utc_to_local(item.get("date", "")),
             "type": "tv",
             "title": f"{series_title} {ep_label}".strip(),
-            "event": item.get("eventType", ""),
+            "event": _EVENT_LABELS.get(raw_event, raw_event),
         })
     for item in (radarr_history or []):
+        raw_event = item.get("eventType", "")
         activity.append({
             "time": _utc_to_local(item.get("date", "")),
             "type": "movie",
             "title": item.get("movie", {}).get("title", item.get("sourceTitle", "Unknown")),
-            "event": item.get("eventType", ""),
+            "event": _EVENT_LABELS.get(raw_event, raw_event),
         })
     activity.sort(key=lambda x: x["time"], reverse=True)
     return activity

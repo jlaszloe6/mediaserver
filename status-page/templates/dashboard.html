@@ -129,10 +129,11 @@
             text-transform: lowercase;
             font-weight: 600;
         }
-        .event-grabbed { background: rgba(52,152,219,0.2); color: #3498db; }
+        .event-searching { background: rgba(52,152,219,0.2); color: #3498db; }
         .event-downloaded { background: rgba(46,204,113,0.2); color: #2ecc71; }
-        .event-imported { background: rgba(46,204,113,0.2); color: #2ecc71; }
         .event-deleted { background: rgba(233,69,96,0.2); color: #e94560; }
+        .event-failed { background: rgba(233,69,96,0.2); color: #e94560; }
+        .event-renamed { background: rgba(136,146,176,0.2); color: #8892b0; }
         .event-other { background: rgba(136,146,176,0.2); color: #8892b0; }
         .type-icon { font-size: 0.75rem; }
 
@@ -324,7 +325,7 @@
                     <span class="time">{{ item.time[11:16] if item.time|length > 16 else item.time }}</span>
                     <span class="type-icon">{{ 'TV' if item.type == 'tv' else 'MV' }}</span>
                     {% set evt = item.event|lower %}
-                    <span class="event-tag event-{{ evt if evt in ['grabbed', 'downloaded', 'imported', 'deleted'] else 'other' }}">{{ item.event }}</span>
+                    <span class="event-tag event-{{ evt if evt in ['searching', 'downloaded', 'deleted', 'failed', 'renamed'] else 'other' }}">{{ item.event }}</span>
                     <span>{{ item.title }}</span>
                 </li>
                 {% endfor %}
