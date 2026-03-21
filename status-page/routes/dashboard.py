@@ -59,7 +59,9 @@ def fetch_service_health():
 def fetch_sonarr_series():
     try:
         r = requests.get(f"{SONARR_URL}/api/v3/series", headers={"X-Api-Key": SONARR_KEY}, timeout=API_TIMEOUT)
-        return r.json()
+        r.raise_for_status()
+        data = r.json()
+        return data if isinstance(data, list) else None
     except Exception:
         return None
 
@@ -67,7 +69,9 @@ def fetch_sonarr_series():
 def fetch_radarr_movies():
     try:
         r = requests.get(f"{RADARR_URL}/api/v3/movie", headers={"X-Api-Key": RADARR_KEY}, timeout=API_TIMEOUT)
-        return r.json()
+        r.raise_for_status()
+        data = r.json()
+        return data if isinstance(data, list) else None
     except Exception:
         return None
 
@@ -81,7 +85,9 @@ def fetch_sonarr_history():
             headers={"X-Api-Key": SONARR_KEY},
             timeout=API_TIMEOUT,
         )
-        return r.json()
+        r.raise_for_status()
+        data = r.json()
+        return data if isinstance(data, list) else None
     except Exception:
         return None
 
@@ -95,7 +101,9 @@ def fetch_radarr_history():
             headers={"X-Api-Key": RADARR_KEY},
             timeout=API_TIMEOUT,
         )
-        return r.json()
+        r.raise_for_status()
+        data = r.json()
+        return data if isinstance(data, list) else None
     except Exception:
         return None
 
@@ -137,7 +145,9 @@ def fetch_transmission_torrents():
 def fetch_guest_series():
     try:
         r = requests.get(f"{SONARR_GUEST_URL}/api/v3/series", headers={"X-Api-Key": SONARR_GUEST_KEY}, timeout=API_TIMEOUT)
-        return r.json()
+        r.raise_for_status()
+        data = r.json()
+        return data if isinstance(data, list) else None
     except Exception:
         return None
 
@@ -145,7 +155,9 @@ def fetch_guest_series():
 def fetch_guest_movies():
     try:
         r = requests.get(f"{RADARR_GUEST_URL}/api/v3/movie", headers={"X-Api-Key": RADARR_GUEST_KEY}, timeout=API_TIMEOUT)
-        return r.json()
+        r.raise_for_status()
+        data = r.json()
+        return data if isinstance(data, list) else None
     except Exception:
         return None
 
@@ -158,7 +170,9 @@ def fetch_guest_sonarr_history():
             params={"date": since, "includeSeries": "true", "includeEpisode": "true"},
             headers={"X-Api-Key": SONARR_GUEST_KEY}, timeout=API_TIMEOUT,
         )
-        return r.json()
+        r.raise_for_status()
+        data = r.json()
+        return data if isinstance(data, list) else None
     except Exception:
         return None
 
@@ -171,7 +185,9 @@ def fetch_guest_radarr_history():
             params={"date": since, "includeMovie": "true"},
             headers={"X-Api-Key": RADARR_GUEST_KEY}, timeout=API_TIMEOUT,
         )
-        return r.json()
+        r.raise_for_status()
+        data = r.json()
+        return data if isinstance(data, list) else None
     except Exception:
         return None
 
