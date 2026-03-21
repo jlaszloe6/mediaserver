@@ -124,7 +124,7 @@ cycle_trakt_lists() {
         log "  Cycling '$name' (id=$id)..."
 
         local create_payload
-        create_payload=$(echo "$config" | jq 'del(.id)')
+        create_payload=$(echo "$config" | jq 'del(.id) | .enabled = true | .enableAutomaticAdd = true | .searchOnAdd = true')
 
         # Delete the list
         local del_code

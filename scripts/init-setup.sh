@@ -1158,6 +1158,7 @@ if $DO_TRAKT; then
                 if [ "$service_name" = "Sonarr" ]; then
                     list_payload=$(cat <<TLEOF
 {
+  "enabled": true,
   "enableAutomaticAdd": true,
   "searchForMissingEpisodes": true,
   "shouldMonitor": "all",
@@ -1187,11 +1188,11 @@ TLEOF
                     list_payload=$(cat <<TLEOF
 {
   "enabled": true,
-  "enableAuto": true,
+  "enableAutomaticAdd": true,
+  "searchOnAdd": true,
   "monitor": "movieOnly",
   "rootFolderPath": "$root_folder",
   "qualityProfileId": 1,
-  "searchOnAdd": true,
   "minimumAvailability": "released",
   "name": "$list_name",
   "implementation": "TraktUserImport",
