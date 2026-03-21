@@ -27,15 +27,18 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ENV_FILE="$SCRIPT_DIR/../.env"
-if [ -f "$ENV_FILE" ]; then
-    SONARR_KEY=$(grep -m1 '^SONARR_API_KEY=' "$ENV_FILE" | cut -d= -f2-)
-    RADARR_KEY=$(grep -m1 '^RADARR_API_KEY=' "$ENV_FILE" | cut -d= -f2-)
-    SONARR_GUEST_KEY=$(grep -m1 '^SONARR_GUEST_API_KEY=' "$ENV_FILE" | cut -d= -f2- || true)
-    RADARR_GUEST_KEY=$(grep -m1 '^RADARR_GUEST_API_KEY=' "$ENV_FILE" | cut -d= -f2- || true)
-else
+if [ ! -f "$ENV_FILE" ]; then
     echo "ERROR: .env file not found at $ENV_FILE" >&2
     exit 1
 fi
+set -a
+source "$ENV_FILE"
+set +a
+
+SONARR_KEY="$SONARR_API_KEY"
+RADARR_KEY="$RADARR_API_KEY"
+SONARR_GUEST_KEY="${SONARR_GUEST_API_KEY:-}"
+RADARR_GUEST_KEY="${RADARR_GUEST_API_KEY:-}"
 
 # Instance list: "label|sonarr_url|sonarr_key|radarr_url|radarr_key"
 QUEUE_INSTANCES="owner|http://localhost:8989|$SONARR_KEY|http://localhost:7878|$RADARR_KEY"
@@ -53,13 +56,8 @@ log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
 }
 
-# --- SMTP setup: read from .env (password can't be extracted from Radarr API) ---
-SMTP_SERVER=$(grep -m1 '^SMTP_SERVER=' "$ENV_FILE" | cut -d= -f2-)
-SMTP_PORT=$(grep -m1 '^SMTP_PORT=' "$ENV_FILE" | cut -d= -f2-)
-SMTP_USER=$(grep -m1 '^SMTP_USER=' "$ENV_FILE" | cut -d= -f2-)
-SMTP_PASS=$(grep -m1 '^SMTP_PASSWORD=' "$ENV_FILE" | cut -d= -f2-)
-SMTP_FROM=$(grep -m1 '^SMTP_FROM=' "$ENV_FILE" | cut -d= -f2-)
-SMTP_TO=$(grep -m1 '^SMTP_TO=' "$ENV_FILE" | cut -d= -f2-)
+# --- SMTP setup: loaded from .env via source above ---
+SMTP_PASS="${SMTP_PASSWORD:-}"
 
 send_email() {
     local subject="$1"
