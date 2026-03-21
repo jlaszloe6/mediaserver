@@ -23,9 +23,14 @@ DRY_RUN=false
 DO_TRAKT=false
 DO_GUEST=false
 
-# Trakt client IDs (loaded from .env)
-SONARR_TRAKT_CLIENT_ID=$(grep -m1 '^SONARR_TRAKT_CLIENT_ID=' "$ENV_FILE" | cut -d= -f2-)
-RADARR_TRAKT_CLIENT_ID=$(grep -m1 '^RADARR_TRAKT_CLIENT_ID=' "$ENV_FILE" | cut -d= -f2-)
+# Load all .env variables into the environment
+if [ ! -f "$ENV_FILE" ]; then
+    echo -e '\033[0;31m[ERR ]\033[0m .env file not found. Copy .env.example and fill in values.'
+    exit 1
+fi
+set -a
+source "$ENV_FILE"
+set +a
 
 # --- Helpers ---
 
@@ -39,10 +44,6 @@ log_info()  { echo -e "${BLUE}[INFO]${NC} $*"; }
 log_ok()    { echo -e "${GREEN}[ OK ]${NC} $*"; }
 log_warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
 log_err()   { echo -e "${RED}[ERR ]${NC} $*"; ERRORS=$((ERRORS + 1)); }
-
-env_get() {
-    grep -m1 "^$1=" "$ENV_FILE" 2>/dev/null | cut -d= -f2-
-}
 
 env_set() {
     local key="$1" value="$2"
@@ -123,11 +124,6 @@ done
 
 # --- Sanity checks ---
 
-if [ ! -f "$ENV_FILE" ]; then
-    log_err ".env file not found. Copy .env.example and fill in values."
-    exit 1
-fi
-
 echo ""
 echo "=== Media Server Init Setup ==="
 echo ""
@@ -162,13 +158,13 @@ SONARR_KEY=$(get_api_key "sonarr" "SONARR_API_KEY") || true
 RADARR_KEY=$(get_api_key "radarr" "RADARR_API_KEY") || true
 
 # Tautulli uses a different config format
-TAUTULLI_KEY=$(env_get "TAUTULLI_API_KEY")
+TAUTULLI_KEY="${TAUTULLI_API_KEY:-}"
 if [ -z "$TAUTULLI_KEY" ] && [ -f "$CONFIG_DIR/tautulli/config.ini" ]; then
     TAUTULLI_KEY=$(grep -m1 '^api_key' "$CONFIG_DIR/tautulli/config.ini" | cut -d= -f2- | tr -d ' ')
     [ -n "$TAUTULLI_KEY" ] && env_set "TAUTULLI_API_KEY" "$TAUTULLI_KEY"
 fi
 
-PLEX_TOKEN=$(env_get "PLEX_TOKEN")
+PLEX_TOKEN="${PLEX_TOKEN:-}"
 
 if [ -z "$PROWLARR_KEY" ] || [ -z "$SONARR_KEY" ] || [ -z "$RADARR_KEY" ]; then
     log_err "Missing API keys. Ensure all services have started at least once."
@@ -631,13 +627,13 @@ fi
 echo ""
 log_info "=== Configuring Email Notifications ==="
 
-SMTP_SERVER=$(env_get "SMTP_SERVER")
-SMTP_PORT=$(env_get "SMTP_PORT")
-SMTP_USER=$(env_get "SMTP_USER")
-SMTP_PASSWORD=$(env_get "SMTP_PASSWORD")
-SMTP_FROM=$(env_get "SMTP_FROM")
-SMTP_TO=$(env_get "SMTP_TO")
-SEERR_SENDER_NAME=$(env_get "SEERR_SENDER_NAME")
+SMTP_SERVER="${SMTP_SERVER:-}"
+SMTP_PORT="${SMTP_PORT:-}"
+SMTP_USER="${SMTP_USER:-}"
+SMTP_PASSWORD="${SMTP_PASSWORD:-}"
+SMTP_FROM="${SMTP_FROM:-}"
+SMTP_TO="${SMTP_TO:-}"
+SEERR_SENDER_NAME="${SEERR_SENDER_NAME:-}"
 
 if [ -z "$SMTP_USER" ] || [ -z "$SMTP_PASSWORD" ] || [ -z "$SMTP_FROM" ]; then
     log_warn "SMTP credentials not set in .env — skipping email notifications"
