@@ -224,7 +224,7 @@
             <h2>Connect Your Trakt Account</h2>
             <p class="status-msg">You're approved! Now let's connect your Trakt watchlist so you can add movies and TV shows.</p>
             <p class="status-msg" style="margin-top:0.5rem">You'll need to authorize <strong>twice</strong> &mdash; once for TV Shows and once for Movies (they use separate connections).</p>
-            <form action="{{ url_for('onboard_start_trakt', token=guest.onboard_token) }}" method="post">
+            <form action="{{ url_for('onboard_bp.onboard_start_trakt', token=guest.onboard_token) }}" method="post">
                 <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
                 <button type="submit" class="btn">Start Trakt Authorization</button>
             </form>
@@ -252,7 +252,7 @@
                 async function poll() {
                     if (!polling) return;
                     try {
-                        const resp = await fetch("{{ url_for('onboard_poll', token=guest.onboard_token) }}", {
+                        const resp = await fetch("{{ url_for('onboard_bp.onboard_poll', token=guest.onboard_token) }}", {
                             method: "POST",
                             headers: {"Content-Type": "application/json"},
                         });
@@ -320,7 +320,7 @@
             <div id="vpn-phone" class="vpn-content">
                 <ol>
                     <li>Install <strong>WireGuard</strong> from the App Store or Play Store</li>
-                    <li><a href="{{ url_for('onboard_vpn_config', token=guest.onboard_token) }}" style="color:#8ab4f8">Download the .conf file</a></li>
+                    <li><a href="{{ url_for('onboard_bp.onboard_vpn_config', token=guest.onboard_token) }}" style="color:#8ab4f8">Download the .conf file</a></li>
                     <li>Open the app, tap <strong>+</strong> &rarr; <strong>"Import from file or archive"</strong></li>
                     <li>Select the downloaded .conf file</li>
                     <li>Name the tunnel <strong>"MediaServer"</strong></li>
@@ -330,7 +330,7 @@
             <div id="vpn-desktop" class="vpn-content">
                 <ol>
                     <li>Download and install <strong>WireGuard</strong> from <a href="https://wireguard.com/install/" target="_blank" style="color:#8ab4f8">wireguard.com/install</a></li>
-                    <li><a href="{{ url_for('onboard_vpn_config', token=guest.onboard_token) }}" style="color:#8ab4f8">Download your .conf file</a></li>
+                    <li><a href="{{ url_for('onboard_bp.onboard_vpn_config', token=guest.onboard_token) }}" style="color:#8ab4f8">Download your .conf file</a></li>
                     <li>Open WireGuard, click <strong>"Import tunnel(s) from file"</strong></li>
                     <li>Select the downloaded .conf file</li>
                     <li>Click <strong>"Activate"</strong> when you want to stream remotely</li>
@@ -339,7 +339,7 @@
             <div id="vpn-tv" class="vpn-content">
                 <ol>
                     <li>On your Android TV, open the <strong>Play Store</strong> and install <strong>WireGuard</strong></li>
-                    <li>On your phone or computer, <a href="{{ url_for('onboard_vpn_config', token=guest.onboard_token) }}" style="color:#8ab4f8">download the .conf file</a></li>
+                    <li>On your phone or computer, <a href="{{ url_for('onboard_bp.onboard_vpn_config', token=guest.onboard_token) }}" style="color:#8ab4f8">download the .conf file</a></li>
                     <li>Transfer the .conf file to your TV:
                         <ul style="margin-top:0.5rem;list-style:disc;padding-left:1rem">
                             <li><strong>USB drive</strong> &mdash; copy file to USB, plug into TV</li>

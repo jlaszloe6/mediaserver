@@ -155,7 +155,7 @@
     <div class="container">
         <header>
             <h1>Guest Management</h1>
-            <a href="{{ url_for('dashboard') }}" class="back-link">Back to Dashboard</a>
+            <a href="{{ url_for('dashboard_bp.dashboard') }}" class="back-link">Back to Dashboard</a>
         </header>
 
         {% with messages = get_flashed_messages(with_categories=true) %}
@@ -187,11 +187,11 @@
                     <span>{{ g.email }} &middot; Trakt: {{ g.trakt_username }} &middot; {{ g.invited_at[:10] if g.invited_at else '' }}</span>
                 </div>
                 <div class="approval-actions">
-                    <form action="{{ url_for('admin_invite_approve', guest_id=g.id) }}" method="post" style="margin:0">
+                    <form action="{{ url_for('admin_bp.admin_invite_approve', guest_id=g.id) }}" method="post" style="margin:0">
                         <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
                         <button type="submit" class="btn btn-approve">Approve</button>
                     </form>
-                    <form action="{{ url_for('admin_invite_reject', guest_id=g.id) }}" method="post" style="margin:0">
+                    <form action="{{ url_for('admin_bp.admin_invite_reject', guest_id=g.id) }}" method="post" style="margin:0">
                         <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
                         <button type="submit" class="btn btn-reject">Reject</button>
                     </form>
@@ -246,7 +246,7 @@
                             </td>
                             <td>
                                 {% if g.status == 'complete' and not g.plex_shared %}
-                                    <form action="{{ url_for('admin_invite_plex_shared', guest_id=g.id) }}" method="post" style="margin:0">
+                                    <form action="{{ url_for('admin_bp.admin_invite_plex_shared', guest_id=g.id) }}" method="post" style="margin:0">
                                         <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
                                         <button type="submit" class="btn btn-plex">Mark Shared</button>
                                     </form>
@@ -258,7 +258,7 @@
                             </td>
                             <td>
                                 {% if g.active %}
-                                <button class="btn btn-remove" onclick="showRemoveModal('{{ g.name }}', '{{ url_for('admin_invite_remove', guest_id=g.id) }}')">Remove</button>
+                                <button class="btn btn-remove" onclick="showRemoveModal('{{ g.name }}', '{{ url_for('admin_bp.admin_invite_remove', guest_id=g.id) }}')">Remove</button>
                                 {% endif %}
                             </td>
                         </tr>
