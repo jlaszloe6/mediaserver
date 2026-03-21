@@ -17,6 +17,7 @@ services:
       - ${MEDIA_ROOT}/media/movies:/movies
       - ${MEDIA_ROOT}/media/guest-tv:/guest-tv
       - ${MEDIA_ROOT}/media/guest-movies:/guest-movies
+    mem_limit: 4g
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:32400/identity"]
@@ -42,6 +43,7 @@ services:
       - "127.0.0.1:9091:9091"
       - "51413:51413"
       - "51413:51413/udp"
+    mem_limit: 2g
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:9091/transmission/rpc || [ $? -eq 22 ]"]
@@ -66,6 +68,7 @@ services:
       - ${MEDIA_ROOT}:/data
     ports:
       - "127.0.0.1:8989:8989"
+    mem_limit: 1g
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8989/ping"]
@@ -90,6 +93,7 @@ services:
       - ${MEDIA_ROOT}:/data
     ports:
       - "127.0.0.1:7878:7878"
+    mem_limit: 1g
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:7878/ping"]
@@ -107,6 +111,7 @@ services:
       - LOG_LEVEL=info
     ports:
       - "127.0.0.1:8191:8191"
+    mem_limit: 512m
     restart: unless-stopped
 
 
@@ -124,6 +129,7 @@ services:
       - ./config/prowlarr:/config
     ports:
       - "127.0.0.1:9696:9696"
+    mem_limit: 512m
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9696/ping"]
@@ -144,6 +150,7 @@ services:
       - TZ=Europe/Budapest
     volumes:
       - ./config/tautulli:/config
+    mem_limit: 512m
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8181/status"]
@@ -162,6 +169,7 @@ services:
       - TZ=Europe/Budapest
     volumes:
       - ./config/overseerr:/app/config
+    mem_limit: 512m
     restart: unless-stopped
 
 
@@ -183,6 +191,7 @@ services:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - ./config/caddy/data:/data
       - ./config/caddy/config:/config
+    mem_limit: 512m
     restart: unless-stopped
 
 
@@ -200,6 +209,7 @@ services:
       - LOG_FILE=true
     volumes:
       - ./config/duckdns:/config
+    mem_limit: 128m
     restart: unless-stopped
 
 
@@ -216,6 +226,7 @@ services:
       - CADDY_DOMAIN_PLEX=${CADDY_DOMAIN_PLEX}
       - CADDY_DOMAIN_SEERR=${CADDY_DOMAIN_SEERR}
       - CADDY_DOMAIN_STATUS=${CADDY_DOMAIN_STATUS}
+    mem_limit: 128m
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "nslookup", "${CADDY_DOMAIN_STATUS}", "${SERVER_IP}"]
@@ -233,6 +244,7 @@ services:
       - UPTIME_KUMA_PORT=3001
     volumes:
       - ./config/uptime-kuma:/app/data
+    mem_limit: 512m
     restart: unless-stopped
 
   statuspage:
@@ -268,6 +280,7 @@ services:
     volumes:
       - ./config/statuspage:/app/data
       - cron-logs:/logs:ro
+    mem_limit: 256m
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/login"]
@@ -299,6 +312,7 @@ services:
       - UI_CHART_TYPE=1
     volumes:
       - ./config/wg-easy:/etc/wireguard
+    mem_limit: 256m
     restart: unless-stopped
 
   prunarr:
@@ -316,6 +330,7 @@ services:
       - TAUTULLI_API_KEY=${TAUTULLI_API_KEY}
       - TAUTULLI_URL=http://localhost:8181
       - LOG_LEVEL=INFO
+    mem_limit: 256m
     restart: unless-stopped
 
   sonarr-guest:
@@ -334,6 +349,7 @@ services:
       - ${MEDIA_ROOT}:/data
     ports:
       - "127.0.0.1:8990:8989"
+    mem_limit: 1g
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8989/ping"]
@@ -357,6 +373,7 @@ services:
       - ${MEDIA_ROOT}:/data
     ports:
       - "127.0.0.1:7879:7878"
+    mem_limit: 1g
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:7878/ping"]
@@ -382,6 +399,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - cron-state:/var/tmp
       - cron-logs:/var/log/cron
+    mem_limit: 256m
     restart: unless-stopped
 
   prunarr-guest:
@@ -399,6 +417,7 @@ services:
       - TAUTULLI_API_KEY=${TAUTULLI_API_KEY}
       - TAUTULLI_URL=http://localhost:8181
       - LOG_LEVEL=INFO
+    mem_limit: 256m
     restart: unless-stopped
 
 volumes:
