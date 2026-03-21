@@ -260,6 +260,7 @@ add_indexer() {
     local fields
     fields=$(cat <<FEOF
 [
+    {"name": "definitionFile", "value": "$def_name"},
     {"name": "baseUrl", "value": "$base_url"},
     {"name": "torrentBaseSettings.preferMagnetUrl", "value": true}
     $extra_fields
@@ -270,9 +271,11 @@ FEOF
     local payload
     payload=$(cat <<IEOF
 {
+  "name": "$def_name",
   "definitionName": "$def_name",
   "enable": true,
   "redirect": false,
+  "priority": 25,
   "appProfileId": 1,
   "implementation": "Cardigann",
   "configContract": "CardigannSettings",
@@ -309,9 +312,11 @@ knaben_exists=$(echo "$existing_indexers" | jq -r '.[] | select(.definitionName 
 if [ -z "$knaben_exists" ]; then
     knaben_payload=$(cat <<KEOF
 {
+  "name": "Knaben",
   "definitionName": "Knaben",
   "enable": true,
   "redirect": false,
+  "priority": 25,
   "appProfileId": 1,
   "implementation": "Knaben",
   "configContract": "NoAuthTorrentBaseSettings",
@@ -559,7 +564,7 @@ log_info "=== Configuring Transmission ==="
 if $DRY_RUN; then
     log_info "[DRY RUN] Would set seed ratio=2.0, idle seeding limit=disabled (per-indexer seed times used instead)"
 else
-    SESSION_ID=$(curl -s -D- http://localhost:9091/transmission/rpc 2>/dev/null | grep -i 'X-Transmission-Session-Id' | tr -d '\r' | awk '{print $2}')
+    SESSION_ID=$(curl -si http://localhost:9091/transmission/rpc 2>/dev/null | grep -i 'X-Transmission-Session-Id:' | head -1 | awk '{print $2}' | tr -cd 'a-zA-Z0-9')
     if [ -n "$SESSION_ID" ]; then
         result=$(curl -s -w '\n%{http_code}' -X POST http://localhost:9091/transmission/rpc \
             -H "X-Transmission-Session-Id: $SESSION_ID" \

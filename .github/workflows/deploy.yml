@@ -13,12 +13,12 @@ jobs:
     runs-on: [self-hosted, freya-pc]
     steps:
       - name: Pull latest changes
-        working-directory: /home/janoslaszlo/Documents/mediaserver
+        working-directory: /opt/mediaserver
         run: git pull origin master
 
       - name: Detect changed services
         id: changes
-        working-directory: /home/janoslaszlo/Documents/mediaserver
+        working-directory: /opt/mediaserver
         run: |
           BEFORE=${{ github.event.before }}
           AFTER=${{ github.sha }}
@@ -61,27 +61,27 @@ jobs:
 
       - name: Build and restart statuspage
         if: steps.changes.outputs.rebuild_statuspage == 'true'
-        working-directory: /home/janoslaszlo/Documents/mediaserver
+        working-directory: /opt/mediaserver
         run: docker compose up -d --build --no-deps statuspage
 
       - name: Build and restart cron
         if: steps.changes.outputs.rebuild_cron == 'true'
-        working-directory: /home/janoslaszlo/Documents/mediaserver
+        working-directory: /opt/mediaserver
         run: docker compose up -d --build --no-deps cron
 
       - name: Build and restart caddy
         if: steps.changes.outputs.rebuild_caddy == 'true'
-        working-directory: /home/janoslaszlo/Documents/mediaserver
+        working-directory: /opt/mediaserver
         run: docker compose up -d --build --no-deps caddy
 
       - name: Build and restart dnsmasq
         if: steps.changes.outputs.rebuild_dnsmasq == 'true'
-        working-directory: /home/janoslaszlo/Documents/mediaserver
+        working-directory: /opt/mediaserver
         run: docker compose up -d --build --no-deps dnsmasq
 
       - name: Verify services healthy
         if: steps.changes.outputs.any_rebuild == 'true'
-        working-directory: /home/janoslaszlo/Documents/mediaserver
+        working-directory: /opt/mediaserver
         run: |
           sleep 10
           failed=false
@@ -98,7 +98,7 @@ jobs:
 
       - name: Apply compose changes (new/updated services)
         if: steps.changes.outputs.compose_changed == 'true'
-        working-directory: /home/janoslaszlo/Documents/mediaserver
+        working-directory: /opt/mediaserver
         run: docker compose up -d --no-build --no-recreate
 
       - name: No rebuild needed

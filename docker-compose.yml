@@ -7,8 +7,8 @@ services:
     # host network required: Plex needs direct LAN/WAN access for discovery and streaming
     network_mode: host
     environment:
-      - PUID=1000
-      - PGID=1000
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
       - TZ=Europe/Budapest
       - VERSION=docker
     volumes:
@@ -31,8 +31,8 @@ services:
     image: lscr.io/linuxserver/transmission@sha256:d2183a00bbd5dbb083b14dcd65419379bfd91e0965b52849642354ec3d246452
     container_name: transmission
     environment:
-      - PUID=1000
-      - PGID=1000
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
       - TZ=Europe/Budapest
       - PEERPORT=51413
     volumes:
@@ -60,8 +60,8 @@ services:
       - transmission
       - prowlarr
     environment:
-      - PUID=1000
-      - PGID=1000
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
       - TZ=Europe/Budapest
     volumes:
       - ./config/sonarr:/config
@@ -85,8 +85,8 @@ services:
       - transmission
       - prowlarr
     environment:
-      - PUID=1000
-      - PGID=1000
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
       - TZ=Europe/Budapest
     volumes:
       - ./config/radarr:/config
@@ -122,8 +122,8 @@ services:
     depends_on:
       - flaresolverr
     environment:
-      - PUID=1000
-      - PGID=1000
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
       - TZ=Europe/Budapest
     volumes:
       - ./config/prowlarr:/config
@@ -145,8 +145,8 @@ services:
     # host network required: needs to reach Plex on localhost (bridge-to-host blocked by firewall)
     network_mode: host
     environment:
-      - PUID=1000
-      - PGID=1000
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
       - TZ=Europe/Budapest
     volumes:
       - ./config/tautulli:/config
@@ -200,8 +200,8 @@ services:
     image: lscr.io/linuxserver/duckdns@sha256:afe50a2ef043a63e33ffe6e6e119a7a82db999eab966aef2a33611fd89f81117
     container_name: duckdns
     environment:
-      - PUID=1000
-      - PGID=1000
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
       - TZ=Europe/Budapest
       - SUBDOMAINS=${DUCKDNS_SUBDOMAINS}
       - TOKEN=${DUCKDNS_TOKEN}
@@ -341,8 +341,8 @@ services:
       - transmission
       - prowlarr
     environment:
-      - PUID=1000
-      - PGID=1000
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
       - TZ=Europe/Budapest
     volumes:
       - ./config/sonarr-guest:/config
@@ -365,8 +365,8 @@ services:
       - transmission
       - prowlarr
     environment:
-      - PUID=1000
-      - PGID=1000
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
       - TZ=Europe/Budapest
     volumes:
       - ./config/radarr-guest:/config
@@ -395,7 +395,8 @@ services:
       - ./scripts:/scripts:ro
       - ./.env:/config/.env:ro
       - ./config/statuspage:/config/statuspage:ro
-      - ${MEDIA_ROOT}:/mnt/mediaserver:ro
+      - ./config:/config/all-configs:ro
+      - ${MEDIA_ROOT}:/mnt/mediaserver
       - /var/run/docker.sock:/var/run/docker.sock
       - cron-state:/var/tmp
       - cron-logs:/var/log/cron
