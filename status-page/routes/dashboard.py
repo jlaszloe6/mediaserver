@@ -3,6 +3,7 @@ import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import requests
 from flask import Blueprint, render_template, session
@@ -326,6 +327,18 @@ def _format_torrents(raw_torrents, guest_only=False):
     return torrents
 
 
+def _utc_to_local(iso_str):
+    """Convert UTC ISO timestamp to Europe/Budapest local time string."""
+    if not iso_str:
+        return ""
+    try:
+        dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
+        local_dt = dt.astimezone(ZoneInfo("Europe/Budapest"))
+        return local_dt.strftime("%Y-%m-%dT%H:%M:%S")
+    except Exception:
+        return iso_str
+
+
 def _format_activity(sonarr_history, radarr_history):
     """Format Sonarr/Radarr history into activity list."""
     activity = []
@@ -334,14 +347,14 @@ def _format_activity(sonarr_history, radarr_history):
         ep = item.get("episode", {})
         ep_label = f"S{ep.get('seasonNumber', 0):02d}E{ep.get('episodeNumber', 0):02d}" if ep else ""
         activity.append({
-            "time": item.get("date", ""),
+            "time": _utc_to_local(item.get("date", "")),
             "type": "tv",
             "title": f"{series_title} {ep_label}".strip(),
             "event": item.get("eventType", ""),
         })
     for item in (radarr_history or []):
         activity.append({
-            "time": item.get("date", ""),
+            "time": _utc_to_local(item.get("date", "")),
             "type": "movie",
             "title": item.get("movie", {}).get("title", item.get("sourceTitle", "Unknown")),
             "event": item.get("eventType", ""),
