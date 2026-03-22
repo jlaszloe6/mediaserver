@@ -41,6 +41,7 @@ services:
       - TRANSMISSION_SPEED_LIMIT_UP=${TRANSMISSION_UPLOAD_LIMIT:-50}
     volumes:
       - ./config/transmission:/config
+      - ./scripts/transmission-speed-limits.sh:/custom-cont-init.d/speed-limits.sh:ro
       - ${MEDIA_ROOT}/torrents:/downloads
       - ${MEDIA_ROOT}/watch:/watch
     ports:
