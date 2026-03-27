@@ -29,8 +29,7 @@ SMTP_USER = os.environ.get("SMTP_USER", "")
 SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
 SMTP_FROM = os.environ.get("SMTP_FROM", "")
 
-# Rate limiting: {email: [(timestamp, ...), ...]}
-_rate_limits = {}
+# Rate limiting (stored in SQLite login_tokens table)
 RATE_LIMIT_MAX = 3
 RATE_LIMIT_WINDOW = 600  # 10 minutes
 

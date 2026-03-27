@@ -5,8 +5,8 @@ networks:
 services:
 
   jellyfin:
-    # jellyfin latest (linuxserver)
-    image: lscr.io/linuxserver/jellyfin:latest
+    # jellyfin (linuxserver, pinned)
+    image: lscr.io/linuxserver/jellyfin@sha256:ce50c477eb0450c47e215b3016c72fb77d4c376be15ca45b9a04a65f99ea0e07
     container_name: jellyfin
     networks:
       - mediaserver

@@ -23,7 +23,7 @@ dashboard_bp = Blueprint("dashboard_bp", __name__)
 def ping_service(name, url, timeout=API_TIMEOUT):
     try:
         r = requests.get(url, timeout=timeout)
-        return {"name": name, "ok": r.status_code < 500}
+        return {"name": name, "ok": r.ok}
     except Exception:
         return {"name": name, "ok": False}
 
@@ -99,33 +99,25 @@ def fetch_radarr_history():
 
 def fetch_transmission_torrents():
     try:
-        # First request to get session ID
-        try:
-            requests.post(TRANSMISSION_URL, timeout=API_TIMEOUT)
-        except requests.exceptions.HTTPError:
-            pass
-        except Exception as e:
-            if hasattr(e, "response"):
-                sid = e.response.headers.get("X-Transmission-Session-Id")
-            else:
-                raise
-
-        # Try getting session id from a raw request
-        resp = requests.post(TRANSMISSION_URL, timeout=API_TIMEOUT)
-        sid = resp.headers.get("X-Transmission-Session-Id", "")
-
-        r = requests.post(
-            TRANSMISSION_URL,
-            headers={"X-Transmission-Session-Id": sid},
-            json={
-                "method": "torrent-get",
-                "arguments": {
-                    "fields": ["name", "percentDone", "rateDownload", "rateUpload", "eta", "status", "doneDate", "uploadRatio", "downloadDir", "isPrivate", "trackers"],
-                },
+        payload = {
+            "method": "torrent-get",
+            "arguments": {
+                "fields": ["name", "percentDone", "rateDownload", "rateUpload", "eta", "status", "doneDate", "uploadRatio", "downloadDir", "isPrivate", "trackers"],
             },
-            timeout=API_TIMEOUT,
-        )
-        data = r.json()
+        }
+        # Transmission RPC requires a session ID obtained from a 409 response
+        resp = requests.post(TRANSMISSION_URL, json=payload, timeout=API_TIMEOUT)
+        if resp.status_code == 409:
+            sid = resp.headers.get("X-Transmission-Session-Id", "")
+            resp = requests.post(
+                TRANSMISSION_URL,
+                headers={"X-Transmission-Session-Id": sid},
+                json=payload,
+                timeout=API_TIMEOUT,
+            )
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
         return data.get("arguments", {}).get("torrents", [])
     except Exception:
         return None

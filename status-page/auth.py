@@ -8,7 +8,7 @@ from flask import Blueprint, abort, flash, redirect, render_template, request, s
 
 from config import (
     ALLOWED_EMAILS, RATE_LIMIT_MAX, RATE_LIMIT_WINDOW,
-    TURNSTILE_SECRET_KEY, TURNSTILE_SITE_KEY, _rate_limits,
+    TURNSTILE_SECRET_KEY, TURNSTILE_SITE_KEY,
 )
 from db import get_db
 from services.email import send_magic_link, send_user_guide
@@ -25,17 +25,19 @@ def hash_token(token):
 
 
 def is_rate_limited(email):
-    now = time.time()
-    key = email.lower()
-    attempts = _rate_limits.get(key, [])
-    attempts = [t for t in attempts if now - t < RATE_LIMIT_WINDOW]
-    _rate_limits[key] = attempts
-    return len(attempts) >= RATE_LIMIT_MAX
+    db = get_db()
+    cutoff = (datetime.now(timezone.utc) - timedelta(seconds=RATE_LIMIT_WINDOW)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    row = db.execute(
+        "SELECT COUNT(*) as cnt FROM login_tokens WHERE email = ? AND expires_at > ?",
+        (email.lower(), cutoff),
+    ).fetchone()
+    return (row["cnt"] if row else 0) >= RATE_LIMIT_MAX
 
 
-def record_attempt(email):
-    key = email.lower()
-    _rate_limits.setdefault(key, []).append(time.time())
+def cleanup_expired_tokens():
+    db = get_db()
+    db.execute("DELETE FROM login_tokens WHERE used = 1 OR expires_at < datetime('now')")
+    db.commit()
 
 
 def verify_turnstile(token):
@@ -103,7 +105,8 @@ def login():
             flash("Too many attempts. Please wait a few minutes.", "error")
             return redirect(url_for("auth_bp.login"))
 
-        record_attempt(email)
+        # Clean up expired/used tokens periodically
+        cleanup_expired_tokens()
 
         token = secrets.token_urlsafe(32)
         token_h = hash_token(token)
