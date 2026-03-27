@@ -37,7 +37,6 @@ Delete from Jellyfin ──► jellyfin-cleanup.sh ─────────�
 | Seerr | Media request UI |
 | Caddy | Reverse proxy + TLS |
 | DuckDNS | Dynamic DNS |
-| dnsmasq | LAN DNS override |
 | Cron | Scheduled tasks |
 | Statuspage | Dashboard + health monitoring |
 
