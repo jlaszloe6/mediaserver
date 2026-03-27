@@ -11,17 +11,19 @@ services:
     networks:
       - mediaserver
     ports:
-      - "8096:8096"
+      - "${SERVER_IP:-127.0.0.1}:8096:8096"
     environment:
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
       - TZ=Europe/Budapest
     volumes:
       - ./config/jellyfin:/config
-      - ${MEDIA_ROOT}/media/tv:/tv
-      - ${MEDIA_ROOT}/media/movies:/movies
+      - ${MEDIA_ROOT}/media/tv:/tv:ro
+      - ${MEDIA_ROOT}/media/movies:/movies:ro
     mem_limit: 4g
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8096/health"]
       interval: 30s
@@ -54,6 +56,8 @@ services:
       - "51413:51413/udp"
     mem_limit: 2g
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:9091/transmission/rpc || [ $? -eq 22 ]"]
       interval: 30s
@@ -79,6 +83,8 @@ services:
       - ${MEDIA_ROOT}:/data
     mem_limit: 1g
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8989/ping"]
       interval: 30s
@@ -104,6 +110,8 @@ services:
       - ${MEDIA_ROOT}:/data
     mem_limit: 1g
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:7878/ping"]
       interval: 30s
@@ -125,6 +133,8 @@ services:
       - ./config/prowlarr:/config
     mem_limit: 512m
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9696/ping"]
       interval: 30s
@@ -144,6 +154,8 @@ services:
       - ./config/overseerr:/app/config
     mem_limit: 512m
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://localhost:5055/api/v1/status || exit 1"]
       interval: 30s
@@ -173,6 +185,15 @@ services:
       - ./config/caddy/config:/config
     mem_limit: 512m
     restart: unless-stopped
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:2019/config/"]
       interval: 30s
@@ -198,6 +219,8 @@ services:
       - ./config/duckdns:/config
     mem_limit: 128m
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
 
 
   dnsmasq:
@@ -215,6 +238,13 @@ services:
       - CADDY_DOMAIN_STATUS=${CADDY_DOMAIN_STATUS}
     mem_limit: 128m
     restart: unless-stopped
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
     healthcheck:
       test: ["CMD", "nslookup", "${CADDY_DOMAIN_STATUS}", "${SERVER_IP}"]
       interval: 30s
@@ -247,6 +277,11 @@ services:
       - ./config/statuspage:/app/data
     mem_limit: 256m
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/login"]
       interval: 30s
@@ -275,6 +310,8 @@ services:
       - cron-logs:/var/log/cron
     mem_limit: 256m
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
 
 volumes:
   cron-state:

@@ -32,6 +32,7 @@ set +a
 
 BACKUP_DIR="${BACKUP_DIR:-${MEDIA_ROOT}/backups}"
 BACKUP_RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-14}"
+BACKUP_ENCRYPTION_KEY="${BACKUP_ENCRYPTION_KEY:-}"
 TIMESTAMP="$(date '+%Y%m%d-%H%M%S')"
 STAGING="/tmp/backup-$TIMESTAMP"
 WARNINGS=0
@@ -193,9 +194,19 @@ echo "Warnings: $WARNINGS" >> "$MANIFEST"
 # --- Compress ---
 
 log "Compressing..."
-tar -czf "$BACKUP_DIR/backup-$TIMESTAMP.tar.gz" -C "$STAGING" .
-BACKUP_SIZE="$(du -sh "$BACKUP_DIR/backup-$TIMESTAMP.tar.gz" | cut -f1)"
-log "  backup-$TIMESTAMP.tar.gz: $BACKUP_SIZE"
+BACKUP_FILE="$BACKUP_DIR/backup-$TIMESTAMP.tar.gz"
+tar -czf "$BACKUP_FILE" -C "$STAGING" .
+
+# Encrypt if key is configured (backup contains .env, API keys, SMTP credentials, SSH keys)
+if [ -n "$BACKUP_ENCRYPTION_KEY" ]; then
+    openssl enc -aes-256-cbc -salt -pbkdf2 -in "$BACKUP_FILE" -out "${BACKUP_FILE}.enc" -pass "pass:$BACKUP_ENCRYPTION_KEY"
+    rm -f "$BACKUP_FILE"
+    BACKUP_FILE="${BACKUP_FILE}.enc"
+    log "  Encrypted with AES-256-CBC"
+fi
+
+BACKUP_SIZE="$(du -sh "$BACKUP_FILE" | cut -f1)"
+log "  $(basename "$BACKUP_FILE"): $BACKUP_SIZE"
 
 # --- Cleanup staging ---
 
@@ -207,9 +218,9 @@ deleted=0
 while IFS= read -r old_backup; do
     rm -f "$old_backup"
     deleted=$((deleted + 1))
-done < <(find "$BACKUP_DIR" -name "backup-*.tar.gz" -mtime +"$BACKUP_RETENTION_DAYS" 2>/dev/null)
+done < <(find "$BACKUP_DIR" -name "backup-*.tar.gz*" -mtime +"$BACKUP_RETENTION_DAYS" 2>/dev/null)
 
-remaining=$(ls "$BACKUP_DIR"/backup-*.tar.gz 2>/dev/null | wc -l)
+remaining=$(ls "$BACKUP_DIR"/backup-*.tar.gz* 2>/dev/null | wc -l)
 total_size=$(du -sh "$BACKUP_DIR" 2>/dev/null | cut -f1)
 
 log "Rotation: deleted $deleted old backup(s), $remaining remaining ($total_size total)"

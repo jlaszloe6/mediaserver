@@ -1,6 +1,5 @@
 import hashlib
 import secrets
-import time
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 
@@ -17,6 +16,9 @@ import requests
 
 auth_bp = Blueprint("auth_bp", __name__)
 
+# Global rate limit: max login POSTs per IP across all emails
+GLOBAL_RATE_LIMIT = RATE_LIMIT_MAX * 2
+
 
 # --- Helpers (importable by other modules) ---
 
@@ -24,14 +26,27 @@ def hash_token(token):
     return hashlib.sha256(token.encode()).hexdigest()
 
 
+def _get_client_ip():
+    return request.headers.get("X-Real-IP", request.remote_addr)
+
+
 def is_rate_limited(email):
     db = get_db()
     cutoff = (datetime.now(timezone.utc) - timedelta(seconds=RATE_LIMIT_WINDOW)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    # Per-email limit
     row = db.execute(
         "SELECT COUNT(*) as cnt FROM login_tokens WHERE email = ? AND expires_at > ?",
         (email.lower(), cutoff),
     ).fetchone()
-    return (row["cnt"] if row else 0) >= RATE_LIMIT_MAX
+    if (row["cnt"] if row else 0) >= RATE_LIMIT_MAX:
+        return True
+    # Per-IP limit
+    ip = _get_client_ip()
+    row = db.execute(
+        "SELECT COUNT(*) as cnt FROM login_tokens WHERE source_ip = ? AND expires_at > ?",
+        (ip, cutoff),
+    ).fetchone()
+    return (row["cnt"] if row else 0) >= GLOBAL_RATE_LIMIT
 
 
 def cleanup_expired_tokens():
@@ -73,7 +88,11 @@ def login_required(f):
 
 
 def init_app(app):
-    """Register context processor and Jinja globals."""
+    """Register context processor, Jinja globals, and proxy trust."""
+    # Trust X-Real-IP from Caddy reverse proxy only
+    from werkzeug.middleware.proxy_fix import ProxyFix
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
+
     @app.context_processor
     def inject_turnstile():
         return {"turnstile_site_key": TURNSTILE_SITE_KEY}
@@ -105,15 +124,20 @@ def login():
             flash("Too many attempts. Please wait a few minutes.", "error")
             return redirect(url_for("auth_bp.login"))
 
-        # Clean up expired/used tokens periodically
+        # Clean up expired/used tokens and invalidate any existing unused tokens for this email
         cleanup_expired_tokens()
+        db = get_db()
+        db.execute("UPDATE login_tokens SET used = 1 WHERE email = ? AND used = 0", (email,))
 
         token = secrets.token_urlsafe(32)
         token_h = hash_token(token)
         expires = (datetime.now(timezone.utc) + timedelta(minutes=15)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        ip = _get_client_ip()
 
-        db = get_db()
-        db.execute("INSERT INTO login_tokens (token_hash, email, expires_at) VALUES (?, ?, ?)", (token_h, email, expires))
+        db.execute(
+            "INSERT INTO login_tokens (token_hash, email, expires_at, source_ip) VALUES (?, ?, ?, ?)",
+            (token_h, email, expires, ip),
+        )
         db.commit()
 
         try:

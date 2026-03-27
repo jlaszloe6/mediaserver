@@ -34,7 +34,8 @@ def init_db():
             token_hash TEXT PRIMARY KEY,
             email TEXT NOT NULL,
             expires_at TEXT NOT NULL,
-            used INTEGER DEFAULT 0
+            used INTEGER DEFAULT 0,
+            source_ip TEXT
         );
         CREATE TABLE IF NOT EXISTS snapshots (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -43,5 +44,10 @@ def init_db():
             data_json TEXT NOT NULL
         );
     """)
+    # Idempotent migration: add source_ip if missing
+    try:
+        conn.execute("SELECT source_ip FROM login_tokens LIMIT 0")
+    except sqlite3.OperationalError:
+        conn.execute("ALTER TABLE login_tokens ADD COLUMN source_ip TEXT")
     conn.commit()
     conn.close()
