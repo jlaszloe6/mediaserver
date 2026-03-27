@@ -125,28 +125,6 @@
         .flash.info { background: rgba(100,150,255,0.15); color: #8ab4f8; }
         .flash.error { background: rgba(233,69,96,0.15); color: #e94560; }
 
-        /* VPN toggle */
-        .vpn-tabs { display: flex; gap: 0; margin-bottom: 1rem; }
-        .vpn-tab {
-            flex: 1;
-            padding: 0.6rem;
-            text-align: center;
-            font-size: 0.85rem;
-            font-weight: 600;
-            cursor: pointer;
-            background: #0f3460;
-            color: #8892b0;
-            border: 1px solid #1a3a5c;
-            transition: all 0.2s;
-        }
-        .vpn-tab:first-child { border-radius: 8px 0 0 8px; }
-        .vpn-tab:last-child { border-radius: 0 8px 8px 0; }
-        .vpn-tab.active { background: #e94560; color: #fff; border-color: #e94560; }
-        .vpn-content { display: none; }
-        .vpn-content.active { display: block; }
-        .vpn-content ol { padding-left: 1.2rem; line-height: 1.8; font-size: 0.9rem; color: #8892b0; }
-        .vpn-content strong { color: #e0e0e0; }
-
         .done-box {
             background: rgba(46,204,113,0.1);
             border: 1px solid rgba(46,204,113,0.3);
@@ -298,89 +276,14 @@
         <div class="section">
             <div class="done-box">
                 <h3>You're All Set!</h3>
-                <p>Your Trakt watchlist is connected. Add movies and shows at <a href="https://trakt.tv" style="color:#8ab4f8">trakt.tv</a> and they'll appear in Plex within 1-2 hours.</p>
+                <p>Your Trakt watchlist is connected. Add movies and shows at <a href="https://trakt.tv" style="color:#8ab4f8">trakt.tv</a> and they'll appear in Jellyfin within 1-2 hours.</p>
             </div>
         </div>
 
         <div class="section">
-            <h2>VPN Setup (for Remote Access)</h2>
-            <p class="status-msg" style="margin-bottom:0.5rem"><strong style="color:#e94560">Important:</strong> Plex will not work without an active VPN connection. Set this up first.</p>
-            <p class="status-msg" style="margin-bottom:1rem">The VPN securely connect your device to the media server so Plex can find the media libraries.</p>
-
-            {% if not guest.wg_client_id %}
-            <div style="background:rgba(233,69,96,0.1);border:1px solid rgba(233,69,96,0.3);border-radius:8px;padding:1rem;margin-bottom:1.25rem">
-                <p style="color:#e94560;font-size:0.9rem">VPN profile could not be generated. Please try refreshing this page or contact the admin.</p>
-            </div>
-            {% endif %}
-
-            <div class="vpn-tabs">
-                <div class="vpn-tab" data-vpn="phone" onclick="showVpn('phone')">Phone / Tablet</div>
-                <div class="vpn-tab" data-vpn="desktop" onclick="showVpn('desktop')">Laptop / Desktop</div>
-                <div class="vpn-tab" data-vpn="tv" onclick="showVpn('tv')">Android TV</div>
-            </div>
-            <div id="vpn-phone" class="vpn-content">
-                <ol>
-                    <li>Install <strong>WireGuard</strong> from the App Store or Play Store</li>
-                    <li><a href="{{ url_for('onboard_bp.onboard_vpn_config', token=guest.onboard_token) }}" style="color:#8ab4f8">Download the .conf file</a></li>
-                    <li>Open the app, tap <strong>+</strong> &rarr; <strong>"Import from file or archive"</strong></li>
-                    <li>Select the downloaded .conf file</li>
-                    <li>Name the tunnel <strong>"MediaServer"</strong></li>
-                    <li>Toggle it on when you want to stream remotely</li>
-                </ol>
-            </div>
-            <div id="vpn-desktop" class="vpn-content">
-                <ol>
-                    <li>Download and install <strong>WireGuard</strong> from <a href="https://wireguard.com/install/" target="_blank" style="color:#8ab4f8">wireguard.com/install</a></li>
-                    <li><a href="{{ url_for('onboard_bp.onboard_vpn_config', token=guest.onboard_token) }}" style="color:#8ab4f8">Download your .conf file</a></li>
-                    <li>Open WireGuard, click <strong>"Import tunnel(s) from file"</strong></li>
-                    <li>Select the downloaded .conf file</li>
-                    <li>Click <strong>"Activate"</strong> when you want to stream remotely</li>
-                </ol>
-            </div>
-            <div id="vpn-tv" class="vpn-content">
-                <ol>
-                    <li>On your Android TV, open the <strong>Play Store</strong> and install <strong>WireGuard</strong></li>
-                    <li>On your phone or computer, <a href="{{ url_for('onboard_bp.onboard_vpn_config', token=guest.onboard_token) }}" style="color:#8ab4f8">download the .conf file</a></li>
-                    <li>Transfer the .conf file to your TV:
-                        <ul style="margin-top:0.5rem;list-style:disc;padding-left:1rem">
-                            <li><strong>USB drive</strong> &mdash; copy file to USB, plug into TV</li>
-                            <li><strong>Google Drive</strong> &mdash; upload file, open on TV with <strong>X-plore File Manager</strong> (install from Play Store)</li>
-                            <li><strong>Send Files to TV</strong> &mdash; free app on both phone and TV</li>
-                            <li><strong>X-plore File Manager</strong> &mdash; recommended file manager for Android TV, also useful for browsing USB drives</li>
-                        </ul>
-                    </li>
-                    <li>Open WireGuard on TV, tap <strong>+</strong> &rarr; <strong>"Import from file"</strong></li>
-                    <li>Select the .conf file and activate the tunnel</li>
-                </ol>
-            </div>
-            <script>
-            (function() {
-                var ua = navigator.userAgent;
-                var type = 'desktop';
-                if (/Android/.test(ua) && /TV|BRAVIA|CrKey|AFT|AFTM|AFTT/.test(ua)) {
-                    type = 'tv';
-                } else if (/Android|iPhone|iPad|iPod/.test(ua) || (navigator.maxTouchPoints > 1 && /Macintosh/.test(ua))) {
-                    type = 'phone';
-                }
-                showVpn(type);
-            })();
-
-            function showVpn(type) {
-                document.querySelectorAll('.vpn-tab').forEach(function(t) { t.classList.remove('active'); });
-                document.querySelectorAll('.vpn-content').forEach(function(c) { c.classList.remove('active'); });
-                var tab = document.querySelector('.vpn-tab[data-vpn="' + type + '"]');
-                if (tab) tab.classList.add('active');
-                var content = document.getElementById('vpn-' + type);
-                if (content) content.classList.add('active');
-            }
-            </script>
-        </div>
-
-        <div class="section">
-            <h2>Plex Setup</h2>
-            <p class="status-msg"><strong style="color:#e94560">Make sure VPN is active first</strong> &mdash; Plex won't find the server without it.</p>
-            <p class="status-msg" style="margin-top:0.5rem">Download the <strong>Plex</strong> app on your device and sign in with your Plex account (<strong>{{ guest.email }}</strong>). You'll see <strong>Guest TV</strong> and <strong>Guest Movies</strong> libraries.</p>
-            <p class="status-msg" style="margin-top:0.5rem">Check your email for a Plex invite &mdash; accept it to get library access.</p>
+            <h2>Jellyfin Setup</h2>
+            <p class="status-msg">A Jellyfin account has been created for you. Download the <strong>Jellyfin</strong> app on your device or visit the web interface to sign in.</p>
+            <p class="status-msg" style="margin-top:0.5rem">Sign in with your name (<strong>{{ guest.name }}</strong>) and you'll see <strong>Guest TV</strong> and <strong>Guest Movies</strong> libraries.</p>
         </div>
 
         <div class="section">

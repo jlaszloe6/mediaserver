@@ -6,12 +6,11 @@ from flask import Blueprint, abort, current_app, flash, redirect, render_templat
 from auth import admin_required, check_csrf
 from config import (
     ADMIN_EMAILS, API_TIMEOUT, BASE_URL, GUEST_QUOTA_GB,
-    RADARR_GUEST_KEY, RADARR_GUEST_URL, SONARR_GUEST_KEY, SONARR_GUEST_URL,
+    RADARR_KEY, RADARR_URL, SONARR_KEY, SONARR_URL,
 )
 from db import get_db
 from services.email import send_styled_email, _button
-from services.plex import revoke_plex_share
-from services.wireguard import delete_wg_client
+from services.jellyfin import delete_jellyfin_user
 
 admin_bp = Blueprint("admin_bp", __name__)
 
@@ -78,18 +77,6 @@ def admin_invite_reject(guest_id):
     return redirect(url_for("admin_bp.admin_invite"))
 
 
-@admin_bp.route("/admin/invite/plex-shared/<int:guest_id>", methods=["POST"])
-@admin_required
-def admin_invite_plex_shared(guest_id):
-    if not check_csrf():
-        abort(403)
-    db = get_db()
-    db.execute("UPDATE guests SET plex_shared = 1 WHERE id = ?", (guest_id,))
-    db.commit()
-    flash("Marked Plex libraries as shared.", "info")
-    return redirect(url_for("admin_bp.admin_invite"))
-
-
 @admin_bp.route("/admin/invite/remove/<int:guest_id>", methods=["POST"])
 @admin_required
 def admin_invite_remove(guest_id):
@@ -106,8 +93,8 @@ def admin_invite_remove(guest_id):
     list_name = f"Trakt - {trakt_username}"
 
     for service, base_url, api_key in [
-        ("Sonarr", SONARR_GUEST_URL, SONARR_GUEST_KEY),
-        ("Radarr", RADARR_GUEST_URL, RADARR_GUEST_KEY),
+        ("Sonarr", SONARR_URL, SONARR_KEY),
+        ("Radarr", RADARR_URL, RADARR_KEY),
     ]:
         if not api_key:
             continue
@@ -120,23 +107,16 @@ def admin_invite_remove(guest_id):
         except Exception as e:
             current_app.logger.error(f"Failed to remove import list from {service}: {e}")
 
-    # Revoke Plex library share
-    if guest["plex_shared"]:
+    # Delete Jellyfin user
+    if guest["jellyfin_user_id"]:
         try:
-            revoke_plex_share(guest["email"])
+            delete_jellyfin_user(guest["jellyfin_user_id"])
+            current_app.logger.info(f"Deleted Jellyfin user {guest['jellyfin_user_id']} for {guest['name']}")
         except Exception as e:
-            current_app.logger.error(f"Failed to revoke Plex share for {guest['email']}: {e}")
+            current_app.logger.error(f"Failed to delete Jellyfin user for {guest['name']}: {e}")
 
-    # Delete WireGuard VPN client
-    if guest["wg_client_id"]:
-        try:
-            delete_wg_client(guest["wg_client_id"])
-            current_app.logger.info(f"Deleted WireGuard client {guest['wg_client_id']} for {guest['name']}")
-        except Exception as e:
-            current_app.logger.error(f"Failed to delete WireGuard client for {guest['name']}: {e}")
-
-    db.execute("UPDATE guests SET active = 0, status = 'rejected', plex_shared = 0, wg_client_id = NULL WHERE id = ?", (guest_id,))
+    db.execute("UPDATE guests SET active = 0, status = 'rejected', jellyfin_user_id = NULL WHERE id = ?", (guest_id,))
     db.commit()
 
-    flash(f"Guest '{trakt_username}' removed — import lists, Plex share, and VPN deleted.", "info")
+    flash(f"Guest '{trakt_username}' removed — import lists and Jellyfin user deleted.", "info")
     return redirect(url_for("admin_bp.admin_invite"))

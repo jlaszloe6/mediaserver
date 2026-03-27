@@ -52,9 +52,8 @@ def init_db():
             onboard_token TEXT,
             onboard_token_created_at TEXT,
             status TEXT DEFAULT 'pending_approval',
-            plex_shared INTEGER DEFAULT 0,
-            trakt_device_data TEXT,
-            wg_client_id TEXT
+            jellyfin_user_id TEXT,
+            trakt_device_data TEXT
         );
     """)
     # Migrate existing rows: add new columns if missing (idempotent)
@@ -62,9 +61,8 @@ def init_db():
         ("onboard_token", "TEXT", None),
         ("onboard_token_created_at", "TEXT", None),
         ("status", "TEXT", "'complete'"),
-        ("plex_shared", "INTEGER", "1"),
+        ("jellyfin_user_id", "TEXT", None),
         ("trakt_device_data", "TEXT", None),
-        ("wg_client_id", "TEXT", None),
     ]:
         try:
             default_clause = f" DEFAULT {default}" if default else ""

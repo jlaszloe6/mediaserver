@@ -10,11 +10,9 @@ from flask import Blueprint, render_template, session
 
 from auth import is_admin, is_guest, login_required
 from config import (
-    API_TIMEOUT, GUEST_QUOTA_GB, HNR_HOURS, PLEX_URL, PROWLARR_KEY, PROWLARR_URL,
-    RADARR_GUEST_KEY, RADARR_GUEST_URL, RADARR_KEY, RADARR_URL, SEERR_URL,
-    SONARR_GUEST_KEY, SONARR_GUEST_URL, SONARR_KEY, SONARR_URL, TAUTULLI_KEY,
-    TAUTULLI_URL, TRANSMISSION_URL, TRAKT_LOG, UPTIME_KUMA_URL, WG_EASY_URL,
-    WG_PASSWORD,
+    API_TIMEOUT, GUEST_QUOTA_GB, HNR_HOURS, JELLYFIN_KEY, JELLYFIN_URL,
+    PROWLARR_KEY, PROWLARR_URL, RADARR_KEY, RADARR_URL, SEERR_URL,
+    SONARR_KEY, SONARR_URL, TRANSMISSION_URL, TRAKT_LOG,
 )
 from db import get_db
 
@@ -33,21 +31,13 @@ def ping_service(name, url, timeout=API_TIMEOUT):
 
 def fetch_service_health():
     checks = [
-        ("Plex", f"{PLEX_URL}/identity"),
+        ("Jellyfin", f"{JELLYFIN_URL}/health"),
         ("Sonarr", f"{SONARR_URL}/ping"),
         ("Radarr", f"{RADARR_URL}/ping"),
-        ("Transmission", "http://localhost:9091/transmission/web/"),
+        ("Transmission", f"{TRANSMISSION_URL.rsplit('/rpc', 1)[0]}/web/"),
         ("Prowlarr", f"{PROWLARR_URL}/ping"),
-        ("Tautulli", f"{TAUTULLI_URL}/status"),
         ("Seerr", f"{SEERR_URL}/api/v1/status"),
-        ("Uptime Kuma", f"{UPTIME_KUMA_URL}/api/entry-page"),
     ]
-    if SONARR_GUEST_KEY:
-        checks.append(("Sonarr-Guest", f"{SONARR_GUEST_URL}/ping"))
-    if RADARR_GUEST_KEY:
-        checks.append(("Radarr-Guest", f"{RADARR_GUEST_URL}/ping"))
-    if WG_PASSWORD:
-        checks.append(("WireGuard", f"{WG_EASY_URL}/"))
     results = []
     with ThreadPoolExecutor(max_workers=8) as ex:
         futs = {ex.submit(ping_service, name, url): name for name, url in checks}
@@ -143,68 +133,82 @@ def fetch_transmission_torrents():
 
 
 def fetch_guest_series():
+    """Fetch guest series from main Sonarr filtered by guest root folder."""
     try:
-        r = requests.get(f"{SONARR_GUEST_URL}/api/v3/series", headers={"X-Api-Key": SONARR_GUEST_KEY}, timeout=API_TIMEOUT)
+        r = requests.get(f"{SONARR_URL}/api/v3/series", headers={"X-Api-Key": SONARR_KEY}, timeout=API_TIMEOUT)
         r.raise_for_status()
         data = r.json()
-        return data if isinstance(data, list) else None
+        if not isinstance(data, list):
+            return None
+        return [s for s in data if "guest-tv" in s.get("rootFolderPath", "")]
     except Exception:
         return None
 
 
 def fetch_guest_movies():
+    """Fetch guest movies from main Radarr filtered by guest root folder."""
     try:
-        r = requests.get(f"{RADARR_GUEST_URL}/api/v3/movie", headers={"X-Api-Key": RADARR_GUEST_KEY}, timeout=API_TIMEOUT)
+        r = requests.get(f"{RADARR_URL}/api/v3/movie", headers={"X-Api-Key": RADARR_KEY}, timeout=API_TIMEOUT)
         r.raise_for_status()
         data = r.json()
-        return data if isinstance(data, list) else None
+        if not isinstance(data, list):
+            return None
+        return [m for m in data if "guest-movies" in m.get("rootFolderPath", "")]
     except Exception:
         return None
 
 
 def fetch_guest_sonarr_history():
+    """Fetch Sonarr history filtered by guest root folder paths."""
     try:
         since = (datetime.now(timezone.utc) - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
         r = requests.get(
-            f"{SONARR_GUEST_URL}/api/v3/history/since",
+            f"{SONARR_URL}/api/v3/history/since",
             params={"date": since, "includeSeries": "true", "includeEpisode": "true"},
-            headers={"X-Api-Key": SONARR_GUEST_KEY}, timeout=API_TIMEOUT,
+            headers={"X-Api-Key": SONARR_KEY}, timeout=API_TIMEOUT,
         )
         r.raise_for_status()
         data = r.json()
-        return data if isinstance(data, list) else None
+        if not isinstance(data, list):
+            return None
+        return [item for item in data if "guest-tv" in item.get("series", {}).get("rootFolderPath", "")]
     except Exception:
         return None
 
 
 def fetch_guest_radarr_history():
+    """Fetch Radarr history filtered by guest root folder paths."""
     try:
         since = (datetime.now(timezone.utc) - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
         r = requests.get(
-            f"{RADARR_GUEST_URL}/api/v3/history/since",
+            f"{RADARR_URL}/api/v3/history/since",
             params={"date": since, "includeMovie": "true"},
-            headers={"X-Api-Key": RADARR_GUEST_KEY}, timeout=API_TIMEOUT,
+            headers={"X-Api-Key": RADARR_KEY}, timeout=API_TIMEOUT,
         )
         r.raise_for_status()
         data = r.json()
-        return data if isinstance(data, list) else None
+        if not isinstance(data, list):
+            return None
+        return [item for item in data if "guest-movies" in item.get("movie", {}).get("rootFolderPath", "")]
     except Exception:
         return None
 
 
 def fetch_guest_quota_usage():
-    """Return guest storage usage in bytes by querying guest Radarr/Sonarr."""
+    """Return guest storage usage in bytes by querying main Radarr/Sonarr for guest content."""
     total = 0
     try:
-        r = requests.get(f"{RADARR_GUEST_URL}/api/v3/movie", headers={"X-Api-Key": RADARR_GUEST_KEY}, timeout=API_TIMEOUT)
+        r = requests.get(f"{RADARR_URL}/api/v3/movie", headers={"X-Api-Key": RADARR_KEY}, timeout=API_TIMEOUT)
         for m in r.json():
-            total += m.get("sizeOnDisk", 0)
+            if "guest-movies" in m.get("rootFolderPath", ""):
+                total += m.get("sizeOnDisk", 0)
     except Exception:
         pass
     try:
-        r = requests.get(f"{SONARR_GUEST_URL}/api/v3/series", headers={"X-Api-Key": SONARR_GUEST_KEY}, timeout=API_TIMEOUT)
+        r = requests.get(f"{SONARR_URL}/api/v3/series", headers={"X-Api-Key": SONARR_KEY}, timeout=API_TIMEOUT)
         for s in r.json():
-            total += s.get("statistics", {}).get("sizeOnDisk", 0)
+            if "guest-tv" in s.get("rootFolderPath", ""):
+                total += s.get("statistics", {}).get("sizeOnDisk", 0)
     except Exception:
         pass
     return total

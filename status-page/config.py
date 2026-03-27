@@ -9,33 +9,20 @@ TRAKT_LOG = os.environ.get("TRAKT_LOG", "/tmp/trakt-sync.log")
 GUEST_QUOTA_GB = int(os.environ.get("GUEST_QUOTA_GB", "100"))
 ONBOARD_TOKEN_TTL_DAYS = int(os.environ.get("ONBOARD_TOKEN_TTL_DAYS", "7"))
 
-# API endpoints (all on localhost since we're on host network)
-SONARR_URL = "http://localhost:8989"
+# API endpoints (Docker service names for bridge network)
+SONARR_URL = "http://sonarr:8989"
 SONARR_KEY = os.environ.get("SONARR_API_KEY", "")
-RADARR_URL = "http://localhost:7878"
+RADARR_URL = "http://radarr:7878"
 RADARR_KEY = os.environ.get("RADARR_API_KEY", "")
-PLEX_URL = "http://localhost:32400"
-PLEX_EXTERNAL_URL = os.environ.get("PLEX_EXTERNAL_URL", "")
-PLEX_TOKEN = os.environ.get("PLEX_TOKEN", "")
-TRANSMISSION_URL = "http://localhost:9091/transmission/rpc"
-PROWLARR_URL = "http://localhost:9696"
+JELLYFIN_URL = "http://jellyfin:8096"
+JELLYFIN_KEY = os.environ.get("JELLYFIN_API_KEY", "")
+JELLYFIN_EXTERNAL_URL = os.environ.get("JELLYFIN_EXTERNAL_URL", "")
+TRANSMISSION_URL = "http://transmission:9091/transmission/rpc"
+PROWLARR_URL = "http://prowlarr:9696"
 PROWLARR_KEY = os.environ.get("PROWLARR_API_KEY", "")
-TAUTULLI_URL = "http://localhost:8181"
-TAUTULLI_KEY = os.environ.get("TAUTULLI_API_KEY", "")
-SEERR_URL = "http://localhost:5055"
-UPTIME_KUMA_URL = "http://localhost:3001"
-
-# Guest pipeline
-SONARR_GUEST_URL = "http://localhost:8990"
-SONARR_GUEST_KEY = os.environ.get("SONARR_GUEST_API_KEY", "")
-RADARR_GUEST_URL = "http://localhost:7879"
-RADARR_GUEST_KEY = os.environ.get("RADARR_GUEST_API_KEY", "")
+SEERR_URL = "http://seerr:5055"
 SONARR_TRAKT_CLIENT_ID = os.environ.get("SONARR_TRAKT_CLIENT_ID", "")
 RADARR_TRAKT_CLIENT_ID = os.environ.get("RADARR_TRAKT_CLIENT_ID", "")
-
-# WireGuard (wg-easy API)
-WG_EASY_URL = "http://localhost:51821"
-WG_PASSWORD = os.environ.get("WG_PASSWORD", "")
 
 # Cloudflare Turnstile
 TURNSTILE_SITE_KEY = os.environ.get("TURNSTILE_SITE_KEY", "")

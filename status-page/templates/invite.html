@@ -66,8 +66,6 @@
         .btn-approve:hover { background: #27ae60; }
         .btn-reject { background: transparent; border: 1px solid #e94560; color: #e94560; }
         .btn-reject:hover { background: rgba(233,69,96,0.1); }
-        .btn-plex { background: #e5a00d; color: #1a1a2e; }
-        .btn-plex:hover { background: #c8900b; }
         .btn-remove { background: transparent; border: 1px solid #e94560; color: #e94560; }
         .btn-remove:hover { background: rgba(233,69,96,0.1); }
 
@@ -83,12 +81,6 @@
         .badge-auth { background: rgba(100,150,255,0.15); color: #8ab4f8; }
         .badge-complete { background: rgba(46,204,113,0.15); color: #2ecc71; }
         .badge-inactive { background: rgba(233,69,96,0.15); color: #e94560; }
-
-        .plex-warn {
-            background: rgba(229,160,13,0.1); border: 1px solid rgba(229,160,13,0.3);
-            border-radius: 6px; padding: 0.5rem 0.75rem; font-size: 0.8rem;
-            color: #e5a00d; margin-top: 0.5rem;
-        }
 
         .flash {
             padding: 0.75rem 1rem; border-radius: 8px; margin-bottom: 1rem; font-size: 0.9rem;
@@ -205,14 +197,6 @@
         <div class="section">
             <h2>Guests</h2>
             {% if guests %}
-
-            {% set needs_plex = guests | selectattr('status', 'equalto', 'complete') | rejectattr('plex_shared') | list %}
-            {% if needs_plex %}
-            <div class="plex-warn">
-                Action needed: {{ needs_plex|length }} guest(s) need Plex library sharing. Go to Plex Settings &gt; Users &amp; Sharing, share only <strong>Guest TV</strong> and <strong>Guest Movies</strong>, then click "Mark Shared" below.
-            </div>
-            {% endif %}
-
             <div style="overflow-x:auto;margin-top:0.75rem">
                 <table>
                     <thead>
@@ -221,7 +205,7 @@
                             <th>Email</th>
                             <th>Trakt</th>
                             <th>Status</th>
-                            <th>Plex</th>
+                            <th>Jellyfin</th>
                             <th></th>
                         </tr>
                     </thead>
@@ -245,13 +229,8 @@
                                 {% endif %}
                             </td>
                             <td>
-                                {% if g.status == 'complete' and not g.plex_shared %}
-                                    <form action="{{ url_for('admin_bp.admin_invite_plex_shared', guest_id=g.id) }}" method="post" style="margin:0">
-                                        <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
-                                        <button type="submit" class="btn btn-plex">Mark Shared</button>
-                                    </form>
-                                {% elif g.plex_shared %}
-                                    <span style="color:#2ecc71;font-size:0.85rem">Shared</span>
+                                {% if g.jellyfin_user_id %}
+                                    <span style="color:#2ecc71;font-size:0.85rem">Created</span>
                                 {% else %}
                                     <span style="color:#5a6a8a;font-size:0.85rem">-</span>
                                 {% endif %}
@@ -278,9 +257,8 @@
             <h3>Remove Guest</h3>
             <p>This will permanently remove <strong id="modal-guest-name"></strong> and:</p>
             <ul>
-                <li><strong>Delete</strong> their Trakt import lists from Sonarr-Guest and Radarr-Guest</li>
-                <li><strong>Revoke</strong> Plex library access (Guest TV &amp; Guest Movies)</li>
-                <li><strong>Delete</strong> their WireGuard VPN client</li>
+                <li><strong>Delete</strong> their Trakt import lists from Sonarr and Radarr</li>
+                <li><strong>Delete</strong> their Jellyfin user account</li>
             </ul>
             <p style="font-size:0.85rem">Type the guest's name to confirm:</p>
             <div class="modal-confirm">
