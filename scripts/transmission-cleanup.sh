@@ -37,17 +37,11 @@ set +a
 
 SONARR_KEY="$SONARR_API_KEY"
 RADARR_KEY="$RADARR_API_KEY"
-SONARR_GUEST_KEY="${SONARR_GUEST_API_KEY:-}"
-RADARR_GUEST_KEY="${RADARR_GUEST_API_KEY:-}"
 
 # Instance configs: "sonarr_url|sonarr_key|radarr_url|radarr_key"
-INSTANCE_CONFIGS="http://localhost:8989|$SONARR_KEY|http://localhost:7878|$RADARR_KEY"
-if [ -n "$SONARR_GUEST_KEY" ] && [ -n "$RADARR_GUEST_KEY" ]; then
-    INSTANCE_CONFIGS="$INSTANCE_CONFIGS
-http://localhost:8990|$SONARR_GUEST_KEY|http://localhost:7879|$RADARR_GUEST_KEY"
-fi
+INSTANCE_CONFIGS="http://sonarr:8989|$SONARR_KEY|http://radarr:7878|$RADARR_KEY"
 
-TRANSMISSION_URL="http://localhost:9091/transmission/rpc"
+TRANSMISSION_URL="http://transmission:9091/transmission/rpc"
 
 # --- Hit-and-run configuration ---
 # Tracker domains with H&R policies and their minimum seed hours.

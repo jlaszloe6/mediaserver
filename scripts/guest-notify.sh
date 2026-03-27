@@ -1,8 +1,8 @@
 #!/bin/bash
 # guest-notify.sh - Email guests when new content is available
 #
-# Checks guest Sonarr/Radarr history for recent imports and sends
-# email notifications to all active guests.
+# Checks Sonarr/Radarr history for recent guest imports (by root folder path)
+# and sends email notifications to all active guests.
 #
 # Uses a state file to track what's already been notified.
 # Run every 15 minutes via cron.
@@ -19,16 +19,12 @@ set -a
 source "$ENV_FILE"
 set +a
 
-SONARR_GUEST_KEY="${SONARR_GUEST_API_KEY:-}"
-RADARR_GUEST_KEY="${RADARR_GUEST_API_KEY:-}"
+SONARR_KEY="$SONARR_API_KEY"
+RADARR_KEY="$RADARR_API_KEY"
 SMTP_PASS="$SMTP_PASSWORD"
 
-if [ -z "$SONARR_GUEST_KEY" ] || [ -z "$RADARR_GUEST_KEY" ]; then
-    exit 0  # guest pipeline not configured
-fi
-
-SONARR_GUEST_URL="http://localhost:8990"
-RADARR_GUEST_URL="http://localhost:7879"
+SONARR_URL="http://sonarr:8989"
+RADARR_URL="http://radarr:7878"
 DB_PATH="${STATUSPAGE_DB_PATH:-/config/statuspage/statuspage.db}"
 STATE_FILE="/var/tmp/mediaserver-guest-notify.json"
 
@@ -59,20 +55,22 @@ fi
 
 NOW=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
 
-# Fetch recent history from guest Radarr (imported movies since last check)
-new_movies=$(curl -sf -H "X-Api-Key: $RADARR_GUEST_KEY" \
-    "$RADARR_GUEST_URL/api/v3/history?pageSize=50&sortDirection=descending&sortKey=date" 2>/dev/null \
+# Fetch recent history from Radarr — filter to guest root folder imports
+new_movies=$(curl -sf -H "X-Api-Key: $RADARR_KEY" \
+    "$RADARR_URL/api/v3/history?pageSize=50&sortDirection=descending&sortKey=date" 2>/dev/null \
     | jq -r --arg since "$LAST_CHECK" '
         [.records[] |
          select(.eventType == "downloadFolderImported" and .date > $since) |
+         select(.movie.rootFolderPath // "" | test("guest-movies")) |
          .movie.title + " (" + (.movie.year // "" | tostring) + ")"] | unique | .[]' 2>/dev/null) || true
 
-# Fetch recent history from guest Sonarr (imported episodes since last check)
-new_episodes=$(curl -sf -H "X-Api-Key: $SONARR_GUEST_KEY" \
-    "$SONARR_GUEST_URL/api/v3/history?pageSize=50&sortDirection=descending&sortKey=date&includeSeries=true&includeEpisode=true" 2>/dev/null \
+# Fetch recent history from Sonarr — filter to guest root folder imports
+new_episodes=$(curl -sf -H "X-Api-Key: $SONARR_KEY" \
+    "$SONARR_URL/api/v3/history?pageSize=50&sortDirection=descending&sortKey=date&includeSeries=true&includeEpisode=true" 2>/dev/null \
     | jq -r --arg since "$LAST_CHECK" '
         [.records[] |
          select(.eventType == "downloadFolderImported" and .date > $since) |
+         select(.series.rootFolderPath // "" | test("guest-tv")) |
          .series.title + " S" + (.episode.seasonNumber // 0 | tostring | if length == 1 then "0" + . else . end) +
          "E" + (.episode.episodeNumber // 0 | tostring | if length == 1 then "0" + . else . end)] | unique | .[]' 2>/dev/null) || true
 
@@ -109,7 +107,7 @@ if [ -z "$GUESTS" ]; then
 fi
 
 # Build email
-SUBJECT="New content available on Plex!"
+SUBJECT="New content available!"
 HTML_BODY="<html>
 <body style=\"margin:0;padding:0;background:#0f0f1a;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;\">
 <table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#0f0f1a;padding:24px 0;\">
@@ -123,10 +121,10 @@ HTML_BODY="<html>
 <ul style=\"list-style:none;padding:0;font-size:1.1rem;\">
 ${ITEMS}
 </ul>
-<p style=\"color:#5a6a8a;margin-top:1.5rem;font-size:0.9rem;text-align:center;\">Open Plex to start watching!</p>
+<p style=\"color:#5a6a8a;margin-top:1.5rem;font-size:0.9rem;text-align:center;\">Open Jellyfin to start watching!</p>
 </td></tr>
 <tr><td style=\"padding:16px 24px;border-top:1px solid #1a3a5c;color:#5a6a8a;font-size:12px;text-align:center;\">
-Sent from Media Server Status Page
+Sent from Freya Media Server
 </td></tr>
 </table>
 </td></tr>

@@ -1,6 +1,6 @@
 #!/bin/bash
 # Disable onGrab email notifications in Sonarr and Radarr.
-# Run on the server: ./scripts/disable-ongrab.sh
+# Run via: docker exec cron /scripts/disable-ongrab.sh
 set -euo pipefail
 
 ENV_FILE="$(dirname "$0")/../.env"
@@ -50,5 +50,5 @@ disable_ongrab() {
     echo "DONE: $name — onGrab disabled"
 }
 
-disable_ongrab "Sonarr" "http://localhost:8989" "$SONARR_KEY"
-disable_ongrab "Radarr" "http://localhost:7878" "$RADARR_KEY"
+disable_ongrab "Sonarr" "http://sonarr:8989" "$SONARR_KEY"
+disable_ongrab "Radarr" "http://radarr:7878" "$RADARR_KEY"

@@ -6,7 +6,6 @@ RUN apk add --no-cache \
     jq \
     python3 \
     sqlite \
-    docker-cli \
     coreutils \
     grep \
     && mkdir -p /var/log/cron /scripts
