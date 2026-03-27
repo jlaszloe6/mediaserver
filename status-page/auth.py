@@ -1,6 +1,5 @@
 import hashlib
 import secrets
-import sqlite3
 import time
 from datetime import datetime, timedelta, timezone
 from functools import wraps
@@ -8,7 +7,7 @@ from functools import wraps
 from flask import Blueprint, abort, flash, redirect, render_template, request, session, url_for
 
 from config import (
-    ALLOWED_EMAILS, ADMIN_EMAILS, DB_PATH, RATE_LIMIT_MAX, RATE_LIMIT_WINDOW,
+    ALLOWED_EMAILS, RATE_LIMIT_MAX, RATE_LIMIT_WINDOW,
     TURNSTILE_SECRET_KEY, TURNSTILE_SITE_KEY, _rate_limits,
 )
 from db import get_db
@@ -62,41 +61,11 @@ def check_csrf():
     return token and token == session.get("_csrf")
 
 
-def _is_active_guest_email(email):
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        row = conn.execute("SELECT id FROM guests WHERE email = ? AND active = 1", (email.lower(),)).fetchone()
-        conn.close()
-        return row is not None
-    except Exception:
-        return False
-
-
-def is_guest():
-    email = session.get("user_email", "").lower()
-    return email and email not in ALLOWED_EMAILS and _is_active_guest_email(email)
-
-
-def is_admin():
-    return session.get("user_email", "").lower() in ADMIN_EMAILS
-
-
 def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         if "user_email" not in session:
             return redirect(url_for("auth_bp.login"))
-        return f(*args, **kwargs)
-    return decorated
-
-
-def admin_required(f):
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        if "user_email" not in session:
-            return redirect(url_for("auth_bp.login"))
-        if not is_admin():
-            abort(403)
         return f(*args, **kwargs)
     return decorated
 
@@ -125,7 +94,7 @@ def login():
             flash("Please enter your email.", "error")
             return render_template("login.html")
 
-        if email not in ALLOWED_EMAILS and not _is_active_guest_email(email):
+        if email not in ALLOWED_EMAILS:
             # Don't reveal whether email is valid
             flash("If that email is registered, a login link has been sent.", "info")
             return redirect(url_for("auth_bp.login"))

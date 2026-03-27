@@ -42,32 +42,6 @@ def init_db():
             timestamp TEXT DEFAULT (datetime('now')),
             data_json TEXT NOT NULL
         );
-        CREATE TABLE IF NOT EXISTS guests (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            email TEXT NOT NULL,
-            trakt_username TEXT NOT NULL,
-            invited_at TEXT DEFAULT (datetime('now')),
-            active INTEGER DEFAULT 0,
-            onboard_token TEXT,
-            onboard_token_created_at TEXT,
-            status TEXT DEFAULT 'pending_approval',
-            jellyfin_user_id TEXT,
-            trakt_device_data TEXT
-        );
     """)
-    # Migrate existing rows: add new columns if missing (idempotent)
-    for col, typ, default in [
-        ("onboard_token", "TEXT", None),
-        ("onboard_token_created_at", "TEXT", None),
-        ("status", "TEXT", "'complete'"),
-        ("jellyfin_user_id", "TEXT", None),
-        ("trakt_device_data", "TEXT", None),
-    ]:
-        try:
-            default_clause = f" DEFAULT {default}" if default else ""
-            conn.execute(f"ALTER TABLE guests ADD COLUMN {col} {typ}{default_clause}")
-        except sqlite3.OperationalError:
-            pass
     conn.commit()
     conn.close()

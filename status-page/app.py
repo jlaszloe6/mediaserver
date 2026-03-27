@@ -6,8 +6,6 @@ import db
 import auth
 from auth import auth_bp
 from routes.dashboard import dashboard_bp
-from routes.admin import admin_bp
-from routes.onboard import onboard_bp
 
 app = Flask(__name__)
 app.secret_key = os.environ["SECRET_KEY"]
@@ -24,8 +22,6 @@ auth.init_app(app)
 # Register blueprints (no url_prefix to keep existing url_for names working in templates)
 app.register_blueprint(auth_bp)
 app.register_blueprint(dashboard_bp)
-app.register_blueprint(admin_bp)
-app.register_blueprint(onboard_bp)
 
 # Error pages
 ERROR_PAGES = {

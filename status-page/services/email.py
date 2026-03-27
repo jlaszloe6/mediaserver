@@ -2,7 +2,7 @@ import smtplib
 from email.mime.text import MIMEText
 
 from config import (
-    BASE_URL, GUEST_QUOTA_GB, JELLYFIN_EXTERNAL_URL, SMTP_FROM, SMTP_PASSWORD,
+    BASE_URL, JELLYFIN_EXTERNAL_URL, SMTP_FROM, SMTP_PASSWORD,
     SMTP_PORT, SMTP_SERVER, SMTP_USER,
 )
 
@@ -105,37 +105,3 @@ def send_user_guide(email):
 <li>TV series: all existing episodes download, and new ones download as they air.</li>
 </ul>"""
     send_styled_email(email, "Media Server - Quick Actions Guide", body)
-
-
-def send_guest_welcome(email, name, onboard_token):
-    setup_url = f"{BASE_URL}/onboard/{onboard_token}"
-    jellyfin_url = JELLYFIN_EXTERNAL_URL or "your Jellyfin server URL"
-    body = f"""\
-<p style="font-size:17px;color:#fff;margin-bottom:16px;">Welcome, {name}!</p>
-
-{_heading('1. Watch via Browser (easiest)')}
-<p>Open <a href="https://{jellyfin_url}" style="color:#8ab4f8;">{jellyfin_url}</a> in any browser (laptop, desktop, or phone). Sign in with your Jellyfin account.</p>
-
-{_heading('2. Jellyfin App (phone/TV)')}
-<p>Download the <strong>Jellyfin</strong> app on your phone or Android TV. Add the server URL <strong>{jellyfin_url}</strong> and sign in with your Jellyfin account. You'll see <strong>Guest TV</strong> and <strong>Guest Movies</strong>.</p>
-
-{_heading('3. Add Content via Trakt')}
-<p>Your Trakt watchlist is connected. To add movies or TV shows:</p>
-<ol style="line-height:1.8;padding-left:20px;color:#e0e0e0;">
-<li>Go to <a href="https://trakt.tv" style="color:#8ab4f8;">trakt.tv</a></li>
-<li>Search for what you want to watch</li>
-<li>Click the bookmark icon to add to your watchlist</li>
-<li>It will appear in Jellyfin within 1&ndash;2 hours</li>
-</ol>
-
-{_heading('Good to Know')}
-<ul style="line-height:1.8;padding-left:20px;color:#e0e0e0;">
-<li>Storage: <strong>{GUEST_QUOTA_GB} GB shared</strong> across all guests.</li>
-<li>Watched content is <strong>automatically removed after 30 days</strong> to free space.</li>
-<li>Want to rewatch something? Just add it to your Trakt watchlist again.</li>
-<li>New releases download once a digital version is available (not while in theaters).</li>
-<li>TV series: all existing episodes download, and new ones arrive as they air.</li>
-</ul>
-
-<p style="text-align:center;margin:16px 0;">{_button(setup_url, 'View Setup Page')}</p>"""
-    send_styled_email(email, "Welcome to the Media Server!", body)

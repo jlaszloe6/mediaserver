@@ -8,9 +8,9 @@ from zoneinfo import ZoneInfo
 import requests
 from flask import Blueprint, render_template, session
 
-from auth import is_admin, is_guest, login_required
+from auth import login_required
 from config import (
-    API_TIMEOUT, GUEST_QUOTA_GB, HNR_HOURS, JELLYFIN_KEY, JELLYFIN_URL,
+    API_TIMEOUT, HNR_HOURS, JELLYFIN_URL,
     PROWLARR_KEY, PROWLARR_URL, RADARR_KEY, RADARR_URL, SEERR_URL,
     SONARR_KEY, SONARR_URL, TRANSMISSION_URL, TRAKT_LOG,
 )
@@ -132,88 +132,6 @@ def fetch_transmission_torrents():
         return None
 
 
-def fetch_guest_series():
-    """Fetch guest series from main Sonarr filtered by guest root folder."""
-    try:
-        r = requests.get(f"{SONARR_URL}/api/v3/series", headers={"X-Api-Key": SONARR_KEY}, timeout=API_TIMEOUT)
-        r.raise_for_status()
-        data = r.json()
-        if not isinstance(data, list):
-            return None
-        return [s for s in data if "guest-tv" in s.get("rootFolderPath", "")]
-    except Exception:
-        return None
-
-
-def fetch_guest_movies():
-    """Fetch guest movies from main Radarr filtered by guest root folder."""
-    try:
-        r = requests.get(f"{RADARR_URL}/api/v3/movie", headers={"X-Api-Key": RADARR_KEY}, timeout=API_TIMEOUT)
-        r.raise_for_status()
-        data = r.json()
-        if not isinstance(data, list):
-            return None
-        return [m for m in data if "guest-movies" in m.get("rootFolderPath", "")]
-    except Exception:
-        return None
-
-
-def fetch_guest_sonarr_history():
-    """Fetch Sonarr history filtered by guest root folder paths."""
-    try:
-        since = (datetime.now(timezone.utc) - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
-        r = requests.get(
-            f"{SONARR_URL}/api/v3/history/since",
-            params={"date": since, "includeSeries": "true", "includeEpisode": "true"},
-            headers={"X-Api-Key": SONARR_KEY}, timeout=API_TIMEOUT,
-        )
-        r.raise_for_status()
-        data = r.json()
-        if not isinstance(data, list):
-            return None
-        return [item for item in data if "guest-tv" in item.get("series", {}).get("rootFolderPath", "")]
-    except Exception:
-        return None
-
-
-def fetch_guest_radarr_history():
-    """Fetch Radarr history filtered by guest root folder paths."""
-    try:
-        since = (datetime.now(timezone.utc) - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
-        r = requests.get(
-            f"{RADARR_URL}/api/v3/history/since",
-            params={"date": since, "includeMovie": "true"},
-            headers={"X-Api-Key": RADARR_KEY}, timeout=API_TIMEOUT,
-        )
-        r.raise_for_status()
-        data = r.json()
-        if not isinstance(data, list):
-            return None
-        return [item for item in data if "guest-movies" in item.get("movie", {}).get("rootFolderPath", "")]
-    except Exception:
-        return None
-
-
-def fetch_guest_quota_usage():
-    """Return guest storage usage in bytes by querying main Radarr/Sonarr for guest content."""
-    total = 0
-    try:
-        r = requests.get(f"{RADARR_URL}/api/v3/movie", headers={"X-Api-Key": RADARR_KEY}, timeout=API_TIMEOUT)
-        for m in r.json():
-            if "guest-movies" in m.get("rootFolderPath", ""):
-                total += m.get("sizeOnDisk", 0)
-    except Exception:
-        pass
-    try:
-        r = requests.get(f"{SONARR_URL}/api/v3/series", headers={"X-Api-Key": SONARR_KEY}, timeout=API_TIMEOUT)
-        for s in r.json():
-            if "guest-tv" in s.get("rootFolderPath", ""):
-                total += s.get("statistics", {}).get("sizeOnDisk", 0)
-    except Exception:
-        pass
-    return total
-
-
 def fetch_trakt_log():
     try:
         if not os.path.exists(TRAKT_LOG):
@@ -299,15 +217,11 @@ def _format_speed(bps):
     return f"{kbps:.0f} KB/s"
 
 
-def _format_torrents(raw_torrents, guest_only=False):
+def _format_torrents(raw_torrents):
     """Format Transmission torrent data for display."""
     torrents = []
     now_ts = time.time()
     for t in (raw_torrents or []):
-        if guest_only:
-            dl_dir = t.get("downloadDir", "")
-            if "guest-sonarr" not in dl_dir and "guest-radarr" not in dl_dir:
-                continue
         status_map = {0: "Stopped", 1: "Queued", 2: "Verifying", 3: "Queued", 4: "Downloading", 5: "Queued", 6: "Seeding"}
         status_code = t.get("status")
         eta = t.get("eta", -1)
@@ -404,14 +318,7 @@ def _format_activity(sonarr_history, radarr_history):
 @login_required
 def dashboard():
     email = session["user_email"]
-    guest_view = is_guest()
 
-    if guest_view:
-        return _guest_dashboard(email)
-    return _owner_dashboard(email)
-
-
-def _owner_dashboard(email):
     results = {}
     with ThreadPoolExecutor(max_workers=8) as ex:
         futures = {
@@ -450,55 +357,4 @@ def _owner_dashboard(email):
         diff=diff,
         prev_timestamp=prev_timestamp,
         trakt_log=results.get("trakt_log"),
-        is_admin=is_admin(),
-        is_guest=False,
-    )
-
-
-def _guest_dashboard(email):
-    results = {}
-    with ThreadPoolExecutor(max_workers=8) as ex:
-        futures = {
-            ex.submit(fetch_service_health): "health",
-            ex.submit(fetch_guest_series): "series",
-            ex.submit(fetch_guest_movies): "movies",
-            ex.submit(fetch_guest_sonarr_history): "sonarr_history",
-            ex.submit(fetch_guest_radarr_history): "radarr_history",
-            ex.submit(fetch_transmission_torrents): "torrents",
-            ex.submit(fetch_guest_quota_usage): "quota_usage",
-        }
-        for fut in as_completed(futures):
-            key = futures[fut]
-            try:
-                results[key] = fut.result()
-            except Exception:
-                results[key] = None
-
-    series = results.get("series") or []
-    movies = results.get("movies") or []
-    total_episodes = sum(s.get("statistics", {}).get("episodeFileCount", 0) for s in series)
-
-    snapshot = build_snapshot(series, movies)
-    prev_snapshot, prev_timestamp = get_previous_snapshot(email)
-    diff = compute_diff(prev_snapshot, snapshot)
-    save_snapshot(email, snapshot)
-
-    quota_usage = results.get("quota_usage") or 0
-    quota_gb_used = round(quota_usage / 1073741824, 1)
-
-    return render_template(
-        "dashboard.html",
-        health=results.get("health") or [],
-        movie_count=len(movies),
-        series_count=len(series),
-        episode_count=total_episodes,
-        torrents=_format_torrents(results.get("torrents"), guest_only=True),
-        activity=_format_activity(results.get("sonarr_history"), results.get("radarr_history"))[:20],
-        diff=diff,
-        prev_timestamp=prev_timestamp,
-        trakt_log=None,
-        is_admin=is_admin(),
-        is_guest=True,
-        quota_gb_used=quota_gb_used,
-        quota_gb_total=GUEST_QUOTA_GB,
     )

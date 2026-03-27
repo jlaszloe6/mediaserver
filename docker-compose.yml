@@ -18,8 +18,6 @@ services:
       - ./config/jellyfin:/config
       - ${MEDIA_ROOT}/media/tv:/tv
       - ${MEDIA_ROOT}/media/movies:/movies
-      - ${MEDIA_ROOT}/media/guest-tv:/guest-tv
-      - ${MEDIA_ROOT}/media/guest-movies:/guest-movies
     mem_limit: 4g
     restart: unless-stopped
     healthcheck:
@@ -233,7 +231,6 @@ services:
       - BASE_URL=${STATUSPAGE_BASE_URL}
       - SONARR_API_KEY=${SONARR_API_KEY}
       - RADARR_API_KEY=${RADARR_API_KEY}
-      - JELLYFIN_API_KEY=${JELLYFIN_API_KEY}
       - JELLYFIN_EXTERNAL_URL=${JELLYFIN_EXTERNAL_URL}
       - PROWLARR_API_KEY=${PROWLARR_API_KEY}
       - SMTP_SERVER=${SMTP_SERVER}
@@ -241,10 +238,6 @@ services:
       - SMTP_USER=${SMTP_USER}
       - SMTP_PASSWORD=${SMTP_PASSWORD}
       - SMTP_FROM=${SMTP_FROM}
-      - ADMIN_EMAILS=${ADMIN_EMAILS}
-      - GUEST_QUOTA_GB=${GUEST_QUOTA_GB}
-      - SONARR_TRAKT_CLIENT_ID=${SONARR_TRAKT_CLIENT_ID}
-      - RADARR_TRAKT_CLIENT_ID=${RADARR_TRAKT_CLIENT_ID}
       - TURNSTILE_SITE_KEY=${TURNSTILE_SITE_KEY}
       - TURNSTILE_SECRET_KEY=${TURNSTILE_SECRET_KEY}
       - TRAKT_LOG=/logs/trakt-sync.log

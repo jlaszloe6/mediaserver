@@ -362,12 +362,6 @@ $DRY_RUN && CLEANUP_ARGS="--dry-run"
     ERRORS=$((ERRORS + 1))
 }
 
-# --- Guest quota check ---
-log "=== Guest quota check ==="
-"$SCRIPT_DIR/guest-quota.sh" 2>&1 | while IFS= read -r line; do log "$line"; done || {
-    log "WARN: guest-quota.sh had errors"
-}
-
 if [ "$ERRORS" -gt 0 ]; then
     log "=== Done with $ERRORS error(s) ==="
     exit 1

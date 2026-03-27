@@ -15,7 +15,7 @@ Services: Jellyfin, Transmission, Sonarr, Radarr, Prowlarr, Seerr, Caddy, DuckDN
 ### Storage & Boot
 - Media on NFS (NAS) — inotify doesn't work over NFS
 - Docker depends on `remote-fs.target` via drop-in `/etc/systemd/system/docker.service.d/wait-for-nfs.conf`
-- Volume mappings: Sonarr/Radarr → `/data`, Transmission → `/downloads`, Jellyfin → `/tv` + `/movies` + `/guest-tv` + `/guest-movies`
+- Volume mappings: Sonarr/Radarr → `/data`, Transmission → `/downloads`, Jellyfin → `/tv` + `/movies`
 
 ## Runtime Separation
 - Runtime directory: `/opt/mediaserver` (NOT developer home directory)
@@ -42,8 +42,7 @@ Services: Jellyfin, Transmission, Sonarr, Radarr, Prowlarr, Seerr, Caddy, DuckDN
 
 ## Jellyfin
 - Image: `lscr.io/linuxserver/jellyfin:latest` (supports PUID/PGID)
-- Libraries: TV Shows `/tv`, Movies `/movies`, Guest TV `/guest-tv`, Guest Movies `/guest-movies`
-- Per-user library access control replaces separate guest pipeline
+- Libraries: TV Shows `/tv`, Movies `/movies`
 - V4L2 hardware transcoding available on ARM, Intel QuickSync on x86
 
 ## Prowlarr Indexers
@@ -69,8 +68,6 @@ Services: Jellyfin, Transmission, Sonarr, Radarr, Prowlarr, Seerr, Caddy, DuckDN
 | `0 * * * *` | `trakt-sync.sh` | Trakt force-refresh + cleanup + reverse-sync |
 | `*/30 * * * *` | `jellyfin-cleanup.sh` | Detect Jellyfin deletions, remove from Sonarr/Radarr |
 | `*/30 * * * *` | `queue-cleanup.sh` | Auto-fix stuck imports, reject suspicious files |
-| `*/15 * * * *` | `guest-quota.sh` | Enforce guest quota |
-| `*/15 * * * *` | `guest-notify.sh` | Email guests on new content |
 | `0 3 * * *` | `jellyfin-watched-cleanup.sh` | Remove media watched 30+ days ago |
 | `30 2 * * *` | `backup.sh` | Config backup to NAS |
 | `0 2 * * 0` | `geodb-update.sh` | Weekly GeoIP DB refresh |
@@ -97,21 +94,17 @@ Services: Jellyfin, Transmission, Sonarr, Radarr, Prowlarr, Seerr, Caddy, DuckDN
 ## Status Page
 - Flask + SQLite, bridge network (port 8080), magic link auth
 - Modular structure: `app.py` (init) → `config.py`, `db.py`, `auth.py`, `services/*`, `routes/*`
-- Blueprints: `auth_bp`, `dashboard_bp`, `admin_bp`, `onboard_bp` — all `url_for` calls use blueprint prefix
-- Cloudflare Turnstile captcha on login and onboard forms
+- Blueprints: `auth_bp`, `dashboard_bp` — all `url_for` calls use blueprint prefix
+- Cloudflare Turnstile captcha on login form
 - Session cookies: Secure, HttpOnly, SameSite=Lax
-- Onboarding tokens expire after `ONBOARD_TOKEN_TTL_DAYS` (default: 7), reset on admin approval
 - Dashboard: service health, library stats, active downloads, recent activity (local time, readable labels), Trakt sync log
 - Custom error pages (400, 403, 404, 500) with dark theme
-- Favicon logo on all pages (login, onboard, dashboard, guests, errors)
-- Guest view: filtered stats (by rootFolderPath), quota bar, guest-only downloads
-- Self-service onboarding at `/onboard` with Jellyfin user auto-creation
+- Favicon logo on all pages (login, dashboard, errors)
 - All emails use dark theme template with logo, sender name "Freya Media Server"
 
 ## Email Notifications
 - Sonarr/Radarr: onImportComplete, onUpgrade, onHealthIssue (onGrab disabled — low value noise)
-- Status page: login links, user guide, guest onboarding lifecycle emails
-- guest-notify.sh: per-guest content import notifications (every 15 min)
+- Status page: login links, user guide
 - queue-cleanup.sh: owner alerts for suspicious files and stuck downloads
 - Seerr: per-user request status updates
 - `disable-ongrab.sh`: one-time utility, run via `docker exec cron /scripts/disable-ongrab.sh`
@@ -126,15 +119,6 @@ Services: Jellyfin, Transmission, Sonarr, Radarr, Prowlarr, Seerr, Caddy, DuckDN
 - Overrides DuckDNS domains to LAN IP (solves hairpin NAT)
 - Forwards all other queries to `$DNS_UPSTREAM`
 - Config templated via `envsubst` at container start
-
-## Guest System
-- Single Sonarr/Radarr instance with guest root folders (`/data/media/guest-tv`, `/data/media/guest-movies`)
-- Jellyfin per-user library access (Guest TV, Guest Movies) replaces separate guest pipeline
-- Shared storage quota (`GUEST_QUOTA_GB`), enforced by `guest-quota.sh`
-- Self-service onboarding: form (Turnstile captcha) → admin approval → Trakt auth (2x) → Jellyfin user auto-create
-- `ADMIN_EMAILS` controls who gets onboarding notifications
-- Guest removal: delete Trakt import lists + delete Jellyfin user
-- Removal requires type-to-confirm modal (guest name)
 
 ## Backup & Restore
 - Daily at 2:30 AM via `scripts/backup.sh` (runs in cron container)

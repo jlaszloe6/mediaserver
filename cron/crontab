@@ -7,12 +7,6 @@
 # Queue cleanup - every 30 min
 */30 * * * * /scripts/queue-cleanup.sh >> /var/log/cron/queue-cleanup.log 2>&1
 
-# Guest quota check - every 15 min
-*/15 * * * * /scripts/guest-quota.sh >> /var/log/cron/guest-quota.log 2>&1
-
-# Guest content notifications - every 15 min
-*/15 * * * * /scripts/guest-notify.sh >> /var/log/cron/guest-notify.log 2>&1
-
 # Jellyfin watched cleanup - remove media watched 30+ days ago (daily 3am)
 0 3 * * * /scripts/jellyfin-watched-cleanup.sh >> /var/log/cron/jellyfin-watched-cleanup.log 2>&1
 
