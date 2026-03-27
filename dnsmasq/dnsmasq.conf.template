@@ -6,7 +6,7 @@ bind-interfaces
 server=${DNS_UPSTREAM}
 
 # Override DuckDNS domains to resolve to server on LAN
-address=/${CADDY_DOMAIN_PLEX}/${SERVER_IP}
+address=/${CADDY_DOMAIN_JELLYFIN}/${SERVER_IP}
 address=/${CADDY_DOMAIN_SEERR}/${SERVER_IP}
 address=/${CADDY_DOMAIN_STATUS}/${SERVER_IP}
 
