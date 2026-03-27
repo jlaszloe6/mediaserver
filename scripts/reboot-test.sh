@@ -148,7 +148,7 @@ echo ""
 # --- 5. DNS ---
 
 echo "[DNS]"
-if nslookup "${CADDY_DOMAIN_STATUS:-freya-status.duckdns.org}" "$SERVER_IP" >/dev/null 2>&1; then
+if nslookup "${CADDY_DOMAIN_STATUS:-status.example.com}" "$SERVER_IP" >/dev/null 2>&1; then
     pass "dnsmasq resolving domains"
 else
     warn_check "dnsmasq not resolving (may need time to start)"

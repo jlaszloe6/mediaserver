@@ -37,7 +37,7 @@ Services: Jellyfin, Transmission, Sonarr, Radarr, Prowlarr, Seerr, Caddy, DuckDN
 - Custom build with duckdns DNS plugin + maxmind GeoIP plugin
 - Caddyfile uses env vars: `$CADDY_DOMAIN_JELLYFIN`, `$CADDY_DOMAIN_SEERR`, `$CADDY_DOMAIN_STATUS`
 - Reverse proxies to Docker service names on bridge network (jellyfin:8096, seerr:5055, statuspage:8080)
-- GeoIP filter: only Hungarian IPs allowed (MaxMind GeoLite2-Country), LAN IPs pass through
+- GeoIP country filter via MaxMind GeoLite2-Country (allowed countries configurable), LAN IPs pass through
 - TLS via Let's Encrypt DNS-01 challenge (auto-renewal)
 - Build requires `network: host` in compose (IPv6 unreachable in default bridge)
 - Only container with port 443 published
@@ -54,9 +54,8 @@ Services: Jellyfin, Transmission, Sonarr, Radarr, Prowlarr, Seerr, Caddy, DuckDN
 
 ## Quality & Language Preferences
 - Profile "HD-1080p Max" (id=1): prefers Bluray-1080p, 4K as fallback only
-- Custom format scores: Hungarian+Original +150, English SRT Subs +100, Hungarian Only -50, 4K -200
-- i5-6500T cannot software transcode 4K
-- 4K only works via direct play (client "Original" quality)
+- Custom format scores configured for preferred language + original audio
+- 4K only works via direct play on hardware that cannot software transcode it
 
 ## Cron Jobs
 | Schedule | Command | Description |
