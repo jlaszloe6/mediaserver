@@ -97,7 +97,7 @@ echo ""
 # --- 3. Container status ---
 
 echo "[Containers]"
-EXPECTED_CONTAINERS="jellyfin transmission sonarr radarr prowlarr seerr caddy duckdns dnsmasq statuspage cron"
+EXPECTED_CONTAINERS="jellyfin transmission sonarr radarr prowlarr seerr caddy duckdns statuspage cron"
 
 for container in $EXPECTED_CONTAINERS; do
     status=$(docker inspect --format='{{.State.Status}}' "$container" 2>/dev/null || echo "not found")
@@ -148,10 +148,10 @@ echo ""
 # --- 5. DNS ---
 
 echo "[DNS]"
-if nslookup "${CADDY_DOMAIN_STATUS:-status.example.com}" "$SERVER_IP" >/dev/null 2>&1; then
-    pass "dnsmasq resolving domains"
+if nslookup "${CADDY_DOMAIN_STATUS:-status.example.com}" >/dev/null 2>&1; then
+    pass "DuckDNS domain resolving"
 else
-    warn_check "dnsmasq not resolving (may need time to start)"
+    warn_check "DuckDNS domain not resolving"
 fi
 echo ""
 

@@ -6,13 +6,13 @@ Docker Compose stack running on the server (`$SERVER_IP`). Runtime directory: `/
 
 ## Stack
 
-Services: Jellyfin, Transmission, Sonarr, Radarr, Prowlarr, Seerr, Caddy, DuckDNS, dnsmasq, Cron, Statuspage
+Services: Jellyfin, Transmission, Sonarr, Radarr, Prowlarr, Seerr, Caddy, DuckDNS, Cron, Statuspage
 
 ### Networking
-- Custom bridge network `mediaserver`: Jellyfin, Sonarr, Radarr, Prowlarr, Transmission, Seerr, Caddy, DuckDNS, Statuspage, Cron
-- Host network: dnsmasq only (must bind to `$SERVER_IP:53`)
+- Custom bridge network `mediaserver` for all services
 - All inter-container communication via Docker service names: `jellyfin`, `sonarr`, `radarr`, `prowlarr`, `transmission`, `seerr`, `caddy`, `statuspage`
-- Only published ports: Caddy 443 (HTTPS), Transmission 51413 (torrent peers)
+- Only published ports: Caddy 443 (HTTPS), Jellyfin 8096 (LAN), Transmission 51413 (torrent peers)
+- LAN clients access Jellyfin directly via `http://SERVER_IP:8096`, remote access via DuckDNS domain through Caddy
 
 ### Storage & Boot
 - Media on NFS (NAS) — inotify doesn't work over NFS
@@ -29,7 +29,7 @@ Services: Jellyfin, Transmission, Sonarr, Radarr, Prowlarr, Seerr, Caddy, DuckDN
 
 ## CI/CD
 - GitHub Actions self-hosted runner on the server, working directory `/opt/mediaserver`
-- Deploy workflow detects changed custom-build services (statuspage, cron, caddy, dnsmasq) and rebuilds only those
+- Deploy workflow detects changed custom-build services (statuspage, cron, caddy) and rebuilds only those
 - `docker-compose.yml` changes trigger `docker compose up -d --no-build --no-recreate` for new services
 - Master branch is protected — all changes go through PRs
 
@@ -108,12 +108,6 @@ Services: Jellyfin, Transmission, Sonarr, Radarr, Prowlarr, Seerr, Caddy, DuckDN
 - Config path: `./config/overseerr` (kept original path for migration, don't rename)
 - Bridge network, connects to Jellyfin
 
-## dnsmasq (LAN DNS)
-- Custom Alpine build, host network, binds to `$SERVER_IP:53` only
-- Overrides DuckDNS domains to LAN IP (solves hairpin NAT)
-- Forwards all other queries to `$DNS_UPSTREAM`
-- Config templated via `envsubst` at container start
-
 ## Backup & Restore
 - Daily at 2:30 AM via `scripts/backup.sh` (runs in cron container)
 - Backups stored on NAS at `$BACKUP_DIR` (default: `$MEDIA_ROOT/backups`)
@@ -141,5 +135,5 @@ Services: Jellyfin, Transmission, Sonarr, Radarr, Prowlarr, Seerr, Caddy, DuckDN
 - Only port 443 exposed to internet (via Caddy with GeoIP filter)
 - UFW: SSH from LAN only, DNS from LAN only, 443/tcp, deny all else
 - No Docker socket mounted in any container
-- dnsmasq is the only host-networked container
+- No host-networked containers
 - All other services isolated in bridge network

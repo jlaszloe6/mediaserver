@@ -223,34 +223,6 @@ services:
       - no-new-privileges:true
 
 
-  dnsmasq:
-    # dnsmasq — LAN DNS override for DuckDNS domains (resolves to server IP instead of public IP)
-    # host network: binds to SERVER_IP:53 for LAN clients, avoids conflict with systemd-resolved on 127.0.0.53
-    build:
-      context: ./dnsmasq
-    container_name: dnsmasq
-    network_mode: host
-    environment:
-      - SERVER_IP=${SERVER_IP}
-      - DNS_UPSTREAM=${DNS_UPSTREAM}
-      - CADDY_DOMAIN_JELLYFIN=${CADDY_DOMAIN_JELLYFIN}
-      - CADDY_DOMAIN_SEERR=${CADDY_DOMAIN_SEERR}
-      - CADDY_DOMAIN_STATUS=${CADDY_DOMAIN_STATUS}
-    mem_limit: 128m
-    restart: unless-stopped
-    cap_drop:
-      - ALL
-    cap_add:
-      - NET_BIND_SERVICE
-    security_opt:
-      - no-new-privileges:true
-    read_only: true
-    healthcheck:
-      test: ["CMD", "nslookup", "${CADDY_DOMAIN_STATUS}", "${SERVER_IP}"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-
   statuspage:
     build:
       context: ./status-page
