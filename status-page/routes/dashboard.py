@@ -1,5 +1,4 @@
 import json
-import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
@@ -12,7 +11,7 @@ from auth import login_required
 from config import (
     API_TIMEOUT, HNR_HOURS, JELLYFIN_URL,
     PROWLARR_KEY, PROWLARR_URL, RADARR_KEY, RADARR_URL, SEERR_URL,
-    SONARR_KEY, SONARR_URL, TRANSMISSION_URL, TRAKT_LOG,
+    SERVER_NAME, SONARR_KEY, SONARR_URL, TRANSMISSION_URL,
 )
 from db import get_db
 
@@ -128,17 +127,6 @@ def fetch_transmission_torrents():
         )
         data = r.json()
         return data.get("arguments", {}).get("torrents", [])
-    except Exception:
-        return None
-
-
-def fetch_trakt_log():
-    try:
-        if not os.path.exists(TRAKT_LOG):
-            return None
-        with open(TRAKT_LOG) as f:
-            lines = f.readlines()
-        return "".join(lines[-30:])
     except Exception:
         return None
 
@@ -328,7 +316,6 @@ def dashboard():
             ex.submit(fetch_sonarr_history): "sonarr_history",
             ex.submit(fetch_radarr_history): "radarr_history",
             ex.submit(fetch_transmission_torrents): "torrents",
-            ex.submit(fetch_trakt_log): "trakt_log",
         }
         for fut in as_completed(futures):
             key = futures[fut]
@@ -356,5 +343,5 @@ def dashboard():
         activity=_format_activity(results.get("sonarr_history"), results.get("radarr_history"))[:20],
         diff=diff,
         prev_timestamp=prev_timestamp,
-        trakt_log=results.get("trakt_log"),
+        server_name=SERVER_NAME,
     )

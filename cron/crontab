@@ -1,6 +1,3 @@
-# Trakt watchlist sync - hourly
-0 * * * * /scripts/trakt-sync.sh >> /var/log/cron/trakt-sync.log 2>&1
-
 # Jellyfin deletion cleanup - every 30 min
 */30 * * * * /scripts/jellyfin-cleanup.sh >> /var/log/cron/jellyfin-cleanup.log 2>&1
 

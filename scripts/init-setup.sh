@@ -11,7 +11,7 @@
 # Note: This script runs inside the cron container (on bridge network),
 # so Docker service names are used for all URLs.
 #
-# Usage: ./scripts/init-setup.sh [--trakt] [--dry-run]
+# Usage: ./scripts/init-setup.sh [--dry-run]
 
 set -euo pipefail
 
@@ -22,7 +22,6 @@ CONFIG_DIR="$PROJECT_DIR/config"
 
 ERRORS=0
 DRY_RUN=false
-DO_TRAKT=false
 
 # Load all .env variables into the environment
 if [ ! -f "$ENV_FILE" ]; then
@@ -106,13 +105,11 @@ parse_response() {
 
 for arg in "$@"; do
     case "$arg" in
-        --trakt)   DO_TRAKT=true ;;
         --dry-run) DRY_RUN=true ;;
         -h|--help)
             echo "Usage: init-setup.sh [OPTIONS]"
             echo ""
             echo "Options:"
-            echo "  --trakt     Run interactive Trakt OAuth device-code flow"
             echo "  --dry-run   Show what would be configured without making changes"
             echo "  -h, --help  Show this help message"
             exit 0
@@ -625,7 +622,7 @@ else
             --argjson port "$SMTP_PORT" \
             --arg user "$SMTP_USER" \
             --arg pass "$SMTP_PASSWORD" \
-            --arg from "Freya Media Server <$SMTP_FROM>" \
+            --arg from "${SERVER_NAME:-Media Server} <$SMTP_FROM>" \
             --argjson to "$SMTP_TO_JSON" \
             '{
                 name: "Email",
@@ -669,7 +666,7 @@ else
             --argjson port "$SMTP_PORT" \
             --arg user "$SMTP_USER" \
             --arg pass "$SMTP_PASSWORD" \
-            --arg from "Freya Media Server <$SMTP_FROM>" \
+            --arg from "${SERVER_NAME:-Media Server} <$SMTP_FROM>" \
             --argjson to "$SMTP_TO_JSON" \
             '{
                 name: "Email",
@@ -752,209 +749,7 @@ else
     fi
 fi
 
-# --- Section 9: Trakt integration (interactive) ---
-
-if $DO_TRAKT; then
-    echo ""
-    log_info "=== Trakt Integration ==="
-
-    trakt_device_flow() {
-        local service_name="$1" client_id="$2" base_url="$3" api_key="$4" root_folder="$5"
-
-        echo ""
-        log_info "Starting Trakt device code flow for $service_name..."
-        echo "  Each Trakt user needs to authorize separately."
-        echo ""
-
-        local user_index=0
-        while true; do
-            user_index=$((user_index + 1))
-
-            # Get device code
-            local device_response
-            device_response=$(curl -sf -X POST "https://api.trakt.tv/oauth/device/code" \
-                -H "Content-Type: application/json" \
-                -d "{\"client_id\":\"$client_id\"}")
-
-            if [ -z "$device_response" ]; then
-                log_err "Failed to get Trakt device code"
-                return 1
-            fi
-
-            local user_code device_code interval expires_in
-            user_code=$(echo "$device_response" | jq -r '.user_code')
-            device_code=$(echo "$device_response" | jq -r '.device_code')
-            interval=$(echo "$device_response" | jq -r '.interval')
-            expires_in=$(echo "$device_response" | jq -r '.expires_in')
-
-            echo "  Go to: https://trakt.tv/activate"
-            echo "  Enter code: $user_code"
-            echo "  (expires in $((expires_in / 60)) minutes)"
-            echo ""
-            read -rp "  Press Enter after authorizing on Trakt (or 'skip' to stop adding users): " confirm
-
-            if [ "$confirm" = "skip" ]; then
-                break
-            fi
-
-            # Poll for token
-            local token_response=""
-            local attempts=0 max_attempts=$((expires_in / interval))
-            while [ $attempts -lt $max_attempts ]; do
-                token_response=$(curl -s -X POST "https://api.trakt.tv/oauth/device/token" \
-                    -H "Content-Type: application/json" \
-                    -d "{\"code\":\"$device_code\",\"client_id\":\"$client_id\"}")
-
-                local access_token
-                access_token=$(echo "$token_response" | jq -r '.access_token // empty')
-                if [ -n "$access_token" ]; then
-                    break
-                fi
-                sleep "$interval"
-                attempts=$((attempts + 1))
-            done
-
-            local access_token refresh_token expires_at
-            access_token=$(echo "$token_response" | jq -r '.access_token // empty')
-            refresh_token=$(echo "$token_response" | jq -r '.refresh_token // empty')
-            expires_at=$(echo "$token_response" | jq -r '.created_at + .expires_in // empty')
-
-            if [ -z "$access_token" ]; then
-                log_err "Trakt authorization timed out or failed"
-                continue
-            fi
-
-            # Get Trakt username
-            local trakt_user
-            trakt_user=$(curl -sf -H "Authorization: Bearer $access_token" \
-                -H "trakt-api-key: $client_id" \
-                -H "trakt-api-version: 2" \
-                "https://api.trakt.tv/users/me" | jq -r '.username')
-
-            log_ok "Authorized as Trakt user: $trakt_user"
-
-            # Convert expires_at to ISO 8601
-            local expires_iso
-            expires_iso=$(date -d "@$expires_at" -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo "")
-
-            # Create import list
-            local list_name="Trakt - $trakt_user"
-
-            # Check if list already exists
-            local existing_lists
-            existing_lists=$(curl -sf -H "X-Api-Key: $api_key" "$base_url/api/v3/importlist")
-            local list_exists
-            list_exists=$(echo "$existing_lists" | jq -r ".[] | select(.name == \"$list_name\") | .id")
-
-            if [ -n "$list_exists" ]; then
-                log_ok "Import list '$list_name' already exists in $service_name"
-            else
-                local list_payload
-                if [ "$service_name" = "Sonarr" ]; then
-                    list_payload=$(cat <<TLEOF
-{
-  "enabled": true,
-  "enableAutomaticAdd": true,
-  "searchForMissingEpisodes": true,
-  "shouldMonitor": "all",
-  "monitorNewItems": "all",
-  "rootFolderPath": "$root_folder",
-  "qualityProfileId": 1,
-  "seriesType": "standard",
-  "seasonFolder": true,
-  "name": "$list_name",
-  "implementation": "TraktUserImport",
-  "configContract": "TraktUserSettings",
-  "listType": "trakt",
-  "fields": [
-    {"name": "accessToken", "value": "$access_token"},
-    {"name": "refreshToken", "value": "$refresh_token"},
-    {"name": "expires", "value": "$expires_iso"},
-    {"name": "authUser", "value": "$trakt_user"},
-    {"name": "traktListType", "value": 0},
-    {"name": "username", "value": ""},
-    {"name": "limit", "value": 100}
-  ],
-  "tags": []
-}
-TLEOF
-)
-                else
-                    list_payload=$(cat <<TLEOF
-{
-  "enabled": true,
-  "enableAutomaticAdd": true,
-  "searchOnAdd": true,
-  "monitor": "movieOnly",
-  "rootFolderPath": "$root_folder",
-  "qualityProfileId": 1,
-  "minimumAvailability": "released",
-  "name": "$list_name",
-  "implementation": "TraktUserImport",
-  "configContract": "TraktUserSettings",
-  "listType": "trakt",
-  "fields": [
-    {"name": "accessToken", "value": "$access_token"},
-    {"name": "refreshToken", "value": "$refresh_token"},
-    {"name": "expires", "value": "$expires_iso"},
-    {"name": "authUser", "value": "$trakt_user"},
-    {"name": "traktListType", "value": 0},
-    {"name": "username", "value": ""},
-    {"name": "limit", "value": 100}
-  ],
-  "tags": []
-}
-TLEOF
-)
-                fi
-
-                if $DRY_RUN; then
-                    log_info "[DRY RUN] Would create import list '$list_name' in $service_name"
-                else
-                    parse_response "$(api_call POST "$base_url/api/v3/importlist?forceSave=true" "$api_key" "$list_payload")"
-                    if [ "$RESP_CODE" = "200" ] || [ "$RESP_CODE" = "201" ]; then
-                        log_ok "Created import list '$list_name' in $service_name"
-                    else
-                        log_err "Failed to create import list (HTTP $RESP_CODE): $RESP_BODY"
-                    fi
-                fi
-            fi
-
-            echo ""
-            read -rp "  Add another Trakt user to $service_name? (y/N): " add_more
-            if [ "$add_more" != "y" ] && [ "$add_more" != "Y" ]; then
-                break
-            fi
-        done
-
-        # Set listSyncLevel to keepAndUnmonitor
-        if ! $DRY_RUN; then
-            parse_response "$(api_call PUT "$base_url/api/v3/config/importlist" "$api_key" '{"listSyncLevel":"keepAndUnmonitor","id":1}')"
-            if [ "$RESP_CODE" = "200" ] || [ "$RESP_CODE" = "202" ]; then
-                log_ok "Set $service_name listSyncLevel to keepAndUnmonitor"
-            else
-                log_warn "Could not set listSyncLevel on $service_name (HTTP $RESP_CODE)"
-            fi
-        fi
-    }
-
-    if [ -z "$SONARR_TRAKT_CLIENT_ID" ] || [ -z "$RADARR_TRAKT_CLIENT_ID" ]; then
-        log_err "SONARR_TRAKT_CLIENT_ID and RADARR_TRAKT_CLIENT_ID must be set in .env"
-        exit 1
-    fi
-
-    trakt_device_flow "Sonarr" "$SONARR_TRAKT_CLIENT_ID" "http://sonarr:8989" "$SONARR_KEY" "/data/media/tv"
-    trakt_device_flow "Radarr" "$RADARR_TRAKT_CLIENT_ID" "http://radarr:7878" "$RADARR_KEY" "/data/media/movies"
-
-    # Trigger initial sync
-    if ! $DRY_RUN; then
-        api_call POST "http://sonarr:8989/api/v3/command" "$SONARR_KEY" '{"name":"ImportListSync"}' >/dev/null
-        api_call POST "http://radarr:7878/api/v3/command" "$RADARR_KEY" '{"name":"ImportListSync"}' >/dev/null
-        log_ok "Triggered ImportListSync on Sonarr and Radarr"
-    fi
-fi
-
-# --- Section 10: Summary ---
+# --- Section 9: Summary ---
 
 echo ""
 echo "=== Setup Summary ==="
@@ -970,9 +765,6 @@ echo ""
 echo "Remaining manual steps:"
 echo "  1. Jellyfin: Complete setup wizard at http://jellyfin:8096 (via browser)"
 echo "  2. Seerr: Complete setup wizard at http://seerr:5055"
-if ! $DO_TRAKT; then
-    echo "  3. Trakt: Re-run with --trakt flag to set up watchlist integration"
-fi
 echo ""
 
 exit $ERRORS

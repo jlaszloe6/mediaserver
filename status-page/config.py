@@ -4,7 +4,7 @@ import os
 ALLOWED_EMAILS = [e.strip().lower() for e in os.environ.get("ALLOWED_EMAILS", "").split(",") if e.strip()]
 BASE_URL = os.environ.get("BASE_URL", "http://localhost:8080")
 DB_PATH = os.environ.get("DB_PATH", "/app/data/statuspage.db")
-TRAKT_LOG = os.environ.get("TRAKT_LOG", "/tmp/trakt-sync.log")
+SERVER_NAME = os.environ.get("SERVER_NAME", "Media Server")
 
 # API endpoints (Docker service names for bridge network)
 SONARR_URL = "http://sonarr:8989"

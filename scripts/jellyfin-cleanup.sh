@@ -9,7 +9,7 @@
 # 2. Compares current state with a saved snapshot
 # 3. Items that previously had files but now don't → deleted from Jellyfin
 # 4. Removes those items from Sonarr/Radarr with import exclusion
-#    (prevents Trakt from re-importing them)
+#    (prevents re-importing them)
 #
 # Run via cron every 30 minutes. On first run, only saves state (no deletions).
 

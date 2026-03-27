@@ -73,7 +73,7 @@ send_email() {
         --mail-rcpt "$SMTP_TO" \
         --user "$SMTP_USER:$SMTP_PASS" \
         -T - <<EOF
-From: Freya Media Server <$SMTP_FROM>
+From: ${SERVER_NAME:-Media Server} <$SMTP_FROM>
 To: $SMTP_TO
 Subject: $subject
 Content-Type: text/plain; charset=utf-8
@@ -397,7 +397,7 @@ done <<< "$QUEUE_INSTANCES"
 # Send consolidated email if there were any issues
 if [ -n "$ALERT_MESSAGES" ]; then
     log "Sending alert email..."
-    send_email "[Media Server] Queue issues detected" "The following issues were found in the download queue:
+    send_email "[${SERVER_NAME:-Media Server}] Queue issues detected" "The following issues were found in the download queue:
 
 $ALERT_MESSAGES
 ---

@@ -1,5 +1,7 @@
 # Media Server v2.0
 
+`SERVER_NAME` env var controls the display name used in emails, status page, and notifications (default: "Media Server").
+
 Docker Compose stack running on the server (`$SERVER_IP`). Runtime directory: `/opt/mediaserver` (owned by dedicated `mediaserver` system user). Code repo on development machine, deployed via GitHub Actions self-hosted runner.
 
 ## Stack
@@ -56,23 +58,16 @@ Services: Jellyfin, Transmission, Sonarr, Radarr, Prowlarr, Seerr, Caddy, DuckDN
 - i5-6500T cannot software transcode 4K
 - 4K only works via direct play (client "Original" quality)
 
-## Trakt Integration
-- Hourly force-refresh via `scripts/trakt-sync.sh` (delete+recreate lists to bust 12h cache)
-- `listSyncLevel: keepAndUnmonitor` — remove from Trakt → unmonitor → delete with files
-- `forceSave=true` bypasses validation on list creation (needed for empty watchlists)
-- Reverse-sync (Phase 3): pushes Sonarr/Radarr content to all users' Trakt watchlists
-
 ## Cron Jobs
 | Schedule | Command | Description |
 |----------|---------|-------------|
-| `0 * * * *` | `trakt-sync.sh` | Trakt force-refresh + cleanup + reverse-sync |
 | `*/30 * * * *` | `jellyfin-cleanup.sh` | Detect Jellyfin deletions, remove from Sonarr/Radarr |
 | `*/30 * * * *` | `queue-cleanup.sh` | Auto-fix stuck imports, reject suspicious files |
 | `0 3 * * *` | `jellyfin-watched-cleanup.sh` | Remove media watched 30+ days ago |
 | `30 2 * * *` | `backup.sh` | Config backup to NAS |
 | `0 2 * * 0` | `geodb-update.sh` | Weekly GeoIP DB refresh |
 
-`transmission-cleanup.sh` runs at end of trakt-sync.sh and jellyfin-cleanup.sh (no separate cron entry).
+`transmission-cleanup.sh` runs at end of jellyfin-cleanup.sh (no separate cron entry).
 
 ## Transmission Orphan Cleanup
 - Tracker-aware H&R policy: public → remove immediately, nCore → seed 72h minimum
@@ -83,7 +78,7 @@ Services: Jellyfin, Transmission, Sonarr, Radarr, Prowlarr, Seerr, Caddy, DuckDN
 ## Jellyfin Cleanup Script
 - `jellyfin-cleanup.sh` detects library deletions via state file diff
 - Triggers RescanMovie/RescanSeries, compares hasFile/sizeOnDisk
-- Adds import exclusion on deletion (prevents Trakt re-import)
+- Adds import exclusion on deletion (prevents re-import)
 
 ## Jellyfin Watched Cleanup
 - `jellyfin-watched-cleanup.sh` replaces Prunarr
@@ -97,10 +92,10 @@ Services: Jellyfin, Transmission, Sonarr, Radarr, Prowlarr, Seerr, Caddy, DuckDN
 - Blueprints: `auth_bp`, `dashboard_bp` — all `url_for` calls use blueprint prefix
 - Cloudflare Turnstile captcha on login form
 - Session cookies: Secure, HttpOnly, SameSite=Lax
-- Dashboard: service health, library stats, active downloads, recent activity (local time, readable labels), Trakt sync log
+- Dashboard: service health, library stats, active downloads, recent activity (local time, readable labels)
 - Custom error pages (400, 403, 404, 500) with dark theme
 - Favicon logo on all pages (login, dashboard, errors)
-- All emails use dark theme template with logo, sender name "Freya Media Server"
+- All emails use dark theme template with logo, sender name from `SERVER_NAME` env var
 
 ## Email Notifications
 - Sonarr/Radarr: onImportComplete, onUpgrade, onHealthIssue (onGrab disabled — low value noise)
@@ -142,7 +137,6 @@ Services: Jellyfin, Transmission, Sonarr, Radarr, Prowlarr, Seerr, Caddy, DuckDN
 - Backup includes: all service configs, .env, SSH deploy keys, SQLite snapshots
 - Full recovery procedure: fresh Ubuntu → `server-setup.sh` → clone repo → `restore.sh` → `init-setup.sh` → Jellyfin setup wizard (browser)
 - Jellyfin setup wizard and Seerr configuration require browser interaction (cannot be fully automated)
-- Trakt OAuth requires interactive device-code flow
 
 ## Host Security
 - Only port 443 exposed to internet (via Caddy with GeoIP filter)

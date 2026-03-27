@@ -14,7 +14,7 @@
 # Detection: Cross-references torrent hashes against Sonarr/Radarr download
 # history. Falls back to filesystem hardlink check for old hashes.
 #
-# Called by: trakt-sync.sh, plex-cleanup.sh, or standalone.
+# Called by: jellyfin-cleanup.sh or standalone.
 
 DRY_RUN=false
 for arg in "$@"; do

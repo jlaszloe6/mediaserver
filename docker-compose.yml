@@ -242,10 +242,9 @@ services:
       - SMTP_FROM=${SMTP_FROM}
       - TURNSTILE_SITE_KEY=${TURNSTILE_SITE_KEY}
       - TURNSTILE_SECRET_KEY=${TURNSTILE_SECRET_KEY}
-      - TRAKT_LOG=/logs/trakt-sync.log
+      - SERVER_NAME=${SERVER_NAME:-Media Server}
     volumes:
       - ./config/statuspage:/app/data
-      - cron-logs:/logs:ro
     mem_limit: 256m
     restart: unless-stopped
     healthcheck:
@@ -264,6 +263,7 @@ services:
     environment:
       - TZ=Europe/Budapest
       - STATUSPAGE_DB_PATH=/config/statuspage/statuspage.db
+      - SERVER_NAME=${SERVER_NAME:-Media Server}
     volumes:
       - ./scripts:/scripts:ro
       - ./.env:/config/.env:ro
