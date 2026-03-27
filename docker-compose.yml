@@ -145,7 +145,7 @@ services:
     mem_limit: 512m
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5055/api/v1/status"]
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:5055/api/v1/status || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
