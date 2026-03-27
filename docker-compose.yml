@@ -144,6 +144,11 @@ services:
       - ./config/overseerr:/app/config
     mem_limit: 512m
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5055/api/v1/status"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
 
   caddy:
@@ -168,6 +173,11 @@ services:
       - ./config/caddy/config:/config
     mem_limit: 512m
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:2019/config/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
 
   duckdns:

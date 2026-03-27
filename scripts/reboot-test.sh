@@ -180,8 +180,8 @@ check_sqlite "Radarr"   "radarr"   "/config/radarr.db"
 check_sqlite "Prowlarr" "prowlarr" "/config/prowlarr.db"
 
 # Jellyfin SQLite — check from host
-if [ -f "$PROJECT_DIR/config/jellyfin/data/jellyfin.db" ]; then
-    if sqlite3 "$PROJECT_DIR/config/jellyfin/data/jellyfin.db" "SELECT 1;" >/dev/null 2>&1; then
+if [ -f "$PROJECT_DIR/config/jellyfin/data/data/jellyfin.db" ]; then
+    if sqlite3 "$PROJECT_DIR/config/jellyfin/data/data/jellyfin.db" "SELECT 1;" >/dev/null 2>&1; then
         pass "Jellyfin"
     else
         fail "Jellyfin (database corrupt)"

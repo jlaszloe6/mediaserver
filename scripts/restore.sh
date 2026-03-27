@@ -212,7 +212,7 @@ restore_db() {
 restore_db "sonarr.db.backup"       "sonarr/sonarr.db"           "sonarr"
 restore_db "radarr.db.backup"       "radarr/radarr.db"           "radarr"
 restore_db "prowlarr.db.backup"     "prowlarr/prowlarr.db"       "prowlarr"
-restore_db "jellyfin.db.backup"     "jellyfin/data/jellyfin.db"  "jellyfin"
+restore_db "jellyfin.db.backup"     "jellyfin/data/data/jellyfin.db"  "jellyfin"
 restore_db "statuspage.db.backup"   "statuspage/statuspage.db"   "statuspage"
 
 # --- Restore SSH deploy keys ---

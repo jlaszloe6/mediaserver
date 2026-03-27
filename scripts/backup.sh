@@ -120,7 +120,7 @@ for entry in $SQLITE_SERVICES; do
 done
 
 # Jellyfin — DB is at a different path inside linuxserver image
-JELLYFIN_DB="/config/all-configs/jellyfin/data/jellyfin.db"
+JELLYFIN_DB="/config/all-configs/jellyfin/data/data/jellyfin.db"
 if [ -f "$JELLYFIN_DB" ]; then
     if sqlite3 "$JELLYFIN_DB" ".backup '$STAGING/jellyfin.db.backup'" 2>/dev/null; then
         log "  jellyfin: sqlite3 .backup OK"
