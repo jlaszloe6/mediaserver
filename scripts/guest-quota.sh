@@ -21,7 +21,7 @@ set +a
 
 MEDIA_ROOT="${MEDIA_ROOT:-/mnt/mediaserver}"
 GUEST_QUOTA_GB="${GUEST_QUOTA_GB:-100}"
-TRANSMISSION_URL="http://localhost:9091/transmission/rpc"
+TRANSMISSION_URL="http://transmission:9091/transmission/rpc"
 GUEST_CATEGORIES="guest-sonarr|guest-radarr"
 
 log() {

@@ -27,13 +27,13 @@
 	respond @blocked 403
 }
 
-{$CADDY_DOMAIN_PLEX} {
+{$CADDY_DOMAIN_JELLYFIN} {
 	tls {
 		dns duckdns {env.DUCKDNS_TOKEN}
 	}
 	import security_headers
 	import geoip_hungary
-	reverse_proxy localhost:32400 {
+	reverse_proxy jellyfin:8096 {
 		header_up X-Real-IP {remote_host}
 	}
 }
@@ -44,7 +44,7 @@
 	}
 	import security_headers
 	import geoip_hungary
-	reverse_proxy localhost:5055 {
+	reverse_proxy seerr:5055 {
 		header_up X-Real-IP {remote_host}
 	}
 }
@@ -55,7 +55,7 @@
 	}
 	import security_headers
 	import geoip_hungary
-	reverse_proxy localhost:8080 {
+	reverse_proxy statuspage:8080 {
 		header_up X-Real-IP {remote_host}
 	}
 }

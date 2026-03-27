@@ -14,8 +14,7 @@
 #
 # Phase 4: Clean up orphaned Transmission torrents.
 #
-# Runs for both owner and guest instances (if guest API keys are set).
-# Run hourly via cron. The cleanup catches items unmonitored in the previous run.
+# Run hourly via cron.
 
 DRY_RUN=false
 for arg in "$@"; do
@@ -39,8 +38,9 @@ set +a
 
 SONARR_KEY="$SONARR_API_KEY"
 RADARR_KEY="$RADARR_API_KEY"
-SONARR_GUEST_KEY="${SONARR_GUEST_API_KEY:-}"
-RADARR_GUEST_KEY="${RADARR_GUEST_API_KEY:-}"
+
+SONARR_URL="http://sonarr:8989"
+RADARR_URL="http://radarr:7878"
 
 ERRORS=0
 
@@ -50,14 +50,6 @@ log() {
 
 BACKUP_DIR="/var/tmp/mediaserver-trakt-backup"
 mkdir -p "$BACKUP_DIR"
-
-# --- Build instance list ---
-# Format: "label|sonarr_url|sonarr_key|radarr_url|radarr_key"
-INSTANCES="owner|http://localhost:8989|$SONARR_KEY|http://localhost:7878|$RADARR_KEY"
-if [ -n "$SONARR_GUEST_KEY" ] && [ -n "$RADARR_GUEST_KEY" ]; then
-    INSTANCES="$INSTANCES
-guest|http://localhost:8990|$SONARR_GUEST_KEY|http://localhost:7879|$RADARR_GUEST_KEY"
-fi
 
 cycle_trakt_lists() {
     local service_name="$1"
@@ -236,23 +228,17 @@ cleanup_unmonitored() {
 }
 
 sync_to_trakt() {
-    local instance_label="$1"
-    local sonarr_url="$2"
-    local sonarr_key="$3"
-    local radarr_url="$4"
-    local radarr_key="$5"
-
-    log "=== Reverse-sync to Trakt watchlists ($instance_label) ==="
+    log "=== Reverse-sync to Trakt watchlists ==="
 
     if [ -z "${SONARR_TRAKT_CLIENT_ID:-}" ]; then
         log "WARN: SONARR_TRAKT_CLIENT_ID not set in .env, skipping reverse-sync"
         return 0
     fi
 
-    # Extract per-user tokens from this instance's Sonarr Trakt import lists
+    # Extract per-user tokens from Sonarr Trakt import lists
     local lists
-    lists=$(curl -sf -H "X-Api-Key: $sonarr_key" "$sonarr_url/api/v3/importlist") || {
-        log "ERROR: Failed to fetch import lists from Sonarr ($instance_label) for token extraction"
+    lists=$(curl -sf -H "X-Api-Key: $SONARR_KEY" "$SONARR_URL/api/v3/importlist") || {
+        log "ERROR: Failed to fetch import lists from Sonarr for token extraction"
         ERRORS=$((ERRORS + 1))
         return 1
     }
@@ -271,11 +257,11 @@ sync_to_trakt() {
         return 0
     fi
 
-    # Fetch all monitored movies from this instance's Radarr
+    # Fetch all monitored movies
     local movies_payload=""
     local movies
-    movies=$(curl -sf -H "X-Api-Key: $radarr_key" "$radarr_url/api/v3/movie") || {
-        log "ERROR: Failed to fetch movies from Radarr ($instance_label)"
+    movies=$(curl -sf -H "X-Api-Key: $RADARR_KEY" "$RADARR_URL/api/v3/movie") || {
+        log "ERROR: Failed to fetch movies from Radarr"
         ERRORS=$((ERRORS + 1))
         movies="[]"
     }
@@ -288,13 +274,13 @@ sync_to_trakt() {
 
     local movie_count
     movie_count=$(echo "$movies_payload" | jq 'length')
-    log "  Found $movie_count monitored movies in Radarr ($instance_label)"
+    log "  Found $movie_count monitored movies in Radarr"
 
-    # Fetch all monitored series from this instance's Sonarr
+    # Fetch all monitored series
     local shows_payload=""
     local series
-    series=$(curl -sf -H "X-Api-Key: $sonarr_key" "$sonarr_url/api/v3/series") || {
-        log "ERROR: Failed to fetch series from Sonarr ($instance_label)"
+    series=$(curl -sf -H "X-Api-Key: $SONARR_KEY" "$SONARR_URL/api/v3/series") || {
+        log "ERROR: Failed to fetch series from Sonarr"
         ERRORS=$((ERRORS + 1))
         series="[]"
     }
@@ -307,7 +293,7 @@ sync_to_trakt() {
 
     local show_count
     show_count=$(echo "$shows_payload" | jq 'length')
-    log "  Found $show_count monitored series in Sonarr ($instance_label)"
+    log "  Found $show_count monitored series in Sonarr"
 
     # Sync to each user's Trakt watchlist
     while IFS= read -r entry; do
@@ -349,31 +335,24 @@ sync_to_trakt() {
     done <<< "$user_tokens"
 }
 
-# --- Run all phases for each instance ---
+# --- Run all phases ---
 
-while IFS= read -r instance; do
-    [ -z "$instance" ] && continue
-    IFS='|' read -r label sonarr_url sonarr_key radarr_url radarr_key <<< "$instance"
+log "=== Trakt import list force-refresh ==="
 
-    log "=== Trakt import list force-refresh ($label) ==="
+cycle_trakt_lists "Sonarr" "$SONARR_URL" "$SONARR_KEY" "owner-sonarr"
+cycle_trakt_lists "Radarr" "$RADARR_URL" "$RADARR_KEY" "owner-radarr"
 
-    cycle_trakt_lists "Sonarr ($label)" "$sonarr_url" "$sonarr_key" "${label}-sonarr"
-    cycle_trakt_lists "Radarr ($label)" "$radarr_url" "$radarr_key" "${label}-radarr"
+trigger_sync "Sonarr" "$SONARR_URL" "$SONARR_KEY"
+trigger_sync "Radarr" "$RADARR_URL" "$RADARR_KEY"
 
-    trigger_sync "Sonarr ($label)" "$sonarr_url" "$sonarr_key"
-    trigger_sync "Radarr ($label)" "$radarr_url" "$radarr_key"
+log "=== Cleanup unmonitored items ==="
 
-    log "=== Cleanup unmonitored items ($label) ==="
+cleanup_unmonitored "Sonarr" "$SONARR_URL" "$SONARR_KEY" "series" "addImportListExclusion"
+cleanup_unmonitored "Radarr" "$RADARR_URL" "$RADARR_KEY" "movie" "addImportExclusion"
 
-    cleanup_unmonitored "Sonarr ($label)" "$sonarr_url" "$sonarr_key" "series" "addImportListExclusion"
-    cleanup_unmonitored "Radarr ($label)" "$radarr_url" "$radarr_key" "movie" "addImportExclusion"
-
-    sync_to_trakt "$label" "$sonarr_url" "$sonarr_key" "$radarr_url" "$radarr_key"
-done <<< "$INSTANCES"
+sync_to_trakt
 
 # --- Phase 4: Clean up orphaned Transmission torrents ---
-# After deleting items from Sonarr/Radarr, their files are gone but torrents linger.
-# Remove torrents whose files no longer exist and seeding obligation is met.
 
 log "=== Transmission orphan cleanup ==="
 CLEANUP_ARGS=""
@@ -384,12 +363,10 @@ $DRY_RUN && CLEANUP_ARGS="--dry-run"
 }
 
 # --- Guest quota check ---
-if [ -n "$SONARR_GUEST_KEY" ] && [ -n "$RADARR_GUEST_KEY" ]; then
-    log "=== Guest quota check ==="
-    "$SCRIPT_DIR/guest-quota.sh" 2>&1 | while IFS= read -r line; do log "$line"; done || {
-        log "WARN: guest-quota.sh had errors"
-    }
-fi
+log "=== Guest quota check ==="
+"$SCRIPT_DIR/guest-quota.sh" 2>&1 | while IFS= read -r line; do log "$line"; done || {
+    log "WARN: guest-quota.sh had errors"
+}
 
 if [ "$ERRORS" -gt 0 ]; then
     log "=== Done with $ERRORS error(s) ==="

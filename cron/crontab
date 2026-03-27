@@ -1,8 +1,8 @@
 # Trakt watchlist sync - hourly
 0 * * * * /scripts/trakt-sync.sh >> /var/log/cron/trakt-sync.log 2>&1
 
-# Plex deletion cleanup - every 30 min
-*/30 * * * * /scripts/plex-cleanup.sh >> /var/log/cron/plex-cleanup.log 2>&1
+# Jellyfin deletion cleanup - every 30 min
+*/30 * * * * /scripts/jellyfin-cleanup.sh >> /var/log/cron/jellyfin-cleanup.log 2>&1
 
 # Queue cleanup - every 30 min
 */30 * * * * /scripts/queue-cleanup.sh >> /var/log/cron/queue-cleanup.log 2>&1
@@ -13,16 +13,11 @@
 # Guest content notifications - every 15 min
 */15 * * * * /scripts/guest-notify.sh >> /var/log/cron/guest-notify.log 2>&1
 
-# Prunarr - clean up watched media (daily 3am)
-0 3 * * * docker exec prunarr prunarr movies remove --watched --days-watched 30 --force >> /var/log/cron/prunarr-movies.log 2>&1
-15 3 * * * docker exec prunarr prunarr series remove --watched --days-watched 30 --force >> /var/log/cron/prunarr-series.log 2>&1
+# Jellyfin watched cleanup - remove media watched 30+ days ago (daily 3am)
+0 3 * * * /scripts/jellyfin-watched-cleanup.sh >> /var/log/cron/jellyfin-watched-cleanup.log 2>&1
 
-# GeoIP database update (weekly Sunday 2am) + reload Caddy
-0 2 * * 0 docker exec caddy /usr/local/bin/download-geodb.sh >> /var/log/cron/geodb-update.log 2>&1 && docker exec caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile >> /var/log/cron/geodb-update.log 2>&1
+# GeoIP database update (weekly Sunday 2am)
+0 2 * * 0 /scripts/geodb-update.sh >> /var/log/cron/geodb-update.log 2>&1
 
 # Config backup to NAS (daily 2:30am)
 30 2 * * * /scripts/backup.sh >> /var/log/cron/backup.log 2>&1
-
-# Prunarr guest (daily 4am)
-0 4 * * * docker exec prunarr-guest prunarr movies remove --watched --days-watched 30 --force >> /var/log/cron/prunarr-guest-movies.log 2>&1
-15 4 * * * docker exec prunarr-guest prunarr series remove --watched --days-watched 30 --force >> /var/log/cron/prunarr-guest-series.log 2>&1

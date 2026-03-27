@@ -2,7 +2,7 @@ import smtplib
 from email.mime.text import MIMEText
 
 from config import (
-    BASE_URL, GUEST_QUOTA_GB, PLEX_EXTERNAL_URL, SMTP_FROM, SMTP_PASSWORD,
+    BASE_URL, GUEST_QUOTA_GB, JELLYFIN_EXTERNAL_URL, SMTP_FROM, SMTP_PASSWORD,
     SMTP_PORT, SMTP_SERVER, SMTP_USER,
 )
 
@@ -67,36 +67,28 @@ def send_magic_link(email, token):
 
 
 def send_user_guide(email):
+    jellyfin_url = JELLYFIN_EXTERNAL_URL or "your Jellyfin server URL"
     body = f"""\
 {_heading('Adding Movies &amp; TV Shows')}
 <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:16px;">
 <tr><td style="padding:10px 12px;border:1px solid #1a3a5c;background:#1a1a2e;border-radius:6px 6px 0 0;"><strong style="color:#e94560;">Trakt Watchlist</strong> (recommended)</td></tr>
 <tr><td style="padding:10px 12px;border:1px solid #1a3a5c;border-top:0;">Go to <a href="https://trakt.tv" style="color:#8ab4f8;">trakt.tv</a> &rarr; search &rarr; click bookmark icon. Picked up within 1 hour.</td></tr>
 <tr><td style="padding:10px 12px;border:1px solid #1a3a5c;border-top:0;background:#1a1a2e;"><strong style="color:#e94560;">Seerr</strong></td></tr>
-<tr><td style="padding:10px 12px;border:1px solid #1a3a5c;border-top:0;">Browse and request via the Seerr app. Sign in with your Plex account.</td></tr>
+<tr><td style="padding:10px 12px;border:1px solid #1a3a5c;border-top:0;">Browse and request via the Seerr app. Sign in with your Jellyfin account.</td></tr>
 </table>
 
 {_heading('Removing Content')}
 <ul style="line-height:1.8;padding-left:20px;color:#e0e0e0;">
 <li><strong>Remove from Trakt</strong> &mdash; remove from watchlist &rarr; auto-deleted within ~2 hours</li>
-<li><strong>Delete from Plex</strong> &mdash; three dots (&hellip;) &rarr; Delete. Cleaned up within 30 minutes.</li>
+<li><strong>Delete from Jellyfin</strong> &mdash; select the item &rarr; Delete. Cleaned up within 30 minutes.</li>
 </ul>
 
 {_heading('Watching')}
 <ul style="line-height:1.8;padding-left:20px;color:#e0e0e0;">
-<li><strong>Web browser</strong> (laptop/desktop/mobile) &mdash; Go to <strong>{PLEX_EXTERNAL_URL}</strong>. No VPN needed.</li>
-<li><strong>Plex app</strong> (phone app, Android TV) &mdash; Requires <strong>VPN</strong> &mdash; see below.</li>
-<li><strong>Quality</strong> &mdash; Set the Plex player to <strong>Original</strong> quality for best results.</li>
-<li><strong>Subtitles</strong> &mdash; Most downloads include English subtitles. Toggle them in the Plex player.</li>
-</ul>
-
-{_heading('VPN (Plex App Only)')}
-<ul style="line-height:1.8;padding-left:20px;color:#e0e0e0;">
-<li>VPN is <strong>only needed for the Plex app</strong> on phones and Android TV.</li>
-<li>If you watch via <strong>web browser</strong>, you do <strong>not</strong> need VPN.</li>
-<li>Install <strong>WireGuard</strong> on your device and import the .conf file you received during onboarding.</li>
-<li>Toggle the VPN on before opening the Plex app when you're away from home.</li>
-<li>On the home network, VPN is not needed.</li>
+<li><strong>Web browser</strong> (laptop/desktop/mobile) &mdash; Go to <strong>{jellyfin_url}</strong>.</li>
+<li><strong>Jellyfin app</strong> (phone, Android TV, etc.) &mdash; Add the server URL <strong>{jellyfin_url}</strong> and sign in.</li>
+<li><strong>Quality</strong> &mdash; For best results, use a client that supports direct play.</li>
+<li><strong>Subtitles</strong> &mdash; Most downloads include English subtitles. Toggle them in the Jellyfin player.</li>
 </ul>
 
 {_heading('Status Page')}
@@ -117,17 +109,15 @@ def send_user_guide(email):
 
 def send_guest_welcome(email, name, onboard_token):
     setup_url = f"{BASE_URL}/onboard/{onboard_token}"
+    jellyfin_url = JELLYFIN_EXTERNAL_URL or "your Jellyfin server URL"
     body = f"""\
 <p style="font-size:17px;color:#fff;margin-bottom:16px;">Welcome, {name}!</p>
 
 {_heading('1. Watch via Browser (easiest)')}
-<p>Open <a href="https://{PLEX_EXTERNAL_URL}" style="color:#8ab4f8;">{PLEX_EXTERNAL_URL}</a> in any browser (laptop, desktop, or phone). Sign in with your Plex account. <strong>No VPN needed.</strong></p>
+<p>Open <a href="https://{jellyfin_url}" style="color:#8ab4f8;">{jellyfin_url}</a> in any browser (laptop, desktop, or phone). Sign in with your Jellyfin account.</p>
 
-{_heading('2. Plex App (phone/TV) &mdash; VPN required')}
-<p>If you prefer the <strong>Plex app</strong> on your phone or Android TV, you need a VPN connection first. Visit your setup page to download the VPN config:</p>
-<p style="text-align:center;margin:16px 0;">{_button(setup_url, 'Open Setup Page')}</p>
-<p style="color:#5a6a8a;font-size:13px;">Bookmark this link &mdash; you can always come back to download your VPN config.</p>
-<p>Install <strong>WireGuard</strong>, import the config, enable the VPN, then open the Plex app. You'll see <strong>Guest TV</strong> and <strong>Guest Movies</strong>.</p>
+{_heading('2. Jellyfin App (phone/TV)')}
+<p>Download the <strong>Jellyfin</strong> app on your phone or Android TV. Add the server URL <strong>{jellyfin_url}</strong> and sign in with your Jellyfin account. You'll see <strong>Guest TV</strong> and <strong>Guest Movies</strong>.</p>
 
 {_heading('3. Add Content via Trakt')}
 <p>Your Trakt watchlist is connected. To add movies or TV shows:</p>
@@ -135,7 +125,7 @@ def send_guest_welcome(email, name, onboard_token):
 <li>Go to <a href="https://trakt.tv" style="color:#8ab4f8;">trakt.tv</a></li>
 <li>Search for what you want to watch</li>
 <li>Click the bookmark icon to add to your watchlist</li>
-<li>It will appear in Plex within 1&ndash;2 hours</li>
+<li>It will appear in Jellyfin within 1&ndash;2 hours</li>
 </ol>
 
 {_heading('Good to Know')}
@@ -145,5 +135,7 @@ def send_guest_welcome(email, name, onboard_token):
 <li>Want to rewatch something? Just add it to your Trakt watchlist again.</li>
 <li>New releases download once a digital version is available (not while in theaters).</li>
 <li>TV series: all existing episodes download, and new ones arrive as they air.</li>
-</ul>"""
+</ul>
+
+<p style="text-align:center;margin:16px 0;">{_button(setup_url, 'View Setup Page')}</p>"""
     send_styled_email(email, "Welcome to the Media Server!", body)

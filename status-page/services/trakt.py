@@ -1,6 +1,6 @@
 import requests
 
-from config import RADARR_GUEST_KEY, RADARR_GUEST_URL, SONARR_GUEST_KEY, SONARR_GUEST_URL
+from config import RADARR_KEY, RADARR_URL, SONARR_KEY, SONARR_URL
 
 
 def create_sonarr_import_list(trakt_username, access_token, refresh_token, expires_iso):
@@ -21,8 +21,8 @@ def create_sonarr_import_list(trakt_username, access_token, refresh_token, expir
         ], "tags": [],
     }
     r = requests.post(
-        f"{SONARR_GUEST_URL}/api/v3/importlist?forceSave=true",
-        headers={"X-Api-Key": SONARR_GUEST_KEY, "Content-Type": "application/json"},
+        f"{SONARR_URL}/api/v3/importlist?forceSave=true",
+        headers={"X-Api-Key": SONARR_KEY, "Content-Type": "application/json"},
         json=payload, timeout=10,
     )
     if r.status_code not in (200, 201):
@@ -46,8 +46,8 @@ def create_radarr_import_list(trakt_username, access_token, refresh_token, expir
         ], "tags": [],
     }
     r = requests.post(
-        f"{RADARR_GUEST_URL}/api/v3/importlist?forceSave=true",
-        headers={"X-Api-Key": RADARR_GUEST_KEY, "Content-Type": "application/json"},
+        f"{RADARR_URL}/api/v3/importlist?forceSave=true",
+        headers={"X-Api-Key": RADARR_KEY, "Content-Type": "application/json"},
         json=payload, timeout=10,
     )
     if r.status_code not in (200, 201):

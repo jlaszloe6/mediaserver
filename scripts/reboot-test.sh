@@ -4,7 +4,7 @@
 # Checks that all services came back up correctly:
 # - NFS mount is accessible
 # - All containers are running
-# - Each service responds to health checks
+# - Each service responds to health checks (via Docker healthcheck status)
 # - SQLite databases are accessible
 # - Cron is scheduling jobs
 #
@@ -97,12 +97,7 @@ echo ""
 # --- 3. Container status ---
 
 echo "[Containers]"
-EXPECTED_CONTAINERS="plex transmission sonarr radarr prowlarr flaresolverr tautulli seerr caddy duckdns dnsmasq uptime-kuma statuspage wg-easy prunarr cron prunarr-guest"
-
-# Add guest containers if configured
-if [ -n "${SONARR_GUEST_API_KEY:-}" ]; then
-    EXPECTED_CONTAINERS="$EXPECTED_CONTAINERS sonarr-guest radarr-guest"
-fi
+EXPECTED_CONTAINERS="jellyfin transmission sonarr radarr prowlarr seerr caddy duckdns dnsmasq statuspage cron"
 
 for container in $EXPECTED_CONTAINERS; do
     status=$(docker inspect --format='{{.State.Status}}' "$container" 2>/dev/null || echo "not found")
@@ -114,34 +109,40 @@ for container in $EXPECTED_CONTAINERS; do
 done
 echo ""
 
-# --- 4. Service health endpoints ---
+# --- 4. Service health checks (via Docker healthcheck status) ---
 
 echo "[Service Health]"
 
-check_http() {
+check_docker_health() {
     local name="$1"
-    local url="$2"
-    if curl -sf --max-time 5 "$url" >/dev/null 2>&1; then
-        pass "$name ($url)"
+    local container="$2"
+    local health
+    health=$(docker inspect --format='{{.State.Health.Status}}' "$container" 2>/dev/null || echo "no healthcheck")
+    if [ "$health" = "healthy" ]; then
+        pass "$name ($container)"
+    elif [ "$health" = "no healthcheck" ]; then
+        # Container has no healthcheck defined — check if running
+        local status
+        status=$(docker inspect --format='{{.State.Status}}' "$container" 2>/dev/null || echo "not found")
+        if [ "$status" = "running" ]; then
+            warn_check "$name ($container) — running but no healthcheck defined"
+        else
+            fail "$name ($container) — $status"
+        fi
     else
-        fail "$name ($url)"
+        fail "$name ($container) — $health"
     fi
 }
 
-check_http "Plex"         "http://localhost:32400/identity"
-check_http "Sonarr"       "http://localhost:8989/ping"
-check_http "Radarr"       "http://localhost:7878/ping"
-check_http "Prowlarr"     "http://localhost:9696/ping"
-check_http "Transmission" "http://localhost:9091/transmission/web/"
-check_http "Tautulli"     "http://localhost:8181/status"
-check_http "Seerr"        "http://localhost:5055/api/v1/status"
-check_http "Uptime Kuma"  "http://localhost:3001/api/entry-page"
-check_http "Status Page"  "http://localhost:8080/login"
+check_docker_health "Jellyfin"     "jellyfin"
+check_docker_health "Sonarr"       "sonarr"
+check_docker_health "Radarr"       "radarr"
+check_docker_health "Prowlarr"     "prowlarr"
+check_docker_health "Transmission" "transmission"
+check_docker_health "Seerr"        "seerr"
+check_docker_health "Caddy"        "caddy"
 
-if [ -n "${SONARR_GUEST_API_KEY:-}" ]; then
-    check_http "Sonarr-Guest" "http://localhost:8990/ping"
-    check_http "Radarr-Guest" "http://localhost:7879/ping"
-fi
+check_docker_health "Status Page" "statuspage"
 echo ""
 
 # --- 5. DNS ---
@@ -174,14 +175,19 @@ check_sqlite() {
     fi
 }
 
-check_sqlite "Sonarr"       "sonarr"       "/config/sonarr.db"
-check_sqlite "Radarr"       "radarr"       "/config/radarr.db"
-check_sqlite "Prowlarr"     "prowlarr"     "/config/prowlarr.db"
-check_sqlite "Tautulli"     "tautulli"     "/config/tautulli.db"
+check_sqlite "Sonarr"   "sonarr"   "/config/sonarr.db"
+check_sqlite "Radarr"   "radarr"   "/config/radarr.db"
+check_sqlite "Prowlarr" "prowlarr" "/config/prowlarr.db"
 
-if [ -n "${SONARR_GUEST_API_KEY:-}" ]; then
-    check_sqlite "Sonarr-Guest" "sonarr-guest" "/config/sonarr.db"
-    check_sqlite "Radarr-Guest" "radarr-guest" "/config/radarr.db"
+# Jellyfin SQLite — check from host
+if [ -f "$PROJECT_DIR/config/jellyfin/data/jellyfin.db" ]; then
+    if sqlite3 "$PROJECT_DIR/config/jellyfin/data/jellyfin.db" "SELECT 1;" >/dev/null 2>&1; then
+        pass "Jellyfin"
+    else
+        fail "Jellyfin (database corrupt)"
+    fi
+else
+    fail "Jellyfin (database missing)"
 fi
 
 # Statuspage — check from host
@@ -214,8 +220,8 @@ echo ""
 # --- 8. Caddy TLS ---
 
 echo "[Caddy TLS]"
-if [ -n "${CADDY_DOMAIN_PLEX:-}" ]; then
-    cert_check=$(echo | openssl s_client -connect "$SERVER_IP:443" -servername "$CADDY_DOMAIN_PLEX" 2>/dev/null | openssl x509 -noout -dates 2>/dev/null || echo "")
+if [ -n "${CADDY_DOMAIN_JELLYFIN:-}" ]; then
+    cert_check=$(echo | openssl s_client -connect "$SERVER_IP:443" -servername "$CADDY_DOMAIN_JELLYFIN" 2>/dev/null | openssl x509 -noout -dates 2>/dev/null || echo "")
     if [ -n "$cert_check" ]; then
         expiry=$(echo "$cert_check" | grep notAfter | cut -d= -f2)
         pass "TLS cert valid (expires: $expiry)"
@@ -223,7 +229,7 @@ if [ -n "${CADDY_DOMAIN_PLEX:-}" ]; then
         warn_check "Could not verify TLS cert (Caddy may still be obtaining it)"
     fi
 else
-    warn_check "CADDY_DOMAIN_PLEX not set, skipping TLS check"
+    warn_check "CADDY_DOMAIN_JELLYFIN not set, skipping TLS check"
 fi
 echo ""
 

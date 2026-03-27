@@ -37,15 +37,9 @@ set +a
 
 SONARR_KEY="$SONARR_API_KEY"
 RADARR_KEY="$RADARR_API_KEY"
-SONARR_GUEST_KEY="${SONARR_GUEST_API_KEY:-}"
-RADARR_GUEST_KEY="${RADARR_GUEST_API_KEY:-}"
 
 # Instance list: "label|sonarr_url|sonarr_key|radarr_url|radarr_key"
-QUEUE_INSTANCES="owner|http://localhost:8989|$SONARR_KEY|http://localhost:7878|$RADARR_KEY"
-if [ -n "$SONARR_GUEST_KEY" ] && [ -n "$RADARR_GUEST_KEY" ]; then
-    QUEUE_INSTANCES="$QUEUE_INSTANCES
-guest|http://localhost:8990|$SONARR_GUEST_KEY|http://localhost:7879|$RADARR_GUEST_KEY"
-fi
+QUEUE_INSTANCES="owner|http://sonarr:8989|$SONARR_KEY|http://radarr:7878|$RADARR_KEY"
 
 SUSPICIOUS_EXTENSIONS="exe|msi|bat|scr|cmd|ps1|vbs|com|pif"
 

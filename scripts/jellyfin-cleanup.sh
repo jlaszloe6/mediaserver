@@ -1,17 +1,16 @@
 #!/bin/bash
-# plex-cleanup.sh - Detect items deleted from Plex and remove from Sonarr/Radarr
+# jellyfin-cleanup.sh - Detect items deleted from Jellyfin and remove from Sonarr/Radarr
 #
-# When a user deletes a movie/show from Plex UI, the file is removed from disk.
+# When a user deletes a movie/show from Jellyfin, the file is removed from disk.
 # Sonarr/Radarr don't know about it and may try to re-download.
 #
 # This script:
 # 1. Triggers a disk rescan in Sonarr/Radarr (updates hasFile status)
 # 2. Compares current state with a saved snapshot
-# 3. Items that previously had files but now don't → deleted from Plex
+# 3. Items that previously had files but now don't → deleted from Jellyfin
 # 4. Removes those items from Sonarr/Radarr with import exclusion
 #    (prevents Trakt from re-importing them)
 #
-# Runs for both owner and guest instances (if guest API keys are set).
 # Run via cron every 30 minutes. On first run, only saves state (no deletions).
 
 DRY_RUN=false
@@ -36,8 +35,8 @@ set +a
 
 SONARR_KEY="$SONARR_API_KEY"
 RADARR_KEY="$RADARR_API_KEY"
-SONARR_GUEST_KEY="${SONARR_GUEST_API_KEY:-}"
-RADARR_GUEST_KEY="${RADARR_GUEST_API_KEY:-}"
+SONARR_URL="http://sonarr:8989"
+RADARR_URL="http://radarr:7878"
 
 STATE_DIR="/var/tmp/mediaserver-cleanup"
 mkdir -p "$STATE_DIR"
@@ -47,13 +46,6 @@ ERRORS=0
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >&2
 }
-
-# --- Build instance list ---
-INSTANCES="owner|http://localhost:8989|$SONARR_KEY|http://localhost:7878|$RADARR_KEY"
-if [ -n "$SONARR_GUEST_KEY" ] && [ -n "$RADARR_GUEST_KEY" ]; then
-    INSTANCES="$INSTANCES
-guest|http://localhost:8990|$SONARR_GUEST_KEY|http://localhost:7879|$RADARR_GUEST_KEY"
-fi
 
 # Trigger a disk rescan and wait for completion (up to 2 minutes)
 trigger_rescan() {
@@ -104,7 +96,7 @@ trigger_rescan() {
 process_movies() {
     local base_url="$1"
     local api_key="$2"
-    local prev_state="$3"  # JSON object: {"<id>": true/false, ...}
+    local prev_state="$3"
 
     local movies
     movies=$(curl -sf -H "X-Api-Key: $api_key" "$base_url/api/v3/movie") || {
@@ -114,11 +106,9 @@ process_movies() {
         return
     }
 
-    # Build current state
     local current_state
     current_state=$(echo "$movies" | jq '[.[] | {key: (.id | tostring), value: .hasFile}] | from_entries')
 
-    # Find movies where hasFile went true → false (deleted from Plex)
     local deleted
     deleted=$(echo "$movies" | jq -c --argjson prev "$prev_state" '
         .[] | select(
@@ -147,19 +137,18 @@ process_movies() {
                 "$base_url/api/v3/movie/$id?deleteFiles=true&addImportExclusion=true")
 
             if [ "$del_code" = "200" ]; then
-                log "  Removed movie '$title' (deleted from Plex, excluded from re-import)"
+                log "  Removed movie '$title' (deleted from library, excluded from re-import)"
                 count=$((count + 1))
             else
                 log "  ERROR: Failed to remove movie '$title' (HTTP $del_code)"
                 ERRORS=$((ERRORS + 1))
             fi
         done <<< "$deleted"
-        log "  Cleaned up $count movie(s) deleted from Plex"
+        log "  Cleaned up $count movie(s) deleted from library"
     else
-        log "  No movies deleted from Plex since last check"
+        log "  No movies deleted since last check"
     fi
 
-    # Return current state (excluding items we just deleted)
     echo "$movies" | jq '[.[] | {key: (.id | tostring), value: .hasFile}] | from_entries'
 }
 
@@ -167,7 +156,7 @@ process_movies() {
 process_series() {
     local base_url="$1"
     local api_key="$2"
-    local prev_state="$3"  # JSON object: {"<id>": <sizeOnDisk>, ...}
+    local prev_state="$3"
 
     local series
     series=$(curl -sf -H "X-Api-Key: $api_key" "$base_url/api/v3/series") || {
@@ -177,11 +166,9 @@ process_series() {
         return
     }
 
-    # Build current state using sizeOnDisk from statistics
     local current_state
     current_state=$(echo "$series" | jq '[.[] | {key: (.id | tostring), value: (.statistics.sizeOnDisk // 0)}] | from_entries')
 
-    # Find series where sizeOnDisk went from >0 to 0 (all files deleted from Plex)
     local deleted
     deleted=$(echo "$series" | jq -c --argjson prev "$prev_state" '
         .[] | select(
@@ -210,63 +197,53 @@ process_series() {
                 "$base_url/api/v3/series/$id?deleteFiles=true&addImportListExclusion=true")
 
             if [ "$del_code" = "200" ]; then
-                log "  Removed series '$title' (deleted from Plex, excluded from re-import)"
+                log "  Removed series '$title' (deleted from library, excluded from re-import)"
                 count=$((count + 1))
             else
                 log "  ERROR: Failed to remove series '$title' (HTTP $del_code)"
                 ERRORS=$((ERRORS + 1))
             fi
         done <<< "$deleted"
-        log "  Cleaned up $count series deleted from Plex"
+        log "  Cleaned up $count series deleted from library"
     else
-        log "  No series deleted from Plex since last check"
+        log "  No series deleted since last check"
     fi
 
-    # Return current state
     echo "$current_state"
 }
 
-# --- Process each instance ---
+# --- Process ---
 
-while IFS= read -r instance; do
-    [ -z "$instance" ] && continue
-    IFS='|' read -r label sonarr_url sonarr_key radarr_url radarr_key <<< "$instance"
+STATE_FILE="$STATE_DIR/file-state-owner.json"
 
-    STATE_FILE="$STATE_DIR/file-state-${label}.json"
+log "=== Library deletion cleanup ==="
 
-    log "=== Plex deletion cleanup ($label) ==="
+log "Rescanning disk..."
+trigger_rescan "Radarr" "$RADARR_URL" "$RADARR_KEY" "RescanMovie"
+trigger_rescan "Sonarr" "$SONARR_URL" "$SONARR_KEY" "RescanSeries"
 
-    # Step 1: Trigger disk rescans
-    log "Rescanning disk..."
-    trigger_rescan "Radarr ($label)" "$radarr_url" "$radarr_key" "RescanMovie"
-    trigger_rescan "Sonarr ($label)" "$sonarr_url" "$sonarr_key" "RescanSeries"
+prev_movies="{}"
+prev_series="{}"
+if [ -f "$STATE_FILE" ]; then
+    prev_movies=$(jq '.movies // {}' "$STATE_FILE")
+    prev_series=$(jq '.series // {}' "$STATE_FILE")
+    log "Loaded previous state from $STATE_FILE"
+else
+    log "No previous state found — first run, saving baseline only"
+fi
 
-    # Step 2: Load previous state
-    prev_movies="{}"
-    prev_series="{}"
-    if [ -f "$STATE_FILE" ]; then
-        prev_movies=$(jq '.movies // {}' "$STATE_FILE")
-        prev_series=$(jq '.series // {}' "$STATE_FILE")
-        log "Loaded previous state from $STATE_FILE"
-    else
-        log "No previous state found — first run, saving baseline only"
-    fi
+log "Checking Radarr movies..."
+new_movies=$(process_movies "$RADARR_URL" "$RADARR_KEY" "$prev_movies")
 
-    # Step 3: Process and detect deletions (skip cleanup on first run)
-    log "Checking Radarr ($label) movies..."
-    new_movies=$(process_movies "$radarr_url" "$radarr_key" "$prev_movies")
+log "Checking Sonarr series..."
+new_series=$(process_series "$SONARR_URL" "$SONARR_KEY" "$prev_series")
 
-    log "Checking Sonarr ($label) series..."
-    new_series=$(process_series "$sonarr_url" "$sonarr_key" "$prev_series")
+jq -n \
+    --argjson movies "$new_movies" \
+    --argjson series "$new_series" \
+    '{movies: $movies, series: $series}' > "$STATE_FILE"
 
-    # Step 4: Save current state
-    jq -n \
-        --argjson movies "$new_movies" \
-        --argjson series "$new_series" \
-        '{movies: $movies, series: $series}' > "$STATE_FILE"
-
-    log "State saved to $STATE_FILE"
-done <<< "$INSTANCES"
+log "State saved to $STATE_FILE"
 
 # --- Clean up orphaned Transmission torrents ---
 log "=== Transmission orphan cleanup ==="

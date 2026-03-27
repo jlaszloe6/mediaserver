@@ -2,8 +2,8 @@
 # backup.sh - Daily backup of all service configs and .env to NAS
 #
 # Creates a compressed tarball containing:
-# - All service config directories (Plex cache/metadata excluded)
-# - SQLite database safe snapshots (via sqlite3 .backup command)
+# - All service config directories
+# - SQLite database safe snapshots (via sqlite3 .backup on mounted configs)
 # - The .env file
 # - A manifest listing what was backed up
 #
@@ -64,14 +64,11 @@ if [ "$DRY_RUN" = true ]; then
         echo "  - $dir"
     done
     log ""
-    log "Plex exclusions: Cache, Metadata, Media, Crash Reports, Logs"
-    log ""
-    log "SQLite snapshots:"
-    for svc in sonarr radarr prowlarr tautulli sonarr-guest radarr-guest; do
-        echo "  - $svc (via docker exec)"
+    log "SQLite snapshots (via mounted configs):"
+    for svc in sonarr radarr prowlarr jellyfin; do
+        echo "  - $svc"
     done
     echo "  - statuspage (direct, via cron sqlite3)"
-    echo "  - uptime-kuma (file copy)"
     log ""
     log "Backups on NAS:"
     if ls "$BACKUP_DIR"/backup-*.tar.gz 1>/dev/null 2>&1; then
@@ -98,36 +95,45 @@ log "Starting backup to $BACKUP_DIR/backup-$TIMESTAMP.tar.gz"
 
 log "Creating SQLite safe snapshots..."
 
-# Services with sqlite3 available in their container
-SQLITE_SERVICES="sonarr:sonarr.db radarr:radarr.db prowlarr:prowlarr.db tautulli:tautulli.db sonarr-guest:sonarr.db radarr-guest:radarr.db"
+# Use sqlite3 directly on mounted config files (no docker exec needed)
+SQLITE_SERVICES="sonarr:sonarr.db radarr:radarr.db prowlarr:prowlarr.db"
 
 for entry in $SQLITE_SERVICES; do
     svc="${entry%%:*}"
     db="${entry##*:}"
     backup_name="${svc}.db.backup"
+    db_path="/config/all-configs/${svc}/${db}"
 
-    if docker exec "$svc" sqlite3 "/config/$db" ".backup '/config/${db}.backup'" 2>/dev/null; then
-        # Copy the backup file from the config mount
-        if cp "/config/all-configs/${svc}/${db}.backup" "$STAGING/$backup_name" 2>/dev/null; then
+    if [ -f "$db_path" ]; then
+        if sqlite3 "$db_path" ".backup '$STAGING/$backup_name'" 2>/dev/null; then
             log "  $svc: sqlite3 .backup OK"
             echo "sqlite_backup: $svc OK" >> "$MANIFEST"
-            # Clean up .backup file from config dir
-            rm -f "/config/all-configs/${svc}/${db}.backup" 2>/dev/null || true
         else
-            warn "$svc: .backup file not found in config mount, falling back to file copy"
-            cp "/config/all-configs/${svc}/${db}" "$STAGING/$backup_name" 2>/dev/null || warn "$svc: file copy also failed"
+            warn "$svc: sqlite3 .backup failed, falling back to file copy"
+            cp "$db_path" "$STAGING/$backup_name" 2>/dev/null || warn "$svc: file copy also failed"
             echo "sqlite_backup: $svc FALLBACK (file copy)" >> "$MANIFEST"
         fi
     else
-        warn "$svc: docker exec sqlite3 failed (container down?), falling back to file copy"
-        if cp "/config/all-configs/${svc}/${db}" "$STAGING/$backup_name" 2>/dev/null; then
-            echo "sqlite_backup: $svc FALLBACK (file copy)" >> "$MANIFEST"
-        else
-            warn "$svc: file copy also failed — skipping"
-            echo "sqlite_backup: $svc SKIPPED" >> "$MANIFEST"
-        fi
+        warn "$svc: database not found at $db_path"
+        echo "sqlite_backup: $svc SKIPPED" >> "$MANIFEST"
     fi
 done
+
+# Jellyfin — DB is at a different path inside linuxserver image
+JELLYFIN_DB="/config/all-configs/jellyfin/data/jellyfin.db"
+if [ -f "$JELLYFIN_DB" ]; then
+    if sqlite3 "$JELLYFIN_DB" ".backup '$STAGING/jellyfin.db.backup'" 2>/dev/null; then
+        log "  jellyfin: sqlite3 .backup OK"
+        echo "sqlite_backup: jellyfin OK" >> "$MANIFEST"
+    else
+        warn "jellyfin: sqlite3 .backup failed, falling back to file copy"
+        cp "$JELLYFIN_DB" "$STAGING/jellyfin.db.backup"
+        echo "sqlite_backup: jellyfin FALLBACK (file copy)" >> "$MANIFEST"
+    fi
+else
+    warn "jellyfin: database not found"
+    echo "sqlite_backup: jellyfin SKIPPED" >> "$MANIFEST"
+fi
 
 # Statuspage — cron container has direct mount + sqlite3
 if [ -f "/config/statuspage/statuspage.db" ]; then
@@ -144,27 +150,14 @@ else
     echo "sqlite_backup: statuspage SKIPPED" >> "$MANIFEST"
 fi
 
-# Uptime Kuma — no sqlite3 CLI in Node.js image, direct file copy
-if [ -f "/config/all-configs/uptime-kuma/kuma.db" ]; then
-    cp "/config/all-configs/uptime-kuma/kuma.db" "$STAGING/uptime-kuma.db.backup"
-    log "  uptime-kuma: file copy OK"
-    echo "sqlite_backup: uptime-kuma OK (file copy)" >> "$MANIFEST"
-else
-    warn "uptime-kuma: database not found"
-    echo "sqlite_backup: uptime-kuma SKIPPED" >> "$MANIFEST"
-fi
-
 # --- Tar config directories ---
 
 log "Archiving config directories..."
 
 tar -cf "$STAGING/configs.tar" \
     -C /config/all-configs \
-    --exclude='plex/Library/Application Support/Plex Media Server/Cache' \
-    --exclude='plex/Library/Application Support/Plex Media Server/Metadata' \
-    --exclude='plex/Library/Application Support/Plex Media Server/Media' \
-    --exclude='plex/Library/Application Support/Plex Media Server/Crash Reports' \
-    --exclude='plex/Library/Application Support/Plex Media Server/Logs' \
+    --exclude='jellyfin/data/transcodes' \
+    --exclude='jellyfin/cache' \
     --exclude='*.db.backup' \
     . 2>/dev/null || warn "tar had warnings (possibly missing dirs)"
 

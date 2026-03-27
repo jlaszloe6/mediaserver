@@ -7,7 +7,6 @@
 # - NFS mount
 # - Firewall (UFW)
 # - Systemd drop-ins (Docker waits for NFS)
-# - sysctl (route_localnet for VPN DNAT)
 # - PAM SSH agent auth (passwordless sudo for key-based SSH)
 #
 # Prerequisites:
@@ -41,7 +40,7 @@ echo ""
 
 # --- 1. Create mediaserver system user ---
 
-echo "[1/8] Creating mediaserver user..."
+echo "[1/7] Creating mediaserver user..."
 if id mediaserver &>/dev/null; then
     echo "  User 'mediaserver' already exists"
 else
@@ -56,7 +55,7 @@ chmod 2775 /opt/mediaserver
 
 # --- 2. NFS mount ---
 
-echo "[2/8] Setting up NFS mount..."
+echo "[2/7] Setting up NFS mount..."
 apt-get install -y -qq nfs-common
 mkdir -p "$MOUNT_POINT"
 
@@ -70,7 +69,7 @@ mount -a 2>/dev/null || true
 
 # --- 3. Docker waits for NFS ---
 
-echo "[3/8] Configuring Docker to wait for NFS..."
+echo "[3/7] Configuring Docker to wait for NFS..."
 mkdir -p /etc/systemd/system/docker.service.d
 cat > /etc/systemd/system/docker.service.d/wait-for-nfs.conf << EOF
 [Unit]
@@ -79,37 +78,22 @@ Requires=remote-fs.target
 EOF
 systemctl daemon-reload
 
-# --- 4. sysctl: route_localnet for VPN DNAT ---
+# --- 4. UFW firewall ---
 
-echo "[4/8] Setting sysctl route_localnet..."
-if ! grep -q 'net.ipv4.conf.all.route_localnet' /etc/sysctl.d/99-mediaserver.conf 2>/dev/null; then
-    cat > /etc/sysctl.d/99-mediaserver.conf << EOF
-# Allow DNAT to localhost for WireGuard VPN clients
-net.ipv4.conf.all.route_localnet = 1
-EOF
-    sysctl -p /etc/sysctl.d/99-mediaserver.conf
-    echo "  Set route_localnet=1"
-else
-    echo "  Already configured"
-fi
+LAN_SUBNET="${LAN_SUBNET:-192.168.1.0/24}"
 
-# --- 5. UFW firewall ---
-
-echo "[5/8] Configuring UFW firewall..."
+echo "[4/7] Configuring UFW firewall..."
 ufw --force enable
-ufw allow 22/tcp comment "SSH"
-ufw allow 32400/tcp comment "Plex"
-ufw allow 80/tcp comment "Caddy HTTP redirect"
+ufw default deny incoming
+ufw allow from "$LAN_SUBNET" to any port 22 proto tcp comment "SSH (LAN only)"
 ufw allow 443/tcp comment "Caddy HTTPS"
-ufw allow 51820/udp comment "WireGuard"
-ufw allow in on wg0 from 10.13.13.0/24 comment "WireGuard VPN"
-ufw allow from 192.168.1.0/24 to any port 53 comment "DNS (dnsmasq for LAN)"
+ufw allow from "$LAN_SUBNET" to any port 53 comment "DNS (dnsmasq for LAN)"
 ufw deny 3389/tcp comment "Block RDP"
 echo "  UFW rules configured"
 
-# --- 6. PAM SSH agent auth (passwordless sudo for key-based SSH) ---
+# --- 5. PAM SSH agent auth (passwordless sudo for key-based SSH) ---
 
-echo "[6/8] Setting up PAM SSH agent auth..."
+echo "[5/7] Setting up PAM SSH agent auth..."
 apt-get install -y -qq libpam-ssh-agent-auth
 
 # Copy admin user's authorized keys for sudo verification
@@ -129,17 +113,17 @@ EOF
 chmod 440 /etc/sudoers.d/ssh-agent
 visudo -c -f /etc/sudoers.d/ssh-agent
 
-# --- 7. SSH server config ---
+# --- 6. SSH server config ---
 
-echo "[7/8] Configuring SSH server..."
+echo "[6/7] Configuring SSH server..."
 if ! grep -q '^AllowAgentForwarding yes' /etc/ssh/sshd_config; then
     echo 'AllowAgentForwarding yes' >> /etc/ssh/sshd_config
 fi
 systemctl reload ssh
 
-# --- 8. Git safe directory ---
+# --- 7. Git safe directory ---
 
-echo "[8/8] Setting git safe directory..."
+echo "[7/7] Setting git safe directory..."
 sudo -u mediaserver git config --global --add safe.directory /opt/mediaserver
 sudo -u "$ADMIN_USER" git config --global --add safe.directory /opt/mediaserver
 

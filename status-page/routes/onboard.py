@@ -4,7 +4,7 @@ import time
 from datetime import datetime, timedelta, timezone
 
 import requests
-from flask import Blueprint, Response, abort, current_app, flash, redirect, render_template, request, url_for
+from flask import Blueprint, abort, current_app, flash, redirect, render_template, request, url_for
 
 from auth import check_csrf, is_rate_limited, record_attempt, verify_turnstile
 from config import (
@@ -13,9 +13,8 @@ from config import (
 )
 from db import get_db
 from services.email import send_styled_email, send_guest_welcome, _button
-from services.plex import share_plex_guest_libraries
+from services.jellyfin import create_jellyfin_user, get_guest_library_ids
 from services.trakt import create_radarr_import_list, create_sonarr_import_list
-from services.wireguard import create_wg_client, get_client_config, get_client_qr
 
 onboard_bp = Blueprint("onboard_bp", __name__)
 
@@ -34,37 +33,30 @@ def _get_guest_by_token(token):
 
 
 def _finalize_onboard(guest):
-    """Plex sharing + VPN client + welcome email + admin notification after both Trakt auths complete."""
-    plex_ok = False
+    """Jellyfin user creation + welcome email + admin notification after both Trakt auths complete."""
+    jellyfin_ok = False
     try:
-        share_plex_guest_libraries(guest["email"])
-        plex_ok = True
+        library_ids = get_guest_library_ids()
+        jellyfin_user_id = create_jellyfin_user(guest["name"], library_ids)
+        jellyfin_ok = True
         db = get_db()
-        db.execute("UPDATE guests SET plex_shared = 1 WHERE id = ?", (guest["id"],))
+        db.execute("UPDATE guests SET jellyfin_user_id = ? WHERE id = ?", (jellyfin_user_id, guest["id"]))
         db.commit()
     except Exception as e:
-        current_app.logger.error(f"Plex sharing failed for {guest['email']}: {e}")
-
-    try:
-        wg_id = create_wg_client(guest["name"])
-        db = get_db()
-        db.execute("UPDATE guests SET wg_client_id = ? WHERE id = ?", (wg_id, guest["id"]))
-        db.commit()
-    except Exception as e:
-        current_app.logger.error(f"WireGuard client creation failed for {guest['name']}: {e}")
+        current_app.logger.error(f"Jellyfin user creation failed for {guest['name']}: {e}")
 
     try:
         send_guest_welcome(guest["email"], guest["name"], guest["onboard_token"])
     except Exception as e:
         current_app.logger.error(f"Welcome email failed for {guest['email']}: {e}")
 
-    plex_note = "Plex libraries shared automatically." if plex_ok else "<strong>ACTION NEEDED:</strong> Share Guest TV &amp; Guest Movies with this guest in Plex Settings &gt; Users &amp; Sharing."
+    jellyfin_note = "Jellyfin user created automatically with guest library access." if jellyfin_ok else "<strong>ACTION NEEDED:</strong> Create a Jellyfin user for this guest and restrict access to Guest TV &amp; Guest Movies libraries."
     try:
         for admin_email in ADMIN_EMAILS:
             send_styled_email(admin_email, f"Guest onboarding complete: {guest['name']}", f"""\
 <p style="font-size:17px;color:#fff;">Guest Onboarding Complete</p>
 <p><strong>{guest['name']}</strong> ({guest['email']}) has completed Trakt authorization.</p>
-<p>{plex_note}</p>
+<p>{jellyfin_note}</p>
 <p style="margin:16px 0;">{_button(f"{BASE_URL}/admin/invite", "Manage Guests")}</p>""")
     except Exception as e:
         current_app.logger.error(f"Failed to notify admins: {e}")
@@ -126,15 +118,6 @@ def onboard_status(token):
     guest = _get_guest_by_token(token)
     if not guest:
         abort(404)
-    if guest["status"] == "complete" and not guest["wg_client_id"]:
-        try:
-            wg_id = create_wg_client(guest["name"])
-            db = get_db()
-            db.execute("UPDATE guests SET wg_client_id = ? WHERE id = ?", (wg_id, guest["id"]))
-            db.commit()
-            guest = _get_guest_by_token(token)
-        except Exception as e:
-            current_app.logger.error(f"VPN client retry failed for {guest['name']}: {e}")
     device_data = json.loads(guest["trakt_device_data"]) if guest["trakt_device_data"] else None
     return render_template("onboard_status.html", guest=guest, device_data=device_data, quota_gb=GUEST_QUOTA_GB)
 
@@ -265,29 +248,3 @@ def onboard_poll(token):
         return {"status": "pending", "message": "Polling too fast, slowing down..."}
     else:
         return {"status": "pending", "message": f"Unexpected response ({resp.status_code}), retrying..."}
-
-
-@onboard_bp.route("/onboard/<token>/vpn/qr")
-def onboard_vpn_qr(token):
-    guest = _get_guest_by_token(token)
-    if not guest or guest["status"] != "complete" or not guest["wg_client_id"]:
-        abort(404)
-    try:
-        return Response(get_client_qr(guest["wg_client_id"]), mimetype="image/svg+xml")
-    except Exception:
-        abort(500)
-
-
-@onboard_bp.route("/onboard/<token>/vpn/config")
-def onboard_vpn_config(token):
-    guest = _get_guest_by_token(token)
-    if not guest or guest["status"] != "complete" or not guest["wg_client_id"]:
-        abort(404)
-    try:
-        return Response(
-            get_client_config(guest["wg_client_id"]),
-            mimetype="application/octet-stream",
-            headers={"Content-Disposition": f"attachment; filename=MediaServer-{guest['name']}.conf"},
-        )
-    except Exception:
-        abort(500)
