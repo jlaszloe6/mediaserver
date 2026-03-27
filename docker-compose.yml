@@ -185,10 +185,6 @@ services:
       - ./config/caddy/config:/config
     mem_limit: 512m
     restart: unless-stopped
-    cap_drop:
-      - ALL
-    cap_add:
-      - NET_BIND_SERVICE
     security_opt:
       - no-new-privileges:true
     healthcheck:
