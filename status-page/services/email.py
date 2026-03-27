@@ -22,7 +22,7 @@ def _wrap_html(body):
 {body}
 </td></tr>
 <tr><td style="padding:16px 24px;border-top:1px solid #1a3a5c;color:#5a6a8a;font-size:12px;text-align:center;">
-Sent from Media Server Status Page
+Sent from Freya Media Server
 </td></tr>
 </table>
 </td></tr>
