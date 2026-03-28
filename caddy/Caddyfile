@@ -1,12 +1,23 @@
-(security_headers) {
+(base_headers) {
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 		X-Content-Type-Options "nosniff"
 		X-Frame-Options "DENY"
 		Referrer-Policy "strict-origin-when-cross-origin"
 		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
-		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-src https://challenges.cloudflare.com; connect-src 'self'; font-src 'self'"
 		-Server
+	}
+}
+
+(strict_csp) {
+	header {
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-src https://challenges.cloudflare.com; connect-src 'self'; font-src 'self'"
+	}
+}
+
+(seerr_csp) {
+	header {
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; frame-src https://challenges.cloudflare.com; connect-src 'self' https://api.themoviedb.org; font-src 'self'"
 	}
 }
 
@@ -34,7 +45,8 @@
 	tls {
 		dns duckdns {env.DUCKDNS_TOKEN}
 	}
-	import security_headers
+	import base_headers
+	import strict_csp
 	import geoip_hungary
 	reverse_proxy jellyfin:8096 {
 		header_up X-Real-IP {remote_host}
@@ -45,9 +57,9 @@
 	tls {
 		dns duckdns {env.DUCKDNS_TOKEN}
 	}
-	import security_headers
+	import base_headers
+	import seerr_csp
 	import geoip_hungary
-	header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: ; frame-src https://challenges.cloudflare.com; connect-src 'self' https://api.themoviedb.org; font-src 'self'"
 	reverse_proxy seerr:5055 {
 		header_up X-Real-IP {remote_host}
 	}
@@ -57,7 +69,8 @@
 	tls {
 		dns duckdns {env.DUCKDNS_TOKEN}
 	}
-	import security_headers
+	import base_headers
+	import strict_csp
 	import geoip_hungary
 	reverse_proxy statuspage:8080 {
 		header_up X-Real-IP {remote_host}
