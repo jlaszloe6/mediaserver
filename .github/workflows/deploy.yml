@@ -8,6 +8,9 @@ on:
       - '.gitignore'
       - '.env.example'
 
+permissions:
+  contents: read
+
 jobs:
   deploy:
     runs-on: [self-hosted, freya-pc]
@@ -72,7 +75,7 @@ jobs:
       - name: Build and restart caddy
         if: steps.changes.outputs.rebuild_caddy == 'true'
         working-directory: /opt/mediaserver
-        run: docker compose up -d --build --no-deps caddy
+        run: docker compose up -d --build --force-recreate --no-deps caddy
 
       - name: Build and restart dnsmasq
         if: steps.changes.outputs.rebuild_dnsmasq == 'true'
