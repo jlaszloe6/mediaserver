@@ -36,13 +36,13 @@ def invite():
     username = _username_from_email(email)
     password = secrets.token_urlsafe(12)
 
-    ok, warning = create_jellyfin_user(username, password)
+    ok, warning, jf_user_id = create_jellyfin_user(username, password)
     if not ok:
         flash(f"Failed to create Jellyfin user: {warning}", "error")
         return redirect(url_for("dashboard_bp.dashboard"))
 
     # Import into Seerr and set guest root folders
-    seerr_ok, seerr_warn = import_and_configure_seerr_user(username)
+    seerr_ok, seerr_warn = import_and_configure_seerr_user(username, jf_user_id)
     if not seerr_ok and warning:
         warning = f"{warning}; Seerr: {seerr_warn}"
     elif not seerr_ok:
