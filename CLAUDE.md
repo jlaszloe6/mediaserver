@@ -101,7 +101,7 @@ Services: Jellyfin, Transmission, Sonarr, Radarr, Prowlarr, Seerr, Caddy, DuckDN
 - Guest library isolation: separate Jellyfin libraries (Guest Movies `/movies-guests`, Guest TV Shows `/tv-guests`)
 - Guest Jellyfin users auto-restricted to guest libraries via `EnableAllFolders=false` + `EnabledFolders`
 - Sonarr/Radarr have guest root folders (`/data/media/movies-guests`, `/data/media/tv-guests`)
-- Seerr guest root folders: manual per-user config in Seerr UI after guest's first login
+- Seerr guest setup automated: invite flow imports user into Seerr and sets guest root folders
 
 ## Email Notifications
 - Sonarr/Radarr: onImportComplete, onUpgrade, onHealthIssue (onGrab disabled — low value noise)

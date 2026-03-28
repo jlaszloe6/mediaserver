@@ -867,7 +867,7 @@ echo ""
 echo "Remaining manual steps:"
 echo "  1. Jellyfin: Complete setup wizard at http://jellyfin:8096 (via browser)"
 echo "  2. Seerr: Complete setup wizard at http://seerr:5055"
-echo "  3. Seerr guest users: After first login, set root folder to guest dirs in Seerr UI"
+echo "  3. Seerr guest users: Automatically configured via status page invite flow"
 echo ""
 
 exit $ERRORS
