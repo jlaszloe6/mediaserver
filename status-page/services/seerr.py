@@ -47,12 +47,16 @@ def _get_seerr_user_by_jellyfin_username(username):
     return None
 
 
-def import_and_configure_seerr_user(jellyfin_username):
+def import_and_configure_seerr_user(jellyfin_username, jellyfin_user_id):
     """Import Jellyfin user into Seerr and set guest root folders. Returns (success, warning)."""
-    # Import Jellyfin users into Seerr
+    if not jellyfin_user_id:
+        return False, "No Jellyfin user ID provided"
+
+    # Import specific Jellyfin user into Seerr
     try:
         r = requests.post(
             f"{SEERR_URL}/api/v1/user/import-from-jellyfin",
+            json={"jellyfinUserIds": [jellyfin_user_id]},
             headers=SEERR_HEADERS,
             timeout=API_TIMEOUT * 3,
         )

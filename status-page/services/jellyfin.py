@@ -63,9 +63,9 @@ def _set_user_policy(user_id, guest_library_ids):
 
 
 def create_jellyfin_user(username, password):
-    """Create a new Jellyfin user restricted to guest libraries. Returns (success, error_message)."""
+    """Create a new Jellyfin user restricted to guest libraries. Returns (success, warning, jellyfin_user_id)."""
     if not JELLYFIN_API_KEY:
-        return False, "Jellyfin API key not configured"
+        return False, "Jellyfin API key not configured", None
     try:
         r = requests.post(
             f"{JELLYFIN_URL}/Users/New",
@@ -74,19 +74,19 @@ def create_jellyfin_user(username, password):
             timeout=API_TIMEOUT,
         )
         if r.status_code != 200:
-            return False, f"Jellyfin returned {r.status_code}: {r.text[:200]}"
+            return False, f"Jellyfin returned {r.status_code}: {r.text[:200]}", None
 
         user_id = r.json().get("Id")
         if not user_id:
-            return False, "Jellyfin did not return a user ID"
+            return False, "Jellyfin did not return a user ID", None
 
         guest_lib_ids = _get_guest_library_ids()
         if guest_lib_ids:
             if not _set_user_policy(user_id, guest_lib_ids):
-                return True, "User created but failed to restrict library access"
+                return True, "User created but failed to restrict library access", user_id
         else:
-            return True, "User created but guest libraries not found — no library restriction applied"
+            return True, "User created but guest libraries not found — no library restriction applied", user_id
 
-        return True, None
+        return True, None, user_id
     except requests.RequestException as e:
-        return False, str(e)
+        return False, str(e), None
