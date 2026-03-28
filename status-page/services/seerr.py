@@ -1,6 +1,8 @@
 import requests
 
-from config import API_TIMEOUT, RADARR_KEY, RADARR_URL, SEERR_URL, SONARR_KEY, SONARR_URL
+from config import API_TIMEOUT, RADARR_KEY, RADARR_URL, SEERR_API_KEY, SEERR_URL, SONARR_KEY, SONARR_URL
+
+SEERR_HEADERS = {"X-Api-Key": SEERR_API_KEY} if SEERR_API_KEY else {}
 
 GUEST_MOVIE_ROOT = "/data/media/movies-guests"
 GUEST_TV_ROOT = "/data/media/tv-guests"
@@ -30,6 +32,7 @@ def _get_seerr_user_by_jellyfin_username(username):
         r = requests.get(
             f"{SEERR_URL}/api/v1/user",
             params={"take": 100},
+            headers=SEERR_HEADERS,
             timeout=API_TIMEOUT,
         )
         if r.status_code != 200:
@@ -50,6 +53,7 @@ def import_and_configure_seerr_user(jellyfin_username):
     try:
         r = requests.post(
             f"{SEERR_URL}/api/v1/user/import-from-jellyfin",
+            headers=SEERR_HEADERS,
             timeout=API_TIMEOUT * 3,
         )
         if r.status_code not in (200, 201):
@@ -78,6 +82,7 @@ def import_and_configure_seerr_user(jellyfin_username):
         r = requests.post(
             f"{SEERR_URL}/api/v1/user/{seerr_user_id}/settings/main",
             json=settings,
+            headers=SEERR_HEADERS,
             timeout=API_TIMEOUT,
         )
         if r.status_code in (200, 201):
