@@ -98,6 +98,10 @@ Services: Jellyfin, Transmission, Sonarr, Radarr, Prowlarr, Seerr, Caddy, DuckDN
 - Guest onboarding: admin invites via dashboard, auto-creates Jellyfin user, sends welcome email with credentials
 - Admin = first `ALLOWED_EMAILS` entry or explicit `ADMIN_EMAIL` env var
 - Guests stored in SQLite `guests` table (supplement `ALLOWED_EMAILS` env var)
+- Guest library isolation: separate Jellyfin libraries (Guest Movies `/movies-guests`, Guest TV Shows `/tv-guests`)
+- Guest Jellyfin users auto-restricted to guest libraries via `EnableAllFolders=false` + `EnabledFolders`
+- Sonarr/Radarr have guest root folders (`/data/media/movies-guests`, `/data/media/tv-guests`)
+- Seerr guest root folders: manual per-user config in Seerr UI after guest's first login
 
 ## Email Notifications
 - Sonarr/Radarr: onImportComplete, onUpgrade, onHealthIssue (onGrab disabled — low value noise)

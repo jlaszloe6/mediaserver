@@ -35,9 +35,9 @@ def invite():
     username = _username_from_email(email)
     password = secrets.token_urlsafe(12)
 
-    ok, err = create_jellyfin_user(username, password)
+    ok, warning = create_jellyfin_user(username, password)
     if not ok:
-        flash(f"Failed to create Jellyfin user: {err}", "error")
+        flash(f"Failed to create Jellyfin user: {warning}", "error")
         return redirect(url_for("dashboard_bp.dashboard"))
 
     invited_by = session["user_email"]
@@ -47,7 +47,10 @@ def invite():
 
     try:
         send_welcome_email(email, username, password)
-        flash(f"Invited {email} — welcome email sent.", "info")
+        if warning:
+            flash(f"Invited {email} — {warning}.", "error")
+        else:
+            flash(f"Invited {email} — welcome email sent.", "info")
     except Exception:
         flash(f"Invited {email} — Jellyfin account created but email failed to send.", "error")
 

@@ -453,6 +453,23 @@ else
     log_ok "Sonarr root folder /data/media/tv already configured"
 fi
 
+# Guest root folder
+sonarr_guest_root=$(echo "$existing_roots" | jq -r '.[] | select(.path == "/data/media/tv-guests") | .id')
+if [ -z "$sonarr_guest_root" ]; then
+    if $DRY_RUN; then
+        log_info "[DRY RUN] Would add Sonarr guest root folder /data/media/tv-guests"
+    else
+        parse_response "$(api_call POST "http://sonarr:8989/api/v3/rootfolder" "$SONARR_KEY" '{"path":"/data/media/tv-guests"}')"
+        if [ "$RESP_CODE" = "200" ] || [ "$RESP_CODE" = "201" ]; then
+            log_ok "Added Sonarr guest root folder /data/media/tv-guests"
+        else
+            log_err "Failed to add Sonarr guest root folder (HTTP $RESP_CODE): $RESP_BODY"
+        fi
+    fi
+else
+    log_ok "Sonarr guest root folder /data/media/tv-guests already configured"
+fi
+
 # Download client
 existing_dl=$(curl -sf -H "X-Api-Key: $SONARR_KEY" "http://sonarr:8989/api/v3/downloadclient")
 sonarr_dl_exists=$(echo "$existing_dl" | jq -r '.[] | select(.name == "Transmission") | .id')
@@ -518,6 +535,23 @@ if [ -z "$radarr_root_exists" ]; then
     fi
 else
     log_ok "Radarr root folder /data/media/movies already configured"
+fi
+
+# Guest root folder
+radarr_guest_root=$(echo "$existing_roots" | jq -r '.[] | select(.path == "/data/media/movies-guests") | .id')
+if [ -z "$radarr_guest_root" ]; then
+    if $DRY_RUN; then
+        log_info "[DRY RUN] Would add Radarr guest root folder /data/media/movies-guests"
+    else
+        parse_response "$(api_call POST "http://radarr:7878/api/v3/rootfolder" "$RADARR_KEY" '{"path":"/data/media/movies-guests"}')"
+        if [ "$RESP_CODE" = "200" ] || [ "$RESP_CODE" = "201" ]; then
+            log_ok "Added Radarr guest root folder /data/media/movies-guests"
+        else
+            log_err "Failed to add Radarr guest root folder (HTTP $RESP_CODE): $RESP_BODY"
+        fi
+    fi
+else
+    log_ok "Radarr guest root folder /data/media/movies-guests already configured"
 fi
 
 # Download client
@@ -749,6 +783,74 @@ else
     fi
 fi
 
+# --- Section 8b: Guest media directories and Jellyfin guest libraries ---
+
+echo ""
+log_info "=== Setting up guest media directories ==="
+
+MEDIA_ROOT="${MEDIA_ROOT:-/mnt/mediaserver}"
+for dir in "$MEDIA_ROOT/media/movies-guests" "$MEDIA_ROOT/media/tv-guests"; do
+    if [ ! -d "$dir" ]; then
+        if $DRY_RUN; then
+            log_info "[DRY RUN] Would create $dir"
+        else
+            mkdir -p "$dir" && log_ok "Created $dir" || log_err "Failed to create $dir"
+        fi
+    else
+        log_ok "$dir already exists"
+    fi
+done
+
+# Create Jellyfin guest libraries (requires JELLYFIN_API_KEY)
+JELLYFIN_KEY="${JELLYFIN_API_KEY:-}"
+JELLYFIN_URL="http://jellyfin:8096"
+
+if [ -n "$JELLYFIN_KEY" ]; then
+    log_info "=== Configuring Jellyfin guest libraries ==="
+    JHEADERS="-H X-Emby-Token:$JELLYFIN_KEY"
+    existing_libs=$(curl -sf $JHEADERS "$JELLYFIN_URL/Library/VirtualFolders" 2>/dev/null || echo "[]")
+
+    # Guest Movies library
+    if ! echo "$existing_libs" | jq -e '.[] | select(.Name=="Guest Movies")' >/dev/null 2>&1; then
+        if $DRY_RUN; then
+            log_info "[DRY RUN] Would create Jellyfin 'Guest Movies' library"
+        else
+            resp_code=$(curl -s -o /dev/null -w '%{http_code}' -X POST $JHEADERS \
+                "$JELLYFIN_URL/Library/VirtualFolders?name=Guest+Movies&collectionType=movies&refreshLibrary=false" \
+                -H "Content-Type: application/json" \
+                -d '{"LibraryOptions":{},"PathInfos":[{"Path":"/movies-guests"}]}')
+            if [ "$resp_code" = "200" ] || [ "$resp_code" = "204" ]; then
+                log_ok "Created Jellyfin 'Guest Movies' library (/movies-guests)"
+            else
+                log_err "Failed to create Guest Movies library (HTTP $resp_code)"
+            fi
+        fi
+    else
+        log_ok "Jellyfin 'Guest Movies' library already exists"
+    fi
+
+    # Guest TV Shows library
+    if ! echo "$existing_libs" | jq -e '.[] | select(.Name=="Guest TV Shows")' >/dev/null 2>&1; then
+        if $DRY_RUN; then
+            log_info "[DRY RUN] Would create Jellyfin 'Guest TV Shows' library"
+        else
+            resp_code=$(curl -s -o /dev/null -w '%{http_code}' -X POST $JHEADERS \
+                "$JELLYFIN_URL/Library/VirtualFolders?name=Guest+TV+Shows&collectionType=tvshows&refreshLibrary=false" \
+                -H "Content-Type: application/json" \
+                -d '{"LibraryOptions":{},"PathInfos":[{"Path":"/tv-guests"}]}')
+            if [ "$resp_code" = "200" ] || [ "$resp_code" = "204" ]; then
+                log_ok "Created Jellyfin 'Guest TV Shows' library (/tv-guests)"
+            else
+                log_err "Failed to create Guest TV Shows library (HTTP $resp_code)"
+            fi
+        fi
+    else
+        log_ok "Jellyfin 'Guest TV Shows' library already exists"
+    fi
+else
+    log_warn "JELLYFIN_API_KEY not set — skipping guest library creation"
+fi
+
 # --- Section 9: Summary ---
 
 echo ""
@@ -765,6 +867,7 @@ echo ""
 echo "Remaining manual steps:"
 echo "  1. Jellyfin: Complete setup wizard at http://jellyfin:8096 (via browser)"
 echo "  2. Seerr: Complete setup wizard at http://seerr:5055"
+echo "  3. Seerr guest users: After first login, set root folder to guest dirs in Seerr UI"
 echo ""
 
 exit $ERRORS
