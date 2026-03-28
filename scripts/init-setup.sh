@@ -781,6 +781,40 @@ else
             fi
         fi
     fi
+
+    # Enable Radarr/Sonarr sync in Seerr (required for media availability status)
+    log_info "Enabling Radarr/Sonarr sync in Seerr..."
+    SEERR_URL="http://seerr:5055"
+    RADARR_FIELDS='["name","hostname","port","apiKey","useSsl","activeProfileId","activeProfileName","activeDirectory","is4k","minimumAvailability","isDefault","externalUrl","syncEnabled","preventSearch"]'
+    SONARR_FIELDS='["name","hostname","port","apiKey","useSsl","activeProfileId","activeProfileName","activeDirectory","activeLanguageProfileId","is4k","isDefault","externalUrl","syncEnabled","preventSearch","enableSeasonFolders"]'
+
+    for svc in radarr sonarr; do
+        configs=$(curl -sf "$SEERR_URL/api/v1/settings/$svc" 2>/dev/null) || continue
+        if [ "$svc" = "radarr" ]; then FIELDS="$RADARR_FIELDS"; else FIELDS="$SONARR_FIELDS"; fi
+
+        echo "$configs" | jq -c '.[]' | while read -r cfg; do
+            cfg_id=$(echo "$cfg" | jq -r '.id')
+            cfg_name=$(echo "$cfg" | jq -r '.name')
+            sync=$(echo "$cfg" | jq -r '.syncEnabled')
+            if [ "$sync" != "true" ]; then
+                payload=$(echo "$cfg" | jq --argjson fields "$FIELDS" '[to_entries[] | select(.key as $k | $fields | index($k))] | from_entries | .syncEnabled = true')
+                if $DRY_RUN; then
+                    log_info "[DRY RUN] Would enable sync for $svc '$cfg_name'"
+                else
+                    resp_code=$(curl -s -o /dev/null -w '%{http_code}' -X PUT \
+                        "$SEERR_URL/api/v1/settings/$svc/$cfg_id" \
+                        -H "Content-Type: application/json" -d "$payload")
+                    if [ "$resp_code" = "200" ]; then
+                        log_ok "Enabled sync for $svc '$cfg_name'"
+                    else
+                        log_err "Failed to enable sync for $svc '$cfg_name' (HTTP $resp_code)"
+                    fi
+                fi
+            else
+                log_ok "Sync already enabled for $svc '$cfg_name'"
+            fi
+        done
+    done
 fi
 
 # --- Section 8b: Guest media directories and Jellyfin guest libraries ---
