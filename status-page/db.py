@@ -55,6 +55,19 @@ def init_db():
         conn.execute("SELECT source_ip FROM login_tokens LIMIT 0")
     except sqlite3.OperationalError:
         conn.execute("ALTER TABLE login_tokens ADD COLUMN source_ip TEXT")
+    # Idempotent migration: replace v1 guests table (had trakt/plex/wg columns)
+    try:
+        conn.execute("SELECT jellyfin_username FROM guests LIMIT 0")
+    except sqlite3.OperationalError:
+        conn.execute("DROP TABLE IF EXISTS guests")
+        conn.execute("""
+            CREATE TABLE guests (
+                email TEXT PRIMARY KEY,
+                jellyfin_username TEXT NOT NULL,
+                invited_by TEXT NOT NULL,
+                created_at TEXT DEFAULT (datetime('now'))
+            )
+        """)
     conn.commit()
     conn.close()
 
