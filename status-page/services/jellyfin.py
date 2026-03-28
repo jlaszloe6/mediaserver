@@ -30,22 +30,30 @@ def _get_guest_library_ids():
 
 def _set_user_policy(user_id, guest_library_ids):
     """Restrict user to guest libraries with content deletion enabled."""
-    policy = {
-        "EnableAllFolders": False,
-        "EnabledFolders": guest_library_ids,
-        "EnableContentDeletion": True,
-        "EnableContentDeletionFromFolders": guest_library_ids,
-        "IsAdministrator": False,
-        "EnableMediaPlayback": True,
-        "EnableAudioPlaybackTranscoding": True,
-        "EnableVideoPlaybackTranscoding": True,
-        "EnablePlaybackRemuxing": True,
-        "EnableAllChannels": False,
-    }
     try:
+        # Fetch current policy (includes required fields like AuthenticationProviderId)
+        r = requests.get(
+            f"{JELLYFIN_URL}/Users/{user_id}",
+            headers=HEADERS,
+            timeout=API_TIMEOUT,
+        )
+        if r.status_code != 200:
+            return False
+        current_policy = r.json().get("Policy", {})
+
+        # Merge our restrictions into the existing policy
+        current_policy.update({
+            "EnableAllFolders": False,
+            "EnabledFolders": guest_library_ids,
+            "EnableContentDeletion": True,
+            "EnableContentDeletionFromFolders": guest_library_ids,
+            "IsAdministrator": False,
+            "EnableAllChannels": False,
+        })
+
         r = requests.post(
             f"{JELLYFIN_URL}/Users/{user_id}/Policy",
-            json=policy,
+            json=current_policy,
             headers=HEADERS,
             timeout=API_TIMEOUT,
         )

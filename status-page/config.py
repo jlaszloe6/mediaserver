@@ -18,6 +18,7 @@ TRANSMISSION_URL = "http://transmission:9091/transmission/rpc"
 PROWLARR_URL = "http://prowlarr:9696"
 PROWLARR_KEY = os.environ.get("PROWLARR_API_KEY", "")
 SEERR_URL = "http://seerr:5055"
+SEERR_API_KEY = os.environ.get("SEERR_API_KEY", "")
 
 # Cloudflare Turnstile
 TURNSTILE_SITE_KEY = os.environ.get("TURNSTILE_SITE_KEY", "")
