@@ -6,10 +6,10 @@ from functools import wraps
 from flask import Blueprint, abort, flash, redirect, render_template, request, session, url_for
 
 from config import (
-    ALLOWED_EMAILS, RATE_LIMIT_MAX, RATE_LIMIT_WINDOW,
+    ADMIN_EMAIL, ALLOWED_EMAILS, RATE_LIMIT_MAX, RATE_LIMIT_WINDOW,
     TURNSTILE_SECRET_KEY, TURNSTILE_SITE_KEY,
 )
-from db import get_db
+from db import get_db, get_all_guest_emails
 from services.email import send_magic_link, send_user_guide
 
 import requests
@@ -78,11 +78,33 @@ def check_csrf():
     return token and token == session.get("_csrf")
 
 
+def is_allowed_email(email):
+    if email in ALLOWED_EMAILS:
+        return True
+    return email in get_all_guest_emails()
+
+
+def is_admin(email=None):
+    if email is None:
+        email = session.get("user_email", "")
+    return email == ADMIN_EMAIL
+
+
 def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         if "user_email" not in session:
             return redirect(url_for("auth_bp.login"))
+        return f(*args, **kwargs)
+    return decorated
+
+
+def admin_required(f):
+    @wraps(f)
+    @login_required
+    def decorated(*args, **kwargs):
+        if not is_admin():
+            abort(403)
         return f(*args, **kwargs)
     return decorated
 
@@ -98,6 +120,7 @@ def init_app(app):
         return {"turnstile_site_key": TURNSTILE_SITE_KEY}
 
     app.jinja_env.globals["csrf_token"] = generate_csrf
+    app.jinja_env.globals["is_admin"] = lambda: is_admin()
 
 
 # --- Routes ---
@@ -115,7 +138,7 @@ def login():
             flash("Please enter your email.", "error")
             return render_template("login.html")
 
-        if email not in ALLOWED_EMAILS:
+        if not is_allowed_email(email):
             # Don't reveal whether email is valid
             flash("If that email is registered, a login link has been sent.", "info")
             return redirect(url_for("auth_bp.login"))

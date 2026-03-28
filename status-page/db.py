@@ -43,6 +43,12 @@ def init_db():
             timestamp TEXT DEFAULT (datetime('now')),
             data_json TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS guests (
+            email TEXT PRIMARY KEY,
+            jellyfin_username TEXT NOT NULL,
+            invited_by TEXT NOT NULL,
+            created_at TEXT DEFAULT (datetime('now'))
+        );
     """)
     # Idempotent migration: add source_ip if missing
     try:
@@ -51,3 +57,36 @@ def init_db():
         conn.execute("ALTER TABLE login_tokens ADD COLUMN source_ip TEXT")
     conn.commit()
     conn.close()
+
+
+def get_all_guest_emails():
+    db = get_db()
+    rows = db.execute("SELECT email FROM guests").fetchall()
+    return {row["email"] for row in rows}
+
+
+def add_guest(email, jellyfin_username, invited_by):
+    db = get_db()
+    try:
+        db.execute(
+            "INSERT INTO guests (email, jellyfin_username, invited_by) VALUES (?, ?, ?)",
+            (email.lower(), jellyfin_username, invited_by),
+        )
+        db.commit()
+        return True
+    except sqlite3.IntegrityError:
+        return False
+
+
+def remove_guest(email):
+    db = get_db()
+    db.execute("DELETE FROM guests WHERE email = ?", (email.lower(),))
+    db.commit()
+
+
+def get_guests():
+    db = get_db()
+    rows = db.execute(
+        "SELECT email, jellyfin_username, invited_by, created_at FROM guests ORDER BY created_at DESC"
+    ).fetchall()
+    return [dict(row) for row in rows]

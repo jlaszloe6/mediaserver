@@ -66,9 +66,9 @@ def send_magic_link(email, token):
     send_styled_email(email, "Status Page Login", body)
 
 
-def send_user_guide(email):
+def _guide_body():
     jellyfin_url = JELLYFIN_EXTERNAL_URL or "your Jellyfin server URL"
-    body = f"""\
+    return f"""\
 {_heading('Adding Movies &amp; TV Shows')}
 <ul style="line-height:1.8;padding-left:20px;color:#e0e0e0;">
 <li>Browse and request via <strong>Seerr</strong>. Sign in with your Jellyfin account.</li>
@@ -100,4 +100,25 @@ def send_user_guide(email):
 <li>New releases download once a digital version is available (not while in theaters).</li>
 <li>TV series: all existing episodes download, and new ones download as they air.</li>
 </ul>"""
-    send_styled_email(email, "Media Server - Quick Actions Guide", body)
+
+
+def send_user_guide(email):
+    send_styled_email(email, f"{SERVER_NAME} - Quick Actions Guide", _guide_body())
+
+
+def send_welcome_email(email, username, password):
+    jellyfin_url = JELLYFIN_EXTERNAL_URL or "your Jellyfin server URL"
+    body = f"""\
+{_heading('Welcome!')}
+<p style="color:#e0e0e0;">You've been invited to <strong>{SERVER_NAME}</strong>. Your Jellyfin account is ready:</p>
+
+<table style="margin:16px 0;border-collapse:collapse;">
+<tr><td style="color:#5a6a8a;padding:4px 12px 4px 0;">Username</td><td style="color:#fff;font-family:monospace;font-size:15px;">{username}</td></tr>
+<tr><td style="color:#5a6a8a;padding:4px 12px 4px 0;">Password</td><td style="color:#fff;font-family:monospace;font-size:15px;">{password}</td></tr>
+</table>
+
+<p style="text-align:center;margin:20px 0;">{_button(jellyfin_url, 'Open Jellyfin')}</p>
+<p style="color:#5a6a8a;font-size:13px;">You can change your password in Jellyfin under Settings &rarr; Password.</p>
+
+{_guide_body()}"""
+    send_styled_email(email, f"Welcome to {SERVER_NAME}", body)

@@ -88,13 +88,20 @@ Services: Jellyfin, Transmission, Sonarr, Radarr, Prowlarr, Seerr, Caddy, DuckDN
 ## Status Page
 - Flask + SQLite, bridge network (port 8080), magic link auth
 - Modular structure: `app.py` (init) → `config.py`, `db.py`, `auth.py`, `services/*`, `routes/*`
-- Blueprints: `auth_bp`, `dashboard_bp` — all `url_for` calls use blueprint prefix
+- Blueprints: `auth_bp`, `dashboard_bp`, `guests_bp` — all `url_for` calls use blueprint prefix
 - Cloudflare Turnstile captcha on login form
 - Session cookies: Secure, HttpOnly, SameSite=Lax
 - Dashboard: service health, library stats, active downloads, recent activity (local time, readable labels)
 - Custom error pages (400, 403, 404, 500) with dark theme
 - Favicon logo on all pages (login, dashboard, errors)
 - All emails use dark theme template with logo, sender name from `SERVER_NAME` env var
+- Guest onboarding: admin invites via dashboard, auto-creates Jellyfin user, sends welcome email with credentials
+- Admin = first `ALLOWED_EMAILS` entry or explicit `ADMIN_EMAIL` env var
+- Guests stored in SQLite `guests` table (supplement `ALLOWED_EMAILS` env var)
+- Guest library isolation: separate Jellyfin libraries (Guest Movies `/movies-guests`, Guest TV Shows `/tv-guests`)
+- Guest Jellyfin users auto-restricted to guest libraries via `EnableAllFolders=false` + `EnabledFolders`
+- Sonarr/Radarr have guest root folders (`/data/media/movies-guests`, `/data/media/tv-guests`)
+- Seerr guest setup automated: invite flow imports user into Seerr and sets guest root folders
 
 ## Email Notifications
 - Sonarr/Radarr: onImportComplete, onUpgrade, onHealthIssue (onGrab disabled — low value noise)

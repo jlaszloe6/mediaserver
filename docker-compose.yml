@@ -20,6 +20,8 @@ services:
       - ./config/jellyfin:/config
       - ${MEDIA_ROOT}/media/tv:/tv:ro
       - ${MEDIA_ROOT}/media/movies:/movies:ro
+      - ${MEDIA_ROOT}/media/tv-guests:/tv-guests:ro
+      - ${MEDIA_ROOT}/media/movies-guests:/movies-guests:ro
     mem_limit: 4g
     restart: unless-stopped
     security_opt:
@@ -228,6 +230,7 @@ services:
       - BASE_URL=${STATUSPAGE_BASE_URL}
       - SONARR_API_KEY=${SONARR_API_KEY}
       - RADARR_API_KEY=${RADARR_API_KEY}
+      - JELLYFIN_API_KEY=${JELLYFIN_API_KEY}
       - JELLYFIN_EXTERNAL_URL=${JELLYFIN_EXTERNAL_URL}
       - PROWLARR_API_KEY=${PROWLARR_API_KEY}
       - SMTP_SERVER=${SMTP_SERVER}
