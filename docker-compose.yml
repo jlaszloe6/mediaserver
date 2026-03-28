@@ -18,10 +18,10 @@ services:
       - TZ=Europe/Budapest
     volumes:
       - ./config/jellyfin:/config
-      - ${MEDIA_ROOT}/media/tv:/tv:ro
-      - ${MEDIA_ROOT}/media/movies:/movies:ro
-      - ${MEDIA_ROOT}/media/tv-guests:/tv-guests:ro
-      - ${MEDIA_ROOT}/media/movies-guests:/movies-guests:ro
+      - ${MEDIA_ROOT}/media/tv:/tv
+      - ${MEDIA_ROOT}/media/movies:/movies
+      - ${MEDIA_ROOT}/media/tv-guests:/tv-guests
+      - ${MEDIA_ROOT}/media/movies-guests:/movies-guests
     mem_limit: 4g
     restart: unless-stopped
     security_opt:
