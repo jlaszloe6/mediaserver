@@ -12,6 +12,7 @@ SONARR_KEY = os.environ.get("SONARR_API_KEY", "")
 RADARR_URL = "http://radarr:7878"
 RADARR_KEY = os.environ.get("RADARR_API_KEY", "")
 JELLYFIN_URL = "http://jellyfin:8096"
+JELLYFIN_API_KEY = os.environ.get("JELLYFIN_API_KEY", "")
 JELLYFIN_EXTERNAL_URL = os.environ.get("JELLYFIN_EXTERNAL_URL", "")
 TRANSMISSION_URL = "http://transmission:9091/transmission/rpc"
 PROWLARR_URL = "http://prowlarr:9696"
@@ -32,6 +33,8 @@ SMTP_FROM = os.environ.get("SMTP_FROM", "")
 # Rate limiting (stored in SQLite login_tokens table)
 RATE_LIMIT_MAX = 3
 RATE_LIMIT_WINDOW = 600  # 10 minutes
+
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "").strip().lower() or (ALLOWED_EMAILS[0] if ALLOWED_EMAILS else "")
 
 API_TIMEOUT = 3
 HNR_HOURS = 72  # nCore H&R policy

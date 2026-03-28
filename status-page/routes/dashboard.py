@@ -7,13 +7,13 @@ from zoneinfo import ZoneInfo
 import requests
 from flask import Blueprint, render_template, session
 
-from auth import login_required
+from auth import is_admin, login_required
 from config import (
     API_TIMEOUT, HNR_HOURS, JELLYFIN_URL,
     PROWLARR_KEY, PROWLARR_URL, RADARR_KEY, RADARR_URL, SEERR_URL,
     SERVER_NAME, SONARR_KEY, SONARR_URL, TRANSMISSION_URL,
 )
-from db import get_db
+from db import get_db, get_guests
 
 dashboard_bp = Blueprint("dashboard_bp", __name__)
 
@@ -325,6 +325,8 @@ def dashboard():
     diff = compute_diff(prev_snapshot, snapshot)
     save_snapshot(email, snapshot)
 
+    guests = get_guests() if is_admin() else []
+
     return render_template(
         "dashboard.html",
         health=results.get("health") or [],
@@ -336,4 +338,5 @@ def dashboard():
         diff=diff,
         prev_timestamp=prev_timestamp,
         server_name=SERVER_NAME,
+        guests=guests,
     )
