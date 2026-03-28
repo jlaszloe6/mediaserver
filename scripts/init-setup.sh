@@ -817,9 +817,13 @@ if [ -n "$JELLYFIN_KEY" ]; then
         else
             resp_code=$(curl -s -o /dev/null -w '%{http_code}' -X POST $JHEADERS \
                 "$JELLYFIN_URL/Library/VirtualFolders?name=Guest+Movies&collectionType=movies&refreshLibrary=false" \
-                -H "Content-Type: application/json" \
-                -d '{"LibraryOptions":{},"PathInfos":[{"Path":"/movies-guests"}]}')
+                -H "Content-Type: application/json" -d '{}')
             if [ "$resp_code" = "200" ] || [ "$resp_code" = "204" ]; then
+                # Add path separately (PathInfos in creation body is ignored by Jellyfin)
+                curl -s -o /dev/null -X POST $JHEADERS \
+                    "$JELLYFIN_URL/Library/VirtualFolders/Paths?refreshLibrary=false" \
+                    -H "Content-Type: application/json" \
+                    -d '{"Name":"Guest Movies","PathInfo":{"Path":"/movies-guests"}}'
                 log_ok "Created Jellyfin 'Guest Movies' library (/movies-guests)"
             else
                 log_err "Failed to create Guest Movies library (HTTP $resp_code)"
@@ -836,9 +840,12 @@ if [ -n "$JELLYFIN_KEY" ]; then
         else
             resp_code=$(curl -s -o /dev/null -w '%{http_code}' -X POST $JHEADERS \
                 "$JELLYFIN_URL/Library/VirtualFolders?name=Guest+TV+Shows&collectionType=tvshows&refreshLibrary=false" \
-                -H "Content-Type: application/json" \
-                -d '{"LibraryOptions":{},"PathInfos":[{"Path":"/tv-guests"}]}')
+                -H "Content-Type: application/json" -d '{}')
             if [ "$resp_code" = "200" ] || [ "$resp_code" = "204" ]; then
+                curl -s -o /dev/null -X POST $JHEADERS \
+                    "$JELLYFIN_URL/Library/VirtualFolders/Paths?refreshLibrary=false" \
+                    -H "Content-Type: application/json" \
+                    -d '{"Name":"Guest TV Shows","PathInfo":{"Path":"/tv-guests"}}'
                 log_ok "Created Jellyfin 'Guest TV Shows' library (/tv-guests)"
             else
                 log_err "Failed to create Guest TV Shows library (HTTP $resp_code)"
