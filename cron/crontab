@@ -10,5 +10,8 @@
 # GeoIP database update (weekly Sunday 2am)
 0 2 * * 0 /scripts/geodb-update.sh >> /var/log/cron/geodb-update.log 2>&1
 
+# Jellyfin library scan - every 15 min (covers manual additions outside Sonarr/Radarr)
+*/15 * * * * /scripts/jellyfin-scan.sh >> /var/log/cron/jellyfin-scan.log 2>&1
+
 # Config backup to NAS (daily 2:30am)
 30 2 * * * /scripts/backup.sh >> /var/log/cron/backup.log 2>&1
