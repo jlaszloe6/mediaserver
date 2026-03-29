@@ -64,6 +64,7 @@ Services: Jellyfin, Transmission, Sonarr, Radarr, Prowlarr, Seerr, Caddy, DuckDN
 | `*/30 * * * *` | `queue-cleanup.sh` | Auto-fix stuck imports, reject suspicious files |
 | `0 3 * * *` | `jellyfin-watched-cleanup.sh` | Remove media watched 30+ days ago |
 | `* * * * *` | `jellyfin-scan.sh` | Trigger Jellyfin library scan (covers manual additions) |
+| `*/30 * * * *` | `pipeline-monitor.sh` | Check pipeline health, email admin on issues |
 | `30 2 * * *` | `backup.sh` | Config backup to NAS |
 | `0 2 * * 0` | `geodb-update.sh` | Weekly GeoIP DB refresh |
 
