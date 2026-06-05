@@ -121,6 +121,34 @@ services:
       retries: 3
 
 
+  bazarr:
+    # bazarr latest — subtitle automation for Sonarr/Radarr
+    image: lscr.io/linuxserver/bazarr@sha256:4b5e510042bf471c8bafab89cada9774fba2fb25f16ec64235151cacbe847c10
+    container_name: bazarr
+    networks:
+      - mediaserver
+    depends_on:
+      - sonarr
+      - radarr
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - TZ=Europe/Budapest
+    volumes:
+      - ./config/bazarr:/config
+      # Must match Sonarr/Radarr (${MEDIA_ROOT}:/data) so episode paths map 1:1
+      - ${MEDIA_ROOT}:/data
+    mem_limit: 512m
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:6767/ >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+
   prowlarr:
     # prowlarr v1.32.2
     image: lscr.io/linuxserver/prowlarr@sha256:a8fe7b9c502f979146b6d0f22438b825c38e068241bb8a708c473062dffdbb03

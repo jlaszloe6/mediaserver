@@ -6,7 +6,7 @@ Docker Compose stack running on the server (`$SERVER_IP`). Runtime directory: `/
 
 ## Stack
 
-Services: Jellyfin, Transmission, Sonarr, Radarr, Prowlarr, Seerr, Caddy, DuckDNS, Cron, Statuspage
+Services: Jellyfin, Transmission, Sonarr, Radarr, Prowlarr, Bazarr, Seerr, Caddy, DuckDNS, Cron, Statuspage
 
 ### Networking
 - Custom bridge network `mediaserver` for all services
@@ -51,6 +51,15 @@ Services: Jellyfin, Transmission, Sonarr, Radarr, Prowlarr, Seerr, Caddy, DuckDN
 - Indexers: EZTV, YTS, The Pirate Bay, LimeTorrents, Knaben
 - Prowlarr syncs to Sonarr + Radarr via `ApplicationIndexerSync` (fullSync)
 - Transmission download client: ratio 2.0, idle 30 min
+
+## Bazarr Subtitles
+- Image: `lscr.io/linuxserver/bazarr:latest` (PUID/PGID), internal-only (no published port)
+- Volume `${MEDIA_ROOT}:/data` matches Sonarr/Radarr exactly so episode/movie paths map 1:1 (no Bazarr path mappings needed)
+- Connects to `sonarr:8989` and `radarr:7878` via their API keys; pulls media lists and writes sidecar `.srt` next to each file
+- Language profile: English only (matches [[user_language_preferences]] — English content → English subs)
+- Providers: free no-account ones enabled by default (OpenSubtitles.com optional, needs account)
+- Admin UI on port 6767 — reach via SSH tunnel: `ssh -L 6767:localhost:6767 freya-pc`
+- Many older releases lack English sub tracks (esp. French "MULTI" releases that embed only French subs) — Bazarr backfills these
 
 ## Quality & Language Preferences
 - Profile "HD-1080p Max" (id=1): prefers Bluray-1080p, 4K as fallback only
