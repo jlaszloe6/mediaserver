@@ -3,7 +3,7 @@ FROM caddy:2-builder@sha256:d4f984844fc3b867ac88fd814285a38eaaf5b3ecadb9ca1b3b03
 RUN xcaddy build \
     --with github.com/caddy-dns/duckdns \
     --with github.com/porech/caddy-maxmind-geolocation
-FROM caddy:2
+FROM caddy:2@sha256:af5fdcd76f2db5e4e974ee92f96ee8c0fc3edb55bd4ba5032547cbf3f65e486d
 RUN apk add --no-cache curl
 COPY --from=builder /usr/bin/caddy /usr/bin/caddy
 COPY download-geodb.sh /usr/local/bin/download-geodb.sh
