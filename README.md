@@ -46,7 +46,9 @@ Delete from Jellyfin ──► jellyfin-cleanup.sh ─────────�
 | Cron | Scheduled tasks | — (internal) |
 | Statuspage | Dashboard + health monitoring | — (internal) |
 
-LAN ports are bound to `$SERVER_IP` only (same pattern as Jellyfin), so they're reachable from your local network but not exposed to the internet. Everything else is internal-only, reachable via Docker service name on the `mediaserver` bridge network, and (for Jellyfin, Seerr, Statuspage) additionally proxied through Caddy for remote HTTPS access.
+LAN ports are bound to `$SERVER_IP` only (same pattern as Jellyfin), so they're reachable from your local network but not exposed to the internet. Everything else is internal-only, reachable via Docker service name on the `mediaserver` bridge network, and (for Jellyfin, Seerr, Statuspage, Navidrome, Audiobookshelf) additionally proxied through Caddy for remote HTTPS access.
+
+Lidarr/Sonarr/Radarr/Prowlarr are deliberately NOT proxied through Caddy — they stay LAN-only (VPN back to the LAN if you need remote admin access). Lidarr in particular has no built-in login enabled by default, so exposing it publicly would give unauthenticated internet access to its admin UI.
 
 ## Music & Audiobooks
 
@@ -90,7 +92,7 @@ $MEDIA_ROOT/
 
 - **Tempo/Tempus**: exposes a standard media-browser interface to Android Auto for artist/album/playlist browsing, same as any Subsonic client — no extra config needed beyond pairing the app with Navidrome.
 - **Audiobookshelf app**: supports Android Auto for browsing and playback controls.
-- Both require the phone to actually reach Navidrome/Audiobookshelf over the network. On LAN this works immediately; for use away from home (e.g. driving) you'd need either a VPN back to the LAN or a Caddy reverse-proxy entry + DuckDNS subdomain for each service (same pattern as Jellyfin/Seerr) — not set up by default, since the ports above are LAN-only.
+- Both are reachable away from home (e.g. driving) via Caddy + DuckDNS, same pattern as Jellyfin/Seerr: `$CADDY_DOMAIN_NAVIDROME` and `$CADDY_DOMAIN_AUDIOBOOKSHELF`. Point the mobile apps at those HTTPS URLs instead of the LAN IP if you want them to work off-network. GeoIP filtering (see [Security Model](../../wiki/Security-Model)) applies the same as it does for Jellyfin/Seerr — only LAN IPs and the allowed country pass through.
 
 ## Quick Start
 
