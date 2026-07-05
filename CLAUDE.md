@@ -97,6 +97,13 @@ Services: Jellyfin, Transmission, Sonarr, Radarr, Prowlarr, Bazarr, Seerr, Caddy
 - Removes from Sonarr/Radarr if watched 30+ days ago (with import exclusion)
 - Matches by TMDB ID (movies) and TVDB ID (series)
 
+## Audiobook Import
+- No acquisition app for audiobooks (Readarr is discontinued) — grabbed manually into Transmission under the `audiobooks` category
+- `audiobook-import.sh` copies anything in `$MEDIA_ROOT/torrents/complete/audiobooks` into `$MEDIA_ROOT/media/audiobooks` (copy, not move — leaves the original for nCore's 72h H&R seeding requirement), then triggers an Audiobookshelf library scan
+- Idempotent — skips items already present in the destination
+- Not currently wired into the crontab; run manually (`./scripts/audiobook-import.sh` or `--dry-run`) after adding an audiobook torrent
+- Requires `AUDIOBOOKSHELF_API_KEY` in `.env` — create via Settings → Users → API Keys in the Audiobookshelf UI (must have `isActive: true`, the API defaults new keys to inactive)
+
 ## Status Page
 - Flask + SQLite, bridge network (port 8080), magic link auth
 - Modular structure: `app.py` (init) → `config.py`, `db.py`, `auth.py`, `services/*`, `routes/*`
