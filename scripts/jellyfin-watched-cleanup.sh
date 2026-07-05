@@ -77,7 +77,8 @@ for user_id in $user_ids; do
     played_movies=$(curl -sf $HEADERS \
         "$JELLYFIN_URL/Users/$user_id/Items?IsPlayed=true&Recursive=true&IncludeItemTypes=Movie&Fields=ProviderIds" 2>/dev/null) || continue
 
-    echo "$played_movies" | jq -c '.Items[]' 2>/dev/null | while IFS= read -r item; do
+    while IFS= read -r item; do
+        [ -z "$item" ] && continue
         last_played=$(echo "$item" | jq -r '.UserData.LastPlayedDate // empty')
         [ -z "$last_played" ] && continue
 
@@ -112,7 +113,7 @@ for user_id in $user_ids; do
             log "  ERROR: Failed to remove movie '$title' (HTTP $del_code)"
             ERRORS=$((ERRORS + 1))
         fi
-    done
+    done < <(echo "$played_movies" | jq -c '.Items[]' 2>/dev/null)
 done
 
 log "  Movies removed: $REMOVED_MOVIES"
@@ -134,21 +135,35 @@ for user_id in $user_ids; do
     played_series=$(curl -sf $HEADERS \
         "$JELLYFIN_URL/Users/$user_id/Items?IsPlayed=true&Recursive=true&IncludeItemTypes=Series&Fields=ProviderIds" 2>/dev/null) || continue
 
-    echo "$played_series" | jq -c '.Items[]' 2>/dev/null | while IFS= read -r item; do
-        last_played=$(echo "$item" | jq -r '.UserData.LastPlayedDate // empty')
+    while IFS= read -r item; do
+        [ -z "$item" ] && continue
+        series_id=$(echo "$item" | jq -r '.Id')
+        title=$(echo "$item" | jq -r '.Name')
+
+        # Jellyfin never sets UserData.LastPlayedDate on the series item
+        # itself, only on individual episodes, so derive it from the most
+        # recently watched episode instead.
+        last_played=$(curl -sf $HEADERS \
+            "$JELLYFIN_URL/Users/$user_id/Items?ParentId=$series_id&Recursive=true&IncludeItemTypes=Episode&IsPlayed=true" 2>/dev/null \
+            | jq -r '[.Items[].UserData.LastPlayedDate // empty] | max // empty')
         [ -z "$last_played" ] && continue
 
         if [[ "$last_played" > "$CUTOFF" ]]; then
             continue
         fi
 
-        title=$(echo "$item" | jq -r '.Name')
         tvdb_id=$(echo "$item" | jq -r '.ProviderIds.Tvdb // empty')
 
-        [ -z "$tvdb_id" ] && continue
+        sonarr_id=""
+        if [ -n "$tvdb_id" ]; then
+            sonarr_id=$(echo "$sonarr_series" | jq -r ".[] | select(.tvdbId == ($tvdb_id | tonumber)) | .id" 2>/dev/null)
+        fi
 
-        # Find in Sonarr by TVDB ID
-        sonarr_id=$(echo "$sonarr_series" | jq -r ".[] | select(.tvdbId == ($tvdb_id | tonumber)) | .id" 2>/dev/null)
+        # Some series lack a TVDB provider id in Jellyfin; fall back to an
+        # exact title match against Sonarr
+        if [ -z "$sonarr_id" ]; then
+            sonarr_id=$(echo "$sonarr_series" | jq -r ".[] | select(.title == \"$title\") | .id" 2>/dev/null)
+        fi
         [ -z "$sonarr_id" ] && continue
 
         if $DRY_RUN; then
@@ -168,7 +183,7 @@ for user_id in $user_ids; do
             log "  ERROR: Failed to remove series '$title' (HTTP $del_code)"
             ERRORS=$((ERRORS + 1))
         fi
-    done
+    done < <(echo "$played_series" | jq -c '.Items[]' 2>/dev/null)
 done
 
 log "  Series removed: $REMOVED_SERIES"
