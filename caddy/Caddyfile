@@ -76,3 +76,27 @@
 		header_up X-Real-IP {remote_host}
 	}
 }
+
+{$CADDY_DOMAIN_NAVIDROME} {
+	tls {
+		dns duckdns {env.DUCKDNS_TOKEN}
+	}
+	import base_headers
+	import strict_csp
+	import geoip_hungary
+	reverse_proxy navidrome:4533 {
+		header_up X-Real-IP {remote_host}
+	}
+}
+
+{$CADDY_DOMAIN_AUDIOBOOKSHELF} {
+	tls {
+		dns duckdns {env.DUCKDNS_TOKEN}
+	}
+	import base_headers
+	import strict_csp
+	import geoip_hungary
+	reverse_proxy audiobookshelf:13378 {
+		header_up X-Real-IP {remote_host}
+	}
+}

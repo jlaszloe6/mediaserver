@@ -35,8 +35,9 @@ Services: Jellyfin, Transmission, Sonarr, Radarr, Prowlarr, Bazarr, Seerr, Caddy
 
 ## Caddy Reverse Proxy
 - Custom build with duckdns DNS plugin + maxmind GeoIP plugin
-- Caddyfile uses env vars: `$CADDY_DOMAIN_JELLYFIN`, `$CADDY_DOMAIN_SEERR`, `$CADDY_DOMAIN_STATUS`
-- Reverse proxies to Docker service names on bridge network (jellyfin:8096, seerr:5055, statuspage:8080)
+- Caddyfile uses env vars: `$CADDY_DOMAIN_JELLYFIN`, `$CADDY_DOMAIN_SEERR`, `$CADDY_DOMAIN_STATUS`, `$CADDY_DOMAIN_NAVIDROME`, `$CADDY_DOMAIN_AUDIOBOOKSHELF`
+- Reverse proxies to Docker service names on bridge network (jellyfin:8096, seerr:5055, statuspage:8080, navidrome:4533, audiobookshelf:13378)
+- Lidarr/Sonarr/Radarr/Prowlarr are intentionally NOT proxied — admin UIs stay LAN-only (Lidarr in particular has no built-in auth enabled)
 - GeoIP country filter via MaxMind GeoLite2-Country (allowed countries configurable), LAN IPs pass through
 - TLS via Let's Encrypt DNS-01 challenge (auto-renewal)
 - Build requires `network: host` in compose (IPv6 unreachable in default bridge)
