@@ -217,7 +217,7 @@ tar -czf "$PLAINTEXT_TAR" -C "$STAGING" .
 
 BACKUP_FILE="$BACKUP_DIR/backup-$TIMESTAMP.tar.gz.enc"
 log "Encrypting..."
-openssl enc -aes-256-cbc -salt -pbkdf2 -in "$PLAINTEXT_TAR" -out "$BACKUP_FILE" -pass "pass:$BACKUP_ENCRYPTION_KEY"
+openssl enc -aes-256-cbc -salt -pbkdf2 -in "$PLAINTEXT_TAR" -out "$BACKUP_FILE" -pass env:BACKUP_ENCRYPTION_KEY
 log "  Encrypted with AES-256-CBC"
 
 BACKUP_SIZE="$(du -sh "$BACKUP_FILE" | cut -f1)"

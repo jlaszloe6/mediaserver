@@ -123,7 +123,7 @@ if [[ "$BACKUP_FILE" == *.enc ]]; then
     RESTORE_TMPDIR="$(mktemp -d)"
     chmod 700 "$RESTORE_TMPDIR"
     TAR_FILE="$RESTORE_TMPDIR/decrypted.tar.gz"
-    if ! openssl enc -d -aes-256-cbc -pbkdf2 -in "$BACKUP_FILE" -out "$TAR_FILE" -pass "pass:$BACKUP_ENCRYPTION_KEY" 2>/dev/null; then
+    if ! openssl enc -d -aes-256-cbc -pbkdf2 -in "$BACKUP_FILE" -out "$TAR_FILE" -pass env:BACKUP_ENCRYPTION_KEY 2>/dev/null; then
         echo "ERROR: Decryption failed — check BACKUP_ENCRYPTION_KEY matches the key used to create this backup" >&2
         exit 1
     fi
