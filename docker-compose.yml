@@ -149,6 +149,36 @@ services:
       retries: 3
 
 
+  lidarr:
+    # lidarr v3.1.0.4875-ls33 — music acquisition/management (Sonarr/Radarr equivalent for music)
+    image: lscr.io/linuxserver/lidarr@sha256:ba7d43fd5d7de790c38c2dc8f2b2b54c1ac00a452784891c37385a43a039907a
+    container_name: lidarr
+    networks:
+      - mediaserver
+    ports:
+      - "${SERVER_IP:-127.0.0.1}:8686:8686"
+    depends_on:
+      - transmission
+      - prowlarr
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - TZ=Europe/Budapest
+    volumes:
+      - ./config/lidarr:/config
+      # Same whole-root mount as Sonarr/Radarr so /downloads and /media/music map 1:1
+      - ${MEDIA_ROOT}:/data
+    mem_limit: 1g
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8686/ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+
   prowlarr:
     # prowlarr v1.32.2
     image: lscr.io/linuxserver/prowlarr@sha256:a8fe7b9c502f979146b6d0f22438b825c38e068241bb8a708c473062dffdbb03
@@ -191,6 +221,65 @@ services:
       - no-new-privileges:true
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://localhost:5055/api/v1/status || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+
+  navidrome:
+    # navidrome v0.62.0 — lightweight Subsonic/OpenSubsonic-compatible music server
+    image: deluan/navidrome@sha256:c4b5cb36a790b3eb63ca6a68bbe2fe149c2d7fa2e586f7a480e61db630e6664b
+    container_name: navidrome
+    networks:
+      - mediaserver
+    ports:
+      - "${SERVER_IP:-127.0.0.1}:4533:4533"
+    # Official image has no PUID/PGID (linuxserver-style) support; it runs as
+    # whatever `user:` is set to, so align it directly with the mediaserver
+    # system user instead (same reasoning as Seerr's fixed UID 1000 case).
+    user: "${PUID:-1000}:${PGID:-1000}"
+    environment:
+      - TZ=Europe/Budapest
+    volumes:
+      - ./config/navidrome:/data
+      - ${MEDIA_ROOT}/media/music:/music:ro
+    mem_limit: 1g
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      # Official image is a bare Go binary + busybox — no curl, only wget
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:4533/ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+
+  audiobookshelf:
+    # audiobookshelf v2.35.1 — audiobook server
+    image: ghcr.io/advplyr/audiobookshelf@sha256:1eef6716183c52abafe5405e7d6be8390248ecd59c7488c44af871757ac8fc4d
+    container_name: audiobookshelf
+    networks:
+      - mediaserver
+    ports:
+      - "${SERVER_IP:-127.0.0.1}:13378:13378"
+    # Official image has no PUID/PGID (linuxserver-style) support; it runs as
+    # whatever `user:` is set to, so align it directly with the mediaserver
+    # system user instead (same reasoning as Seerr's fixed UID 1000 case).
+    user: "${PUID:-1000}:${PGID:-1000}"
+    environment:
+      - TZ=Europe/Budapest
+      - PORT=13378
+    volumes:
+      - ./config/audiobookshelf/config:/config
+      - ./config/audiobookshelf/metadata:/metadata
+      - ${MEDIA_ROOT}/media/audiobooks:/audiobooks
+    mem_limit: 1g
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:13378/ || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
