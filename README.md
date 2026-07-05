@@ -54,8 +54,10 @@ Lidarr/Sonarr/Radarr/Prowlarr are deliberately NOT proxied through Caddy — the
 
 ```
 Music:      Lidarr ──► Prowlarr ──► Indexers ──► Transmission ──► /media/music ──► Navidrome ──► Tempo/Tempus (Android)
-Audiobooks: (manual/other acquisition) ──► /media/audiobooks ──► Audiobookshelf ──► Audiobookshelf app (Android)
+Audiobooks: Transmission (manual grab, "audiobooks" category) ──► scripts/audiobook-import.sh ──► /media/audiobooks ──► Audiobookshelf ──► Audiobookshelf app (Android)
 ```
+
+There's no Lidarr/Sonarr-equivalent acquisition app for audiobooks (Readarr is discontinued) — search Prowlarr manually, add the torrent to Transmission under the `audiobooks` category, then run `./scripts/audiobook-import.sh` to copy it into `/media/audiobooks` and trigger an Audiobookshelf scan. It copies rather than moves, so nCore's 72h seeding requirement is unaffected, and it's idempotent — safe to re-run.
 
 ### Folder structure
 
@@ -78,7 +80,7 @@ $MEDIA_ROOT/
 3. `docker compose up -d` — brings up `lidarr`, `navidrome`, `audiobookshelf` alongside the rest of the stack.
 4. **Lidarr** (`http://$SERVER_IP:8686`): complete the setup wizard, add `/data/media/music` as a root folder, add Transmission as a download client (same host/port/credentials as in Sonarr/Radarr), and add Lidarr as an application in **Prowlarr → Settings → Apps** so indexers sync automatically (mirrors the existing Sonarr/Radarr sync). Copy the API key into `.env` as `LIDARR_API_KEY`.
 5. **Navidrome** (`http://$SERVER_IP:4533`): create the admin account on first visit; it auto-scans `/music` on startup and picks up new albums as Lidarr downloads them.
-6. **Audiobookshelf** (`http://$SERVER_IP:13378`): create the admin account, then add an Audiobooks library pointed at `/audiobooks`.
+6. **Audiobookshelf** (`http://$SERVER_IP:13378`): create the admin account, then add an Audiobooks library pointed at `/audiobooks`. Create an API key (Settings → Users → API Keys — must be created with **Active** checked, the API defaults new keys to inactive) and copy it into `.env` as `AUDIOBOOKSHELF_API_KEY` for `scripts/audiobook-import.sh` to use.
 7. Note: `init-setup.sh` and `backup.sh` do not yet automate these three services (unlike Sonarr/Radarr/Prowlarr) — steps above are manual for now, and their configs won't be included in the nightly backup until those scripts are extended.
 
 ### Recommended Android apps
