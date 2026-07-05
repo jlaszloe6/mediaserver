@@ -37,6 +37,22 @@ TIMESTAMP="$(date '+%Y%m%d-%H%M%S')"
 STAGING="/tmp/backup-$TIMESTAMP"
 WARNINGS=0
 
+# Both the staging dir and the plaintext pre-encryption tarball contain
+# secrets (.env, SSH deploy keys) — clean them up on any exit, including a
+# crash partway through (e.g. openssl missing/failing), not just success.
+cleanup_backup_tmp() {
+    rm -rf "$STAGING" "$STAGING.tar.gz"
+}
+trap cleanup_backup_tmp EXIT
+
+# Backups contain .env, API keys, SMTP credentials, and SSH deploy keys —
+# encryption is mandatory, not optional. See CLAUDE.md / .env.example.
+if [ -z "$BACKUP_ENCRYPTION_KEY" ] && [ "$DRY_RUN" = false ]; then
+    echo "ERROR: BACKUP_ENCRYPTION_KEY not set. Backups contain secrets (.env, API keys, SSH deploy keys) and must not be written unencrypted." >&2
+    echo "Set BACKUP_ENCRYPTION_KEY in .env before running backup.sh." >&2
+    exit 1
+fi
+
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
 }
@@ -191,26 +207,23 @@ done
 echo "" >> "$MANIFEST"
 echo "Warnings: $WARNINGS" >> "$MANIFEST"
 
-# --- Compress ---
+# --- Compress + encrypt ---
+# The plaintext tarball is built outside $BACKUP_DIR and never written there —
+# only the encrypted .enc file lands in the backup destination.
 
 log "Compressing..."
-BACKUP_FILE="$BACKUP_DIR/backup-$TIMESTAMP.tar.gz"
-tar -czf "$BACKUP_FILE" -C "$STAGING" .
+PLAINTEXT_TAR="$STAGING.tar.gz"
+tar -czf "$PLAINTEXT_TAR" -C "$STAGING" .
 
-# Encrypt if key is configured (backup contains .env, API keys, SMTP credentials, SSH keys)
-if [ -n "$BACKUP_ENCRYPTION_KEY" ]; then
-    openssl enc -aes-256-cbc -salt -pbkdf2 -in "$BACKUP_FILE" -out "${BACKUP_FILE}.enc" -pass "pass:$BACKUP_ENCRYPTION_KEY"
-    rm -f "$BACKUP_FILE"
-    BACKUP_FILE="${BACKUP_FILE}.enc"
-    log "  Encrypted with AES-256-CBC"
-fi
+BACKUP_FILE="$BACKUP_DIR/backup-$TIMESTAMP.tar.gz.enc"
+log "Encrypting..."
+openssl enc -aes-256-cbc -salt -pbkdf2 -in "$PLAINTEXT_TAR" -out "$BACKUP_FILE" -pass "pass:$BACKUP_ENCRYPTION_KEY"
+log "  Encrypted with AES-256-CBC"
 
 BACKUP_SIZE="$(du -sh "$BACKUP_FILE" | cut -f1)"
 log "  $(basename "$BACKUP_FILE"): $BACKUP_SIZE"
 
-# --- Cleanup staging ---
-
-rm -rf "$STAGING"
+# Staging dir and plaintext tarball are removed by the EXIT trap above.
 
 # --- Rotation ---
 
