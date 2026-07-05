@@ -367,6 +367,7 @@ services:
       - SMTP_FROM=${SMTP_FROM}
       - TURNSTILE_SITE_KEY=${TURNSTILE_SITE_KEY}
       - TURNSTILE_SECRET_KEY=${TURNSTILE_SECRET_KEY}
+      - REQUIRE_TURNSTILE=${REQUIRE_TURNSTILE:-true}
       - SERVER_NAME=${SERVER_NAME:-Media Server}
     volumes:
       - ./config/statuspage:/app/data

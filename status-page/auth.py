@@ -7,7 +7,7 @@ from flask import Blueprint, abort, flash, redirect, render_template, request, s
 
 from config import (
     ADMIN_EMAIL, ALLOWED_EMAILS, RATE_LIMIT_MAX, RATE_LIMIT_WINDOW,
-    TURNSTILE_SECRET_KEY, TURNSTILE_SITE_KEY,
+    REQUIRE_TURNSTILE, TURNSTILE_SECRET_KEY, TURNSTILE_SITE_KEY,
 )
 from db import get_db, get_all_guest_emails
 from services.email import send_magic_link, send_user_guide
@@ -56,9 +56,14 @@ def cleanup_expired_tokens():
 
 
 def verify_turnstile(token):
-    """Verify Cloudflare Turnstile response. Returns True if valid or if Turnstile is not configured."""
+    """Verify Cloudflare Turnstile response.
+
+    Fails closed if Turnstile isn't configured: an unconfigured production
+    deploy shouldn't silently lose its captcha protection. Set
+    REQUIRE_TURNSTILE=false to explicitly opt out (e.g. local dev).
+    """
     if not TURNSTILE_SECRET_KEY:
-        return True
+        return not REQUIRE_TURNSTILE
     try:
         r = requests.post("https://challenges.cloudflare.com/turnstile/v0/siteverify",
                           data={"secret": TURNSTILE_SECRET_KEY, "response": token}, timeout=5)
@@ -228,8 +233,10 @@ def send_guide():
     return redirect(url_for("dashboard_bp.dashboard"))
 
 
-@auth_bp.route("/logout")
+@auth_bp.route("/logout", methods=["POST"])
 def logout():
+    if not check_csrf():
+        abort(403)
     session.clear()
     flash("Logged out.", "info")
     return redirect(url_for("auth_bp.login"))
