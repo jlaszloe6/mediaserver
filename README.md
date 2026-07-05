@@ -72,11 +72,12 @@ $MEDIA_ROOT/
 ### First-run setup
 
 1. `mkdir -p "$MEDIA_ROOT"/media/{music,audiobooks}` (Lidarr/Navidrome/Audiobookshelf don't auto-create these the way `init-setup.sh` does for guest libraries — create them before `docker compose up -d`, owned by the `mediaserver` user).
-2. `docker compose up -d` — brings up `lidarr`, `navidrome`, `audiobookshelf` alongside the rest of the stack.
-3. **Lidarr** (`http://$SERVER_IP:8686`): complete the setup wizard, add `/data/media/music` as a root folder, add Transmission as a download client (same host/port/credentials as in Sonarr/Radarr), and add Lidarr as an application in **Prowlarr → Settings → Apps** so indexers sync automatically (mirrors the existing Sonarr/Radarr sync). Copy the API key into `.env` as `LIDARR_API_KEY`.
-4. **Navidrome** (`http://$SERVER_IP:4533`): create the admin account on first visit; it auto-scans `/music` on startup and picks up new albums as Lidarr downloads them.
-5. **Audiobookshelf** (`http://$SERVER_IP:13378`): create the admin account, then add an Audiobooks library pointed at `/audiobooks`.
-6. Note: `init-setup.sh` and `backup.sh` do not yet automate these three services (unlike Sonarr/Radarr/Prowlarr) — steps above are manual for now, and their configs won't be included in the nightly backup until those scripts are extended.
+2. `mkdir -p config/navidrome config/audiobookshelf/config config/audiobookshelf/metadata && chown -R "$PUID:$PGID" config/navidrome config/audiobookshelf`. **This step is required, not optional**: unlike the linuxserver-based services in this stack, Navidrome and Audiobookshelf's official images run directly as the `user:` UID/GID with no startup step that fixes ownership. If Docker is left to auto-create these folders on first `up`, it creates them as `root:root`, and both containers will crash-loop on a database-open failure since they can't write as a non-root user. Sonarr/Radarr/Bazarr/Lidarr are unaffected — they're linuxserver images that self-correct ownership via PUID/PGID.
+3. `docker compose up -d` — brings up `lidarr`, `navidrome`, `audiobookshelf` alongside the rest of the stack.
+4. **Lidarr** (`http://$SERVER_IP:8686`): complete the setup wizard, add `/data/media/music` as a root folder, add Transmission as a download client (same host/port/credentials as in Sonarr/Radarr), and add Lidarr as an application in **Prowlarr → Settings → Apps** so indexers sync automatically (mirrors the existing Sonarr/Radarr sync). Copy the API key into `.env` as `LIDARR_API_KEY`.
+5. **Navidrome** (`http://$SERVER_IP:4533`): create the admin account on first visit; it auto-scans `/music` on startup and picks up new albums as Lidarr downloads them.
+6. **Audiobookshelf** (`http://$SERVER_IP:13378`): create the admin account, then add an Audiobooks library pointed at `/audiobooks`.
+7. Note: `init-setup.sh` and `backup.sh` do not yet automate these three services (unlike Sonarr/Radarr/Prowlarr) — steps above are manual for now, and their configs won't be included in the nightly backup until those scripts are extended.
 
 ### Recommended Android apps
 

@@ -248,7 +248,8 @@ services:
     security_opt:
       - no-new-privileges:true
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:4533/ping"]
+      # Official image is a bare Go binary + busybox — no curl, only wget
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:4533/ping"]
       interval: 30s
       timeout: 5s
       retries: 3
