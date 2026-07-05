@@ -255,7 +255,7 @@ services:
 
 
   audiobookshelf:
-    # audiobookshelf v2.35.1 — podcast/audiobook server
+    # audiobookshelf v2.35.1 — audiobook server
     image: ghcr.io/advplyr/audiobookshelf@sha256:1eef6716183c52abafe5405e7d6be8390248ecd59c7488c44af871757ac8fc4d
     container_name: audiobookshelf
     networks:
@@ -272,7 +272,6 @@ services:
     volumes:
       - ./config/audiobookshelf/config:/config
       - ./config/audiobookshelf/metadata:/metadata
-      - ${MEDIA_ROOT}/media/podcasts:/podcasts
       - ${MEDIA_ROOT}/media/audiobooks:/audiobooks
     mem_limit: 1g
     restart: unless-stopped
