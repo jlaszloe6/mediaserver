@@ -346,6 +346,10 @@ services:
     container_name: statuspage
     networks:
       - mediaserver
+    # Official python:3.12-slim image has no PUID/PGID support; runs as
+    # whatever `user:` is set to, so align it with the mediaserver system
+    # user (same reasoning as Navidrome/Audiobookshelf's fixed user: usage).
+    user: "${PUID:-1000}:${PGID:-1000}"
     environment:
       - SECRET_KEY=${STATUSPAGE_SECRET_KEY}
       - ALLOWED_EMAILS=${STATUSPAGE_ALLOWED_EMAILS}
@@ -363,6 +367,7 @@ services:
       - SMTP_FROM=${SMTP_FROM}
       - TURNSTILE_SITE_KEY=${TURNSTILE_SITE_KEY}
       - TURNSTILE_SECRET_KEY=${TURNSTILE_SECRET_KEY}
+      - REQUIRE_TURNSTILE=${REQUIRE_TURNSTILE:-true}
       - SERVER_NAME=${SERVER_NAME:-Media Server}
     volumes:
       - ./config/statuspage:/app/data

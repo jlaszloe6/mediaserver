@@ -23,6 +23,9 @@ SEERR_API_KEY = os.environ.get("SEERR_API_KEY", "")
 # Cloudflare Turnstile
 TURNSTILE_SITE_KEY = os.environ.get("TURNSTILE_SITE_KEY", "")
 TURNSTILE_SECRET_KEY = os.environ.get("TURNSTILE_SECRET_KEY", "")
+# Fail closed if Turnstile isn't configured, unless explicitly opted out (e.g.
+# for local dev without Cloudflare credentials). Defaults to required.
+REQUIRE_TURNSTILE = os.environ.get("REQUIRE_TURNSTILE", "true").strip().lower() != "false"
 
 # SMTP
 SMTP_SERVER = os.environ.get("SMTP_SERVER", "smtp-relay.brevo.com")

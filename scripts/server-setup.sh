@@ -40,11 +40,11 @@ echo ""
 
 # --- 1. Create mediaserver system user ---
 
-echo "[1/7] Creating mediaserver user..."
+echo "[1/8] Creating mediaserver user..."
 if id mediaserver &>/dev/null; then
     echo "  User 'mediaserver' already exists"
 else
-    useradd -r -s /bin/bash -d /opt/mediaserver mediaserver
+    useradd -r -s /usr/sbin/nologin -d /opt/mediaserver mediaserver
     echo "  Created user 'mediaserver'"
 fi
 usermod -aG docker mediaserver
@@ -55,7 +55,7 @@ chmod 2775 /opt/mediaserver
 
 # --- 2. NFS mount ---
 
-echo "[2/7] Setting up NFS mount..."
+echo "[2/8] Setting up NFS mount..."
 apt-get install -y -qq nfs-common
 mkdir -p "$MOUNT_POINT"
 
@@ -69,7 +69,7 @@ mount -a 2>/dev/null || true
 
 # --- 3. Docker waits for NFS ---
 
-echo "[3/7] Configuring Docker to wait for NFS..."
+echo "[3/8] Configuring Docker to wait for NFS..."
 mkdir -p /etc/systemd/system/docker.service.d
 cat > /etc/systemd/system/docker.service.d/wait-for-nfs.conf << EOF
 [Unit]
@@ -82,7 +82,7 @@ systemctl daemon-reload
 
 LAN_SUBNET="${LAN_SUBNET:-192.168.1.0/24}"
 
-echo "[4/7] Configuring UFW firewall..."
+echo "[4/8] Configuring UFW firewall..."
 ufw --force enable
 ufw default deny incoming
 ufw allow from "$LAN_SUBNET" to any port 22 proto tcp comment "SSH (LAN only)"
@@ -93,7 +93,7 @@ echo "  UFW rules configured"
 
 # --- 5. PAM SSH agent auth (passwordless sudo for key-based SSH) ---
 
-echo "[5/7] Setting up PAM SSH agent auth..."
+echo "[5/8] Setting up PAM SSH agent auth..."
 apt-get install -y -qq libpam-ssh-agent-auth
 
 # Copy admin user's authorized keys for sudo verification
@@ -115,15 +115,31 @@ visudo -c -f /etc/sudoers.d/ssh-agent
 
 # --- 6. SSH server config ---
 
-echo "[6/7] Configuring SSH server..."
+echo "[6/8] Configuring SSH server..."
 if ! grep -q '^AllowAgentForwarding yes' /etc/ssh/sshd_config; then
     echo 'AllowAgentForwarding yes' >> /etc/ssh/sshd_config
 fi
+if grep -q '^X11Forwarding yes' /etc/ssh/sshd_config; then
+    sed -i 's/^X11Forwarding yes/X11Forwarding no/' /etc/ssh/sshd_config
+elif ! grep -q '^X11Forwarding no' /etc/ssh/sshd_config; then
+    echo 'X11Forwarding no' >> /etc/ssh/sshd_config
+fi
 systemctl reload ssh
 
-# --- 7. Git safe directory ---
+# --- 7. fail2ban ---
 
-echo "[7/7] Setting git safe directory..."
+echo "[7/8] Setting up fail2ban..."
+apt-get install -y -qq fail2ban
+cat > /etc/fail2ban/jail.d/sshd.local << EOF
+[sshd]
+enabled = true
+EOF
+systemctl enable --now fail2ban
+systemctl reload fail2ban
+
+# --- 8. Git safe directory ---
+
+echo "[8/8] Setting git safe directory..."
 sudo -u mediaserver git config --global --add safe.directory /opt/mediaserver
 sudo -u "$ADMIN_USER" git config --global --add safe.directory /opt/mediaserver
 

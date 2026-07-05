@@ -8,6 +8,7 @@ RUN apk add --no-cache \
     sqlite \
     coreutils \
     grep \
+    openssl \
     && mkdir -p /var/log/cron /scripts
 
 COPY cron/crontab /etc/crontabs/root

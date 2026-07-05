@@ -69,10 +69,10 @@ fi
 if [ "${LIST_MODE:-false}" = true ]; then
     echo "Available backups in $BACKUP_DIR:"
     echo ""
-    if ls "$BACKUP_DIR"/backup-*.tar.gz 1>/dev/null 2>&1; then
-        ls -lht "$BACKUP_DIR"/backup-*.tar.gz | awk '{printf "  %-40s %s\n", $NF, $5}'
+    if ls "$BACKUP_DIR"/backup-*.tar.gz* 1>/dev/null 2>&1; then
+        ls -lht "$BACKUP_DIR"/backup-*.tar.gz* | awk '{printf "  %-44s %s\n", $NF, $5}'
         echo ""
-        total=$(ls "$BACKUP_DIR"/backup-*.tar.gz | wc -l)
+        total=$(ls "$BACKUP_DIR"/backup-*.tar.gz* | wc -l)
         total_size=$(du -sh "$BACKUP_DIR" 2>/dev/null | cut -f1)
         echo "$total backup(s), $total_size total"
     else
@@ -91,7 +91,7 @@ if [ -n "$TARGET_BACKUP" ]; then
         exit 1
     fi
 else
-    BACKUP_FILE="$(ls -t "$BACKUP_DIR"/backup-*.tar.gz 2>/dev/null | head -1)"
+    BACKUP_FILE="$(ls -t "$BACKUP_DIR"/backup-*.tar.gz* 2>/dev/null | head -1)"
     if [ -z "$BACKUP_FILE" ]; then
         echo "ERROR: No backups found in $BACKUP_DIR" >&2
         exit 1
@@ -103,6 +103,33 @@ BACKUP_SIZE="$(du -sh "$BACKUP_FILE" | cut -f1)"
 
 log "Selected backup: $BACKUP_NAME ($BACKUP_SIZE)"
 
+# --- Decrypt if needed ---
+# Encrypted backups (backup-*.tar.gz.enc) are the norm since backup.sh made
+# encryption mandatory. Older plaintext backup-*.tar.gz files (from before
+# that change) are still supported for restore.
+
+RESTORE_TMPDIR=""
+cleanup_restore_tmpdir() {
+    [ -n "$RESTORE_TMPDIR" ] && rm -rf "$RESTORE_TMPDIR"
+}
+trap cleanup_restore_tmpdir EXIT
+
+TAR_FILE="$BACKUP_FILE"
+if [[ "$BACKUP_FILE" == *.enc ]]; then
+    if [ -z "${BACKUP_ENCRYPTION_KEY:-}" ]; then
+        echo "ERROR: $BACKUP_NAME is encrypted but BACKUP_ENCRYPTION_KEY is not set in .env" >&2
+        exit 1
+    fi
+    RESTORE_TMPDIR="$(mktemp -d)"
+    chmod 700 "$RESTORE_TMPDIR"
+    TAR_FILE="$RESTORE_TMPDIR/decrypted.tar.gz"
+    if ! openssl enc -d -aes-256-cbc -pbkdf2 -in "$BACKUP_FILE" -out "$TAR_FILE" -pass env:BACKUP_ENCRYPTION_KEY 2>/dev/null; then
+        echo "ERROR: Decryption failed — check BACKUP_ENCRYPTION_KEY matches the key used to create this backup" >&2
+        exit 1
+    fi
+    log "Decrypted $BACKUP_NAME"
+fi
+
 # --- Dry run ---
 
 if [ "$DRY_RUN" = true ]; then
@@ -112,13 +139,13 @@ if [ "$DRY_RUN" = true ]; then
     log "Project directory: $PROJECT_DIR"
     echo ""
     log "Archive contents:"
-    tar -tzf "$BACKUP_FILE" | head -50
+    tar -tzf "$TAR_FILE" | head -50
     echo ""
 
     # Check manifest
     STAGING="/tmp/restore-preview-$$"
     mkdir -p "$STAGING"
-    tar -xzf "$BACKUP_FILE" -C "$STAGING" manifest.txt 2>/dev/null || true
+    tar -xzf "$TAR_FILE" -C "$STAGING" manifest.txt 2>/dev/null || true
     if [ -f "$STAGING/manifest.txt" ]; then
         log "Manifest:"
         cat "$STAGING/manifest.txt"
@@ -165,7 +192,7 @@ STAGING="/tmp/restore-$$"
 mkdir -p "$STAGING"
 
 log "Extracting backup..."
-tar -xzf "$BACKUP_FILE" -C "$STAGING"
+tar -xzf "$TAR_FILE" -C "$STAGING"
 
 # Show manifest if present
 if [ -f "$STAGING/manifest.txt" ]; then
