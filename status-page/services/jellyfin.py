@@ -62,8 +62,43 @@ def _set_user_policy(user_id, guest_library_ids):
         return False
 
 
+def _verify_user_policy(user_id, guest_library_ids):
+    """Re-fetch the user's policy and confirm the restriction actually took effect."""
+    try:
+        r = requests.get(
+            f"{JELLYFIN_URL}/Users/{user_id}",
+            headers=HEADERS,
+            timeout=API_TIMEOUT,
+        )
+        if r.status_code != 200:
+            return False
+        policy = r.json().get("Policy", {})
+        if policy.get("IsAdministrator") or policy.get("EnableAllFolders"):
+            return False
+        return set(policy.get("EnabledFolders", [])) == set(guest_library_ids)
+    except requests.RequestException:
+        return False
+
+
+def _delete_jellyfin_user(user_id):
+    """Remove a Jellyfin user. Used to roll back a guest account that couldn't be restricted."""
+    try:
+        requests.delete(
+            f"{JELLYFIN_URL}/Users/{user_id}",
+            headers=HEADERS,
+            timeout=API_TIMEOUT,
+        )
+    except requests.RequestException:
+        pass
+
+
 def create_jellyfin_user(username, password):
-    """Create a new Jellyfin user restricted to guest libraries. Returns (success, warning, jellyfin_user_id)."""
+    """Create a new Jellyfin user restricted to guest libraries. Returns (success, warning, jellyfin_user_id).
+
+    Fails closed: if library restriction can't be established and verified, the
+    Jellyfin account is deleted and creation is reported as failed, rather than
+    leaving behind a guest account with full library access.
+    """
     if not JELLYFIN_API_KEY:
         return False, "Jellyfin API key not configured", None
     try:
@@ -81,11 +116,17 @@ def create_jellyfin_user(username, password):
             return False, "Jellyfin did not return a user ID", None
 
         guest_lib_ids = _get_guest_library_ids()
-        if guest_lib_ids:
-            if not _set_user_policy(user_id, guest_lib_ids):
-                return True, "User created but failed to restrict library access", user_id
-        else:
-            return True, "User created but guest libraries not found — no library restriction applied", user_id
+        if not guest_lib_ids:
+            _delete_jellyfin_user(user_id)
+            return False, "Guest libraries not found in Jellyfin — refusing to create an unrestricted account", None
+
+        if not _set_user_policy(user_id, guest_lib_ids):
+            _delete_jellyfin_user(user_id)
+            return False, "Failed to restrict library access — account rolled back", None
+
+        if not _verify_user_policy(user_id, guest_lib_ids):
+            _delete_jellyfin_user(user_id)
+            return False, "Library restriction did not verify after being applied — account rolled back", None
 
         return True, None, user_id
     except requests.RequestException as e:
