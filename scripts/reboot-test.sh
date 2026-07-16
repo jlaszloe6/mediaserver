@@ -238,9 +238,9 @@ echo ""
 echo "[Backups]"
 BACKUP_DIR="${BACKUP_DIR:-${MEDIA_ROOT}/backups}"
 if [ -d "$BACKUP_DIR" ]; then
-    backup_count=$(ls "$BACKUP_DIR"/backup-*.tar.gz 2>/dev/null | wc -l)
+    backup_count=$(ls "$BACKUP_DIR"/backup-*.tar.gz.enc 2>/dev/null | wc -l)
     if [ "$backup_count" -gt 0 ]; then
-        latest=$(ls -t "$BACKUP_DIR"/backup-*.tar.gz | head -1)
+        latest=$(ls -t "$BACKUP_DIR"/backup-*.tar.gz.enc | head -1)
         latest_name=$(basename "$latest")
         pass "$backup_count backup(s) on NAS (latest: $latest_name)"
     else
