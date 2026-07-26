@@ -12,7 +12,36 @@ permissions:
   contents: read
 
 jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Bash syntax check (scripts, caddy, cron, dnsmasq)
+        run: |
+          shopt -s nullglob
+          status=0
+          for f in scripts/*.sh scripts/lib/*.sh tests/*.sh tests/support/*.sh caddy/*.sh cron/*.sh dnsmasq/*.sh; do
+            echo "bash -n $f"
+            bash -n "$f" || status=1
+          done
+          exit "$status"
+
+      - name: Shell helper regression tests
+        run: ./tests/test-shell-helpers.sh
+
+      - name: Compile status-page
+        run: python3 -m compileall -q status-page
+
+      - name: Validate docker-compose.yml
+        run: |
+          cp .env.example .env
+          docker compose config --quiet
+          rm -f .env
+
   deploy:
+    needs: validate
     runs-on: [self-hosted, freya-pc]
     steps:
       - name: Pull latest changes
@@ -82,28 +111,62 @@ jobs:
         working-directory: /opt/mediaserver
         run: docker compose up -d --build --no-deps dnsmasq
 
-      - name: Verify services healthy
-        if: steps.changes.outputs.any_rebuild == 'true'
+      # Selective rebuilds above only touch the custom-built services that
+      # changed. This step always runs afterward and reconciles the FULL
+      # compose model against docker-compose.yml, so drift between what's
+      # actually running and what the compose file describes can't survive
+      # a deploy — this is what PR #88 was missing: it only ran
+      # `--no-recreate`, which is a no-op for a container whose config
+      # (e.g. the newly added `devices:` for GPU passthrough) changed but
+      # was already running, so Jellyfin kept running without GPU access
+      # despite a "successful" deploy.
+      # https://github.com/jlaszloe6/mediaserver/actions/runs/30205305541
+      - name: Reconcile full Compose model
+        working-directory: /opt/mediaserver
+        run: |
+          if [ "${{ steps.changes.outputs.compose_changed }}" = "true" ]; then
+            docker compose up -d --build
+          else
+            docker compose up -d --no-build
+          fi
+
+      # Only meaningful once the compose model has actually been
+      # reconciled above — checking before that would just confirm the
+      # pre-deploy state, which is exactly how #88 went unnoticed.
+      - name: Verify every service is running and healthy
         working-directory: /opt/mediaserver
         run: |
           sleep 10
           failed=false
-          for svc in statuspage cron caddy; do
-            status=$(docker inspect --format='{{.State.Status}}' "$svc" 2>/dev/null || echo "not found")
-            echo "$svc: $status"
-            if [ "$status" != "running" ]; then
-              echo "::error::$svc is not running!"
+          for svc in $(docker compose config --services); do
+            cid=$(docker compose ps -q "$svc")
+            if [ -z "$cid" ]; then
+              echo "::error::$svc has no container"
               failed=true
+              continue
+            fi
+
+            status=$(docker inspect --format='{{.State.Status}}' "$cid")
+            echo "$svc: status=$status"
+            if [ "$status" != "running" ]; then
+              echo "::error::$svc is not running (status=$status)"
+              failed=true
+              continue
+            fi
+
+            health=$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$cid")
+            if [ -n "$health" ]; then
+              echo "$svc: health=$health"
+              # "starting" is allowed — some health checks use 30s
+              # intervals and haven't reported a real result yet.
+              if [ "$health" = "unhealthy" ]; then
+                echo "::error::$svc is unhealthy"
+                failed=true
+              fi
             fi
           done
-          if [ "$failed" = true ]; then exit 1; fi
-          echo "All rebuilt services are running."
 
-      - name: Apply compose changes (new/updated services)
-        if: steps.changes.outputs.compose_changed == 'true'
-        working-directory: /opt/mediaserver
-        run: docker compose up -d --no-build --no-recreate
-
-      - name: No rebuild needed
-        if: steps.changes.outputs.any_rebuild == 'false' && steps.changes.outputs.compose_changed == 'false'
-        run: echo "No custom-build services changed. Config/compose-only update pulled."
+          if [ "$failed" = true ]; then
+            exit 1
+          fi
+          echo "All services running and healthy (or still starting)."
