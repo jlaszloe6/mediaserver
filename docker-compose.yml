@@ -22,6 +22,10 @@ services:
       - ${MEDIA_ROOT}/media/movies:/movies
       - ${MEDIA_ROOT}/media/tv-guests:/tv-guests
       - ${MEDIA_ROOT}/media/movies-guests:/movies-guests
+    devices:
+      - /dev/dri:/dev/dri
+    group_add:
+      - "992" # host's render group gid, grants access to /dev/dri/renderD128
     mem_limit: 4g
     restart: unless-stopped
     security_opt:
