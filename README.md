@@ -92,6 +92,34 @@ Cron runs the following on a schedule, all logged and most wired to email the ad
 
 `transmission-cleanup.sh` (tracker-aware orphan/H&R cleanup) runs at the end of `jellyfin-cleanup.sh` rather than on its own schedule.
 
+## Editing `.env` on a live server
+
+Use `scripts/env-set.sh` to change a value in `.env`, not `sed -i` or a manual
+temp-file-and-`mv`:
+
+```bash
+./scripts/env-set.sh KEY=VALUE
+# or, to target a different file:
+ENV_FILE=/path/to/.env ./scripts/env-set.sh KEY=VALUE
+```
+
+`sed -i` (and any edit that renames a temp file over `.env`'s path) gives the
+file a **new inode**. Containers with `.env` already bind-mounted keep
+referencing the old inode, so they silently keep serving the pre-edit content
+— `cat .env` on the host looks correct, but nothing actually changed from the
+container's point of view — until that container happens to be recreated for
+an unrelated reason. `env-set.sh` avoids this by writing the new content into
+the *existing* file in place (truncate + write) instead of swapping in a
+different inode.
+
+That said, inode preservation only fixes containers that re-read `.env` from
+disk continuously (e.g. via `set -a; source .env` in a script that runs on
+every cron tick). Services whose environment variables are loaded once at
+container startup (anything under `environment:`/`env_file:` in
+`docker-compose.yml`) only pick up the new value on their *next start* —
+you still need `docker compose up -d --force-recreate <service>` for those,
+same as before.
+
 ## Quick Start
 
 ```bash

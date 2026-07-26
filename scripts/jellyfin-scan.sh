@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+source /scripts/lib/curl-secrets.sh
 source /config/.env
 
 JELLYFIN_URL="http://jellyfin:8096"

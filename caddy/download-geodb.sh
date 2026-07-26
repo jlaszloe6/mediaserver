@@ -12,7 +12,13 @@ mkdir -p "$DB_DIR"
 URL="https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-Country&license_key=${LICENSE_KEY}&suffix=tar.gz"
 
 echo "Downloading GeoLite2-Country database..."
-curl -sL "$URL" -o /tmp/geolite2.tar.gz
+# POSIX sh has no <(...) process substitution. A heredoc redirected onto a
+# numbered fd gets us the same effect: curl's argv only ever shows
+# --config /dev/fd/3, never the license key embedded in $URL.
+exec 3<<EOF
+url = "$URL"
+EOF
+curl -sL --config /dev/fd/3 -o /tmp/geolite2.tar.gz
 tar -xzf /tmp/geolite2.tar.gz -C /tmp
 cp /tmp/GeoLite2-Country_*/GeoLite2-Country.mmdb "$DB_FILE"
 rm -rf /tmp/geolite2.tar.gz /tmp/GeoLite2-Country_*

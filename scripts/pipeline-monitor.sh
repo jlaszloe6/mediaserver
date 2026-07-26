@@ -15,6 +15,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/lib/curl-secrets.sh"
 ENV_FILE="${SCRIPT_DIR}/../.env"
 if [ ! -f "$ENV_FILE" ]; then
     ENV_FILE="/config/.env"

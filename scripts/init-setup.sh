@@ -16,6 +16,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/lib/curl-secrets.sh"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 ENV_FILE="$PROJECT_DIR/.env"
 CONFIG_DIR="$PROJECT_DIR/config"
@@ -47,12 +48,12 @@ log_err()   { echo -e "${RED}[ERR ]${NC} $*"; ERRORS=$((ERRORS + 1)); }
 
 env_set() {
     local key="$1" value="$2"
-    if grep -q "^$key=" "$ENV_FILE" 2>/dev/null; then
-        # Use awk to avoid sed delimiter issues with special characters
-        awk -v k="$key" -v v="$value" 'BEGIN{FS=OFS="="} $1==k{$2=v}1' "$ENV_FILE" > "$ENV_FILE.tmp" && mv "$ENV_FILE.tmp" "$ENV_FILE"
-    else
-        printf '%s=%s\n' "$key" "$value" >> "$ENV_FILE"
-    fi
+    # Delegates to env-set.sh, which edits $ENV_FILE's existing inode in
+    # place (truncate + write) instead of writing a temp file and mv-ing it
+    # over the original path. A rename swaps in a new inode, which strands
+    # any container that already has .env bind-mounted at the old one —
+    # see issue #85.
+    ENV_FILE="$ENV_FILE" "$SCRIPT_DIR/env-set.sh" "$key=$value"
 }
 
 read_xml_key() {
