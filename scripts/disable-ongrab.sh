@@ -3,6 +3,8 @@
 # Run via: docker exec cron /scripts/disable-ongrab.sh
 set -euo pipefail
 
+source "$(dirname "$0")/lib/curl-secrets.sh"
+
 ENV_FILE="$(dirname "$0")/../.env"
 if [ ! -f "$ENV_FILE" ]; then
     echo "ERROR: .env not found at $ENV_FILE"

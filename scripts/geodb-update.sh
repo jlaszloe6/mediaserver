@@ -10,6 +10,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/lib/curl-secrets.sh"
 ENV_FILE="$SCRIPT_DIR/../.env"
 if [ ! -f "$ENV_FILE" ]; then
     echo "ERROR: .env file not found at $ENV_FILE" >&2
@@ -41,7 +42,9 @@ mkdir -p "$DB_DIR"
 URL="https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-Country&license_key=${LICENSE_KEY}&suffix=tar.gz"
 
 log "Downloading GeoLite2-Country database..."
-curl -sL "$URL" -o /tmp/geolite2.tar.gz
+# The license key lives in $URL — route it through curl's config input
+# (an anonymous fd) instead of argv, where it'd be visible via ps/procfs.
+curl -sL --config <(printf 'url = "%s"\n' "$(_curl_secrets_escape "$URL")") -o /tmp/geolite2.tar.gz
 
 tar -xzf /tmp/geolite2.tar.gz -C /tmp
 cp /tmp/GeoLite2-Country_*/GeoLite2-Country.mmdb "$DB_FILE"
