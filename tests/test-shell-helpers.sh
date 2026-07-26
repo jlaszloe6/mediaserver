@@ -154,6 +154,42 @@ test_data_body_not_in_argv() {
     mock_curl_teardown
 }
 
+test_data_at_file_reference_passes_through_untouched() {
+    mock_curl_setup
+    local file
+    file=$(mktemp)
+    printf '{"from":"file"}' > "$file"
+
+    curl -sf -X POST -d "@$file" "http://example.invalid/" >/dev/null
+
+    # curl (unlike --data-raw) treats a leading "@" as "read the body from
+    # this file" — that's not a secret to hide, it's a path, and the file's
+    # bytes never touch argv either way. The wrapper must leave it alone
+    # rather than bundling the literal string "@path" into a synthetic body.
+    if grep -qxF "@$file" "$MOCK_ARGV"; then
+        pass "-d @file passes through untouched instead of sending the literal '@path' string"
+    else
+        fail "-d @file passes through untouched instead of sending the literal '@path' string"
+    fi
+    rm -f "$file"
+    mock_curl_teardown
+}
+
+test_data_raw_at_prefix_is_still_literal() {
+    mock_curl_setup
+    curl -sf -X POST --data-raw '@not-a-real-file' "http://example.invalid/" >/dev/null
+
+    # --data-raw explicitly never interprets a leading "@" as a file
+    # reference, so this one *should* still go through the fd as a literal
+    # string, unlike -d/--data/--data-binary above.
+    if grep -rq '^@not-a-real-file$' "$MOCK_CAPTURE_DIR"; then
+        pass "--data-raw with a leading @ is sent as a literal string"
+    else
+        fail "--data-raw with a leading @ is sent as a literal string"
+    fi
+    mock_curl_teardown
+}
+
 test_values_still_reach_curl_via_fd() {
     mock_curl_setup
     curl -sf -H "X-Api-Key: reachableHeaderSecret" -u "reachableUser:reachablePass" \
@@ -200,6 +236,8 @@ test_env_set_appends_new_key
 test_api_header_secret_not_in_argv
 test_smtp_credentials_not_in_argv
 test_data_body_not_in_argv
+test_data_at_file_reference_passes_through_untouched
+test_data_raw_at_prefix_is_still_literal
 test_values_still_reach_curl_via_fd
 test_no_secrets_no_op_passthrough
 test_newline_in_header_rejected

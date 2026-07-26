@@ -43,6 +43,7 @@ curl() {
     local have_config=0
     local have_data=0
     local escaped=""
+    local data_val=""
 
     while [ "$#" -gt 0 ]; do
         case "$1" in
@@ -74,23 +75,40 @@ curl() {
                 have_config=1
                 shift
                 ;;
-            -d|--data|--data-raw|--data-binary)
+            -d|--data|--data-binary)
+                # Unlike --data-raw, curl treats a leading "@" here as "read
+                # the body from this file" — that's not a secret value to
+                # hide, it's a path, and the file's bytes never touch argv
+                # either way. Let curl handle it exactly as it always did.
+                case "$2" in
+                    @*) passthrough+=("$1" "$2") ;;
+                    *) data_chunks+=("$2"); have_data=1 ;;
+                esac
+                shift 2
+                ;;
+            --data-raw)
                 data_chunks+=("$2")
                 have_data=1
                 shift 2
                 ;;
             --data=*)
-                data_chunks+=("${1#--data=}")
-                have_data=1
+                data_val=${1#--data=}
+                case "$data_val" in
+                    @*) passthrough+=("$1") ;;
+                    *) data_chunks+=("$data_val"); have_data=1 ;;
+                esac
+                shift
+                ;;
+            --data-binary=*)
+                data_val=${1#--data-binary=}
+                case "$data_val" in
+                    @*) passthrough+=("$1") ;;
+                    *) data_chunks+=("$data_val"); have_data=1 ;;
+                esac
                 shift
                 ;;
             --data-raw=*)
                 data_chunks+=("${1#--data-raw=}")
-                have_data=1
-                shift
-                ;;
-            --data-binary=*)
-                data_chunks+=("${1#--data-binary=}")
                 have_data=1
                 shift
                 ;;
