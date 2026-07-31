@@ -322,7 +322,7 @@ fi
 
 log "  Torrents added: $ADDED, Books imported: $IMPORTED, Flagged: $FLAGGED, Errors: $ERRORS"
 
-if [ "$ADDED" -gt 0 ] || [ "$IMPORTED" -gt 0 ] || [ "$ERRORS" -gt 0 ]; then
+if [ "$ADDED" -gt 0 ] || [ "$IMPORTED" -gt 0 ] || [ "$FLAGGED" -gt 0 ] || [ "$ERRORS" -gt 0 ]; then
     subject="[${SERVER_NAME:-Media Server}] Ebook pipeline: ${ADDED} added, ${IMPORTED} imported"
     [ "$FLAGGED" -gt 0 ] && subject+=", ${FLAGGED} flagged"
     [ "$ERRORS" -gt 0 ] && subject+=", ${ERRORS} error(s)"
