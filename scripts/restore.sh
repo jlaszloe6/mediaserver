@@ -10,6 +10,7 @@
 #   ./scripts/restore.sh backup-XXX.tar.gz   Restore specific backup
 #   ./scripts/restore.sh --dry-run           Show what would be restored
 #   ./scripts/restore.sh --force             Overwrite existing .env
+#   ./scripts/restore.sh --allow-unverified  Allow an encrypted backup with no .hmac sidecar
 
 set -euo pipefail
 
@@ -18,6 +19,7 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 DRY_RUN=false
 FORCE=false
+ALLOW_UNVERIFIED=false
 TARGET_BACKUP=""
 
 for arg in "$@"; do
@@ -25,6 +27,7 @@ for arg in "$@"; do
         --list) LIST_MODE=true ;;
         --dry-run) DRY_RUN=true ;;
         --force) FORCE=true ;;
+        --allow-unverified) ALLOW_UNVERIFIED=true ;;
         --help|-h) HELP=true ;;
         backup-*) TARGET_BACKUP="$arg" ;;
     esac
@@ -34,10 +37,13 @@ if [ "${HELP:-false}" = true ]; then
     echo "Usage: $0 [OPTIONS] [backup-YYYYMMDD-HHMMSS.tar.gz]"
     echo ""
     echo "Options:"
-    echo "  --list      List available backups"
-    echo "  --dry-run   Show what would be restored without making changes"
-    echo "  --force     Overwrite existing .env file"
-    echo "  --help      Show this help"
+    echo "  --list               List available backups"
+    echo "  --dry-run            Show what would be restored without making changes"
+    echo "  --force              Overwrite existing .env file"
+    echo "  --allow-unverified   Allow an encrypted backup with no .hmac sidecar"
+    echo "                       (only backups made before backup.sh started writing"
+    echo "                       sidecars should ever need this)"
+    echo "  --help               Show this help"
     echo ""
     echo "If no backup file is specified, restores the latest backup."
     exit 0
@@ -155,8 +161,19 @@ if [[ "$BACKUP_FILE" == *.enc ]]; then
             exit 1
         fi
         log "HMAC verified — backup is intact and authentic"
+    elif [ "$ALLOW_UNVERIFIED" = true ]; then
+        log "WARNING: no .hmac sidecar found for $BACKUP_NAME — proceeding unverified (--allow-unverified was passed)"
     else
-        log "WARNING: no .hmac sidecar found for $BACKUP_NAME (backup predates integrity verification) — cannot confirm it wasn't tampered with or corrupted"
+        # Fail closed by default: a missing sidecar could mean a genuinely
+        # legacy backup (made before backup.sh started writing them), but it
+        # could just as easily mean someone with write access to the backup
+        # directory stripped it to force this exact fallback path and bypass
+        # integrity checking entirely. Require an explicit, deliberate
+        # override rather than silently downgrading to unverified.
+        echo "ERROR: $BACKUP_NAME is encrypted but has no .hmac integrity sidecar." >&2
+        echo "This is expected only for backups made before backup.sh started writing sidecars." >&2
+        echo "If you're sure this backup is legitimate, re-run with --allow-unverified." >&2
+        exit 1
     fi
 
     TAR_FILE="$RESTORE_TMPDIR/decrypted.tar.gz"
