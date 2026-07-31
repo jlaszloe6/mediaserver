@@ -92,6 +92,7 @@ Cron runs the following on a schedule, all logged and most wired to email the ad
 | daily, 02:30 | `backup.sh` | Encrypted config backup to NAS |
 | daily, 03:00 | `jellyfin-watched-cleanup.sh` | Removes media watched 30+ days ago |
 | weekly (Sun) | `geodb-update.sh` | Refreshes the GeoIP database |
+| daily, 04:00 | `log-rotate.sh` | Caps `/var/log/cron/*.log` files at 10MB (also runs in `ebook-pipeline`'s own crontab) |
 
 `transmission-cleanup.sh` (tracker-aware orphan/H&R cleanup) runs at the end of `jellyfin-cleanup.sh` rather than on its own schedule.
 
