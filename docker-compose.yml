@@ -415,7 +415,7 @@ services:
       - no-new-privileges:true
 
   ebook-pipeline:
-    # Automated ebook download pipeline: drop a .torrent into $MEDIA_ROOT/watch,
+    # Automated ebook download pipeline: drop a .torrent into $MEDIA_ROOT/watch-ebooks,
     # this container adds it to Transmission via RPC, waits for completion,
     # converts to epub with Calibre, and imports it into Audiobookshelf.
     # Separate from the `cron` service because Calibre needs glibc — a bad
