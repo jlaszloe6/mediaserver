@@ -178,9 +178,14 @@ if [ -n "$SID" ]; then
     TORRENTS_FILE=$(mktemp)
     trap 'rm -f "$TORRENTS_FILE"' EXIT
 
-    transmission_rpc "$SID" '{"method":"torrent-get","arguments":{"fields":["id","name","hashString","downloadDir","isFinished"]}}' \
+    # NOTE: Transmission's "isFinished" tracks whether seed ratio/idle limits
+    # have been met (done seeding), not whether the download itself is
+    # complete - a private-tracker torrent held for H&R seeding can sit at
+    # percentDone==1 with isFinished==false for days. percentDone==1 is the
+    # correct "download complete" signal.
+    transmission_rpc "$SID" '{"method":"torrent-get","arguments":{"fields":["id","name","hashString","downloadDir","percentDone"]}}' \
         | jq -c --arg dir "$TRANSMISSION_DOWNLOAD_DIR" \
-            '.arguments.torrents[]? | select(.downloadDir == $dir and .isFinished == true)' \
+            '.arguments.torrents[]? | select(.downloadDir == $dir and .percentDone == 1)' \
         > "$TORRENTS_FILE" || true
 
     while IFS= read -r torrent; do
