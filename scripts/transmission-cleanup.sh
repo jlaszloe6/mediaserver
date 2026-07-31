@@ -215,6 +215,13 @@ while IFS= read -r torrent; do
             MAIN_FILE=$(transmission_rpc "$SID" \
                 "{\"method\":\"torrent-get\",\"arguments\":{\"ids\":[$ID],\"fields\":[\"files\"]}}" \
                 | jq -r '[.arguments.torrents[0].files[] | {name, length}] | sort_by(-.length) | .[0].name // empty')
+            # File names come from the torrent's own metadata (attacker-
+            # influenced) - reject anything containing ".." before joining
+            # it into a filesystem path, even though this only feeds a
+            # read-only existence/hardlink check below.
+            case "$MAIN_FILE" in
+                *..*) MAIN_FILE="" ;;
+            esac
             if [ -n "$MAIN_FILE" ]; then
                 FULL_PATH="$HOST_DIR/$MAIN_FILE"
                 if [ ! -e "$FULL_PATH" ]; then
