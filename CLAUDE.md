@@ -77,6 +77,7 @@ Services: Jellyfin, Transmission, Sonarr, Radarr, Prowlarr, Bazarr, Seerr, Caddy
 | `*/30 * * * *` | `pipeline-monitor.sh` | Check pipeline health, email admin on issues |
 | `30 2 * * *` | `backup.sh` | Config backup to NAS |
 | `0 2 * * 0` | `geodb-update.sh` | Weekly GeoIP DB refresh |
+| `0 4 * * *` | `log-rotate.sh` | Cap `/var/log/cron/*.log` files at 10MB (also runs in `ebook-pipeline`'s own crontab, for its own separate log volume) |
 
 `transmission-cleanup.sh` runs at end of jellyfin-cleanup.sh (no separate cron entry).
 
