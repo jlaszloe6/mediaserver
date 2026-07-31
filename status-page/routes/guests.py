@@ -83,15 +83,19 @@ def remove():
     username = guest["jellyfin_username"]
     jf_ok = delete_jellyfin_user_by_username(username)
     seerr_ok = delete_seerr_user(username)
-    remove_guest(email)
 
     if jf_ok and seerr_ok:
+        remove_guest(email)
         flash(f"Removed {email} — Jellyfin and Seerr access revoked.", "info")
     else:
+        # Keep the guest record on a partial/failed revoke: it's the only
+        # place jellyfin_username is stored, and dropping it here would
+        # leave no way to retry once the underlying issue (API down, bad
+        # key, etc.) is fixed.
         failed = [name for name, ok in (("Jellyfin", jf_ok), ("Seerr", seerr_ok)) if not ok]
         flash(
-            f"Removed {email} from the guest list, but failed to revoke access in: "
-            f"{', '.join(failed)}. Remove that account manually.",
+            f"Could not fully revoke access for {email} in: {', '.join(failed)}. "
+            f"Guest record kept — fix the issue and remove again to retry.",
             "error",
         )
     return redirect(url_for("dashboard_bp.dashboard"))

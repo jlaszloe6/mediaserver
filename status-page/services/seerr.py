@@ -13,8 +13,18 @@ GUEST_RADARR_NAME = "Radarr (Guest)"
 GUEST_SONARR_NAME = "Sonarr (Guest)"
 
 
+class SeerrLookupError(Exception):
+    """Raised when a Seerr API lookup itself fails (bad status, network
+    error, etc.) - distinct from a lookup that succeeded and confirmed the
+    user doesn't exist. Callers that would otherwise treat "couldn't check"
+    the same as "confirmed absent" (e.g. before deleting a local record)
+    need to tell the two apart.
+    """
+
+
 def _get_seerr_user_by_jellyfin_username(username):
-    """Find a Seerr user by their Jellyfin username."""
+    """Find a Seerr user by their Jellyfin username. Returns None if
+    genuinely absent. Raises SeerrLookupError if the API call itself fails."""
     try:
         r = requests.get(
             f"{SEERR_URL}/api/v1/user",
@@ -22,15 +32,15 @@ def _get_seerr_user_by_jellyfin_username(username):
             headers=SEERR_HEADERS,
             timeout=API_TIMEOUT,
         )
-        if r.status_code != 200:
-            return None
-        data = r.json()
-        users = data.get("results", data) if isinstance(data, dict) else data
-        for user in users:
-            if user.get("jellyfinUsername") == username:
-                return user.get("id")
-    except requests.RequestException:
-        pass
+    except requests.RequestException as e:
+        raise SeerrLookupError(str(e)) from e
+    if r.status_code != 200:
+        raise SeerrLookupError(f"Seerr returned {r.status_code}")
+    data = r.json()
+    users = data.get("results", data) if isinstance(data, dict) else data
+    for user in users:
+        if user.get("jellyfinUsername") == username:
+            return user.get("id")
     return None
 
 
@@ -86,8 +96,15 @@ def _ensure_guest_server_configs():
 
 
 def delete_seerr_user(jellyfin_username):
-    """Delete a Seerr user by their Jellyfin username. Returns True on success, or if the user is already gone."""
-    seerr_user_id = _get_seerr_user_by_jellyfin_username(jellyfin_username)
+    """Delete a Seerr user by their Jellyfin username. Returns True on
+    success, or if the user is confirmed already gone. Returns False -
+    rather than treating it as "already gone" - if the lookup itself
+    couldn't be completed, since a removed guest's local record must not be
+    dropped based on an inconclusive check."""
+    try:
+        seerr_user_id = _get_seerr_user_by_jellyfin_username(jellyfin_username)
+    except SeerrLookupError:
+        return False
     if not seerr_user_id:
         return True
     try:
@@ -122,7 +139,10 @@ def import_and_configure_seerr_user(jellyfin_username, jellyfin_user_id):
         return False, f"Seerr import failed: {e}"
 
     # Find the imported user
-    seerr_user_id = _get_seerr_user_by_jellyfin_username(jellyfin_username)
+    try:
+        seerr_user_id = _get_seerr_user_by_jellyfin_username(jellyfin_username)
+    except SeerrLookupError as e:
+        return False, f"Seerr lookup failed after import: {e}"
     if not seerr_user_id:
         return False, "User imported but not found in Seerr"
 

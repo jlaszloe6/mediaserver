@@ -7,6 +7,15 @@ HEADERS = {"X-Emby-Token": JELLYFIN_API_KEY}
 GUEST_LIBRARY_PATHS = {"/movies-guests", "/tv-guests"}
 
 
+class JellyfinLookupError(Exception):
+    """Raised when a Jellyfin API lookup itself fails (bad status, network
+    error, etc.) - distinct from a lookup that succeeded and confirmed the
+    user doesn't exist. Callers that would otherwise treat "couldn't check"
+    the same as "confirmed absent" (e.g. before deleting a local record)
+    need to tell the two apart.
+    """
+
+
 def _get_guest_library_ids():
     """Fetch Jellyfin library IDs for guest folders."""
     try:
@@ -93,22 +102,30 @@ def _delete_jellyfin_user(user_id):
 
 
 def _get_user_id_by_username(username):
-    """Look up a Jellyfin user's ID by username."""
+    """Look up a Jellyfin user's ID by username. Returns None if genuinely
+    absent. Raises JellyfinLookupError if the API call itself fails."""
     try:
         r = requests.get(f"{JELLYFIN_URL}/Users", headers=HEADERS, timeout=API_TIMEOUT)
-        if r.status_code != 200:
-            return None
-        for user in r.json():
-            if user.get("Name") == username:
-                return user.get("Id")
-    except requests.RequestException:
-        pass
+    except requests.RequestException as e:
+        raise JellyfinLookupError(str(e)) from e
+    if r.status_code != 200:
+        raise JellyfinLookupError(f"Jellyfin returned {r.status_code}")
+    for user in r.json():
+        if user.get("Name") == username:
+            return user.get("Id")
     return None
 
 
 def delete_jellyfin_user_by_username(username):
-    """Delete a Jellyfin user by username. Returns True on success, or if the user is already gone."""
-    user_id = _get_user_id_by_username(username)
+    """Delete a Jellyfin user by username. Returns True on success, or if the
+    user is confirmed already gone. Returns False - rather than treating it
+    as "already gone" - if the lookup itself couldn't be completed, since a
+    removed guest's local record must not be dropped based on an
+    inconclusive check."""
+    try:
+        user_id = _get_user_id_by_username(username)
+    except JellyfinLookupError:
+        return False
     if not user_id:
         return True
     try:
