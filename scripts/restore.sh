@@ -163,7 +163,20 @@ if ! tar -tzf "$TAR_FILE" >/dev/null 2>&1; then
     echo "ERROR: $BACKUP_NAME is not a valid tar.gz archive (wrong key, corruption, or truncated file)" >&2
     exit 1
 fi
-if ! tar -tzf "$TAR_FILE" | grep -q '^\(\./\)\?manifest\.txt$'; then
+# pipefail is disabled for this check only: grep -q exits as soon as it
+# finds a match, which sends SIGPIPE to tar while it's still listing later
+# entries - under pipefail that makes the pipeline report failure even
+# though the manifest genuinely was found. Using the pipeline as an `if`
+# condition (rather than a bare statement) also keeps a real "not found"
+# from tripping errexit before this script gets to print its own message.
+set +o pipefail
+if tar -tzf "$TAR_FILE" | grep -q '^\(\./\)\?manifest\.txt$'; then
+    manifest_found=true
+else
+    manifest_found=false
+fi
+set -o pipefail
+if [ "$manifest_found" = false ]; then
     echo "ERROR: $BACKUP_NAME has no manifest.txt — does not look like a backup produced by backup.sh" >&2
     exit 1
 fi
@@ -178,7 +191,11 @@ if [ "$DRY_RUN" = true ]; then
     log "Project directory: $PROJECT_DIR"
     echo ""
     log "Archive contents:"
-    tar -tzf "$TAR_FILE" | head -50
+    # `|| true`: head closes its input after 50 lines for any archive with
+    # more entries than that (the normal case), which sends tar SIGPIPE -
+    # under this script's `pipefail`, that would otherwise abort the whole
+    # dry-run via errexit even though nothing actually went wrong.
+    tar -tzf "$TAR_FILE" | head -50 || true
     echo ""
 
     # Check manifest
