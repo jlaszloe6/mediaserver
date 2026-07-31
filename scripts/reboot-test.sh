@@ -97,7 +97,7 @@ echo ""
 # --- 3. Container status ---
 
 echo "[Containers]"
-EXPECTED_CONTAINERS="jellyfin transmission sonarr radarr prowlarr seerr caddy duckdns statuspage cron"
+EXPECTED_CONTAINERS="jellyfin transmission sonarr radarr prowlarr bazarr lidarr navidrome audiobookshelf seerr caddy duckdns statuspage cron ebook-pipeline"
 
 for container in $EXPECTED_CONTAINERS; do
     status=$(docker inspect --format='{{.State.Status}}' "$container" 2>/dev/null || echo "not found")
@@ -134,15 +134,23 @@ check_docker_health() {
     fi
 }
 
-check_docker_health "Jellyfin"     "jellyfin"
-check_docker_health "Sonarr"       "sonarr"
-check_docker_health "Radarr"       "radarr"
-check_docker_health "Prowlarr"     "prowlarr"
-check_docker_health "Transmission" "transmission"
-check_docker_health "Seerr"        "seerr"
-check_docker_health "Caddy"        "caddy"
-
-check_docker_health "Status Page" "statuspage"
+check_docker_health "Jellyfin"       "jellyfin"
+check_docker_health "Sonarr"         "sonarr"
+check_docker_health "Radarr"         "radarr"
+check_docker_health "Prowlarr"       "prowlarr"
+check_docker_health "Bazarr"         "bazarr"
+check_docker_health "Lidarr"         "lidarr"
+check_docker_health "Navidrome"      "navidrome"
+check_docker_health "Audiobookshelf" "audiobookshelf"
+check_docker_health "Transmission"   "transmission"
+check_docker_health "Seerr"          "seerr"
+check_docker_health "Caddy"          "caddy"
+check_docker_health "Status Page"    "statuspage"
+# cron and ebook-pipeline have no Docker healthcheck defined - check_docker_health
+# already handles that gracefully (warns if running, fails if not) via its
+# "no healthcheck" branch
+check_docker_health "Cron"           "cron"
+check_docker_health "Ebook Pipeline" "ebook-pipeline"
 echo ""
 
 # --- 5. DNS ---
