@@ -1,4 +1,15 @@
-FROM debian:bookworm-slim
+# debian bookworm-slim
+FROM debian@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818
+
+# Non-root user for actual job execution (this container parses untrusted
+# downloaded file content through Calibre - jobs should not run as root).
+# The `cron` daemon itself still starts as root, which it needs in order to
+# switch to this user per-job (see the crontab's user-field column below) -
+# only the jobs it runs drop privileges, not the daemon.
+ARG PUID=1000
+ARG PGID=1000
+RUN groupadd -g "$PGID" ebookjob \
+    && useradd -M -u "$PUID" -g ebookjob -s /usr/sbin/nologin ebookjob
 
 # Calibre's official installer ships its own bundled Qt runtime built against
 # glibc — this is why this service is Debian-based rather than joining the
