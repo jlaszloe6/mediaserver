@@ -19,7 +19,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/lib/curl-secrets.sh"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 ENV_FILE="$PROJECT_DIR/.env"
-CONFIG_DIR="$PROJECT_DIR/config"
+CONFIG_DIR="$PROJECT_DIR/config/all-configs"
 
 ERRORS=0
 DRY_RUN=false
@@ -41,10 +41,15 @@ YELLOW='\033[0;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-log_info()  { echo -e "${BLUE}[INFO]${NC} $*"; }
-log_ok()    { echo -e "${GREEN}[ OK ]${NC} $*"; }
-log_warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
-log_err()   { echo -e "${RED}[ERR ]${NC} $*"; ERRORS=$((ERRORS + 1)); }
+# All four write to stderr, not stdout: get_api_key() below is called via
+# command substitution ($(get_api_key ...)), and log_err's own message text
+# was previously getting silently captured as the "key" on a lookup
+# failure - non-empty, so it slipped past the -z emptiness check entirely
+# instead of the script catching a genuinely missing/unreadable config.xml.
+log_info()  { echo -e "${BLUE}[INFO]${NC} $*" >&2; }
+log_ok()    { echo -e "${GREEN}[ OK ]${NC} $*" >&2; }
+log_warn()  { echo -e "${YELLOW}[WARN]${NC} $*" >&2; }
+log_err()   { echo -e "${RED}[ERR ]${NC} $*" >&2; ERRORS=$((ERRORS + 1)); }
 
 env_set() {
     local key="$1" value="$2"
