@@ -97,6 +97,15 @@ def remove_guest(email):
     db.commit()
 
 
+def get_guest(email):
+    db = get_db()
+    row = db.execute(
+        "SELECT email, jellyfin_username, invited_by, created_at FROM guests WHERE email = ?",
+        (email.lower(),),
+    ).fetchone()
+    return dict(row) if row else None
+
+
 def get_guests():
     db = get_db()
     rows = db.execute(

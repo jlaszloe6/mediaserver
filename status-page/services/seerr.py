@@ -85,6 +85,22 @@ def _ensure_guest_server_configs():
     return radarr_id, sonarr_id
 
 
+def delete_seerr_user(jellyfin_username):
+    """Delete a Seerr user by their Jellyfin username. Returns True on success, or if the user is already gone."""
+    seerr_user_id = _get_seerr_user_by_jellyfin_username(jellyfin_username)
+    if not seerr_user_id:
+        return True
+    try:
+        r = requests.delete(
+            f"{SEERR_URL}/api/v1/user/{seerr_user_id}",
+            headers=SEERR_HEADERS,
+            timeout=API_TIMEOUT,
+        )
+        return r.status_code in (200, 204)
+    except requests.RequestException:
+        return False
+
+
 def import_and_configure_seerr_user(jellyfin_username, jellyfin_user_id):
     """Import Jellyfin user into Seerr and set override rule for guest servers. Returns (success, warning)."""
     if not jellyfin_user_id:

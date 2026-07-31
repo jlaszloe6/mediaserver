@@ -4,10 +4,10 @@ import secrets
 from flask import Blueprint, abort, flash, redirect, request, session, url_for
 
 from auth import admin_required, check_csrf, is_allowed_email
-from db import add_guest, remove_guest
+from db import add_guest, get_guest, remove_guest
 from services.email import send_welcome_email
-from services.jellyfin import create_jellyfin_user
-from services.seerr import import_and_configure_seerr_user
+from services.jellyfin import create_jellyfin_user, delete_jellyfin_user_by_username
+from services.seerr import delete_seerr_user, import_and_configure_seerr_user
 
 guests_bp = Blueprint("guests_bp", __name__)
 
@@ -75,6 +75,23 @@ def remove():
     if not email:
         abort(400)
 
+    guest = get_guest(email)
+    if not guest:
+        flash(f"{email} is not a guest.", "error")
+        return redirect(url_for("dashboard_bp.dashboard"))
+
+    username = guest["jellyfin_username"]
+    jf_ok = delete_jellyfin_user_by_username(username)
+    seerr_ok = delete_seerr_user(username)
     remove_guest(email)
-    flash(f"Removed {email} from guests.", "info")
+
+    if jf_ok and seerr_ok:
+        flash(f"Removed {email} — Jellyfin and Seerr access revoked.", "info")
+    else:
+        failed = [name for name, ok in (("Jellyfin", jf_ok), ("Seerr", seerr_ok)) if not ok]
+        flash(
+            f"Removed {email} from the guest list, but failed to revoke access in: "
+            f"{', '.join(failed)}. Remove that account manually.",
+            "error",
+        )
     return redirect(url_for("dashboard_bp.dashboard"))
