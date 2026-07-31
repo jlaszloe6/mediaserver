@@ -111,7 +111,7 @@ Services: Jellyfin, Transmission, Sonarr, Radarr, Prowlarr, Bazarr, Seerr, Caddy
 - Automated acquisition pipeline available — see Ebook Pipeline below. Manually adding files to `media/ebooks` and triggering a scan still works as a fallback for non-torrent sources
 - **epub is the standard/default format**: Audiobookshelf only tracks reading progress for epub (not mobi/azw3), and epub is the safest format for Amazon's Send-to-Kindle. Convert other formats with Calibre's `ebook-convert` (a throwaway `lscr.io/linuxserver/calibre` container works well for one-off manual conversions) before adding
 - One book per `Author/Title/` folder — never mix a flat ebook file directly under an author folder alongside title subfolders, it confuses Audiobookshelf's folder-as-item detection and misfiles the item as "missing"
-- Kindle send-to-device requires the sender address to be on Amazon's approved Personal Document E-mail List (Manage Your Content and Devices → Preferences)
+- Kindle send-to-device requires the sender address to be on Amazon's approved Personal Document E-mail List (Manage Your Content and Devices → Preferences). Amazon checks the actual SMTP sending address, not the friendly `From:` display address — Brevo relays through its own subdomain for SPF/DKIM alignment, so the address that needs approving is `janos.laszlo1@5162513.brevosend.com`, not `janos.laszlo1@gmail.com` (both are currently approved, along with `janoslaszlo@hotmail.com`)
 
 ## Ebook Pipeline
 - Fully automated: drop a `.torrent` file into `$MEDIA_ROOT/watch-ebooks`, and `ebook-pipeline.sh` (running every 5 min in its own `ebook-pipeline` container) adds it to Transmission, waits for it to finish, converts it to epub, and imports it into Audiobookshelf's "Ebooks" library
