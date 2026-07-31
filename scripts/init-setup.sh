@@ -8,10 +8,11 @@
 #   - docker compose up -d (all containers running)
 #   - Jellyfin setup wizard completed via browser
 #
-# Note: This script runs inside the cron container (on bridge network),
-# so Docker service names are used for all URLs.
+# Note: This script must run inside the cron container (on the mediaserver
+# bridge network), since it calls other services by Docker service name
+# (http://sonarr:8989, etc.) - those hostnames don't resolve on the host.
 #
-# Usage: ./scripts/init-setup.sh [--dry-run]
+# Usage: docker exec cron /scripts/init-setup.sh [--dry-run]
 
 set -euo pipefail
 
