@@ -1,7 +1,12 @@
 #!/bin/bash
 # ebook-pipeline.sh - Fully automated ebook download -> Audiobookshelf pipeline
 #
-# Drop a .torrent file into $MEDIA_ROOT/watch and this script:
+# Drop a .torrent file into $MEDIA_ROOT/watch-ebooks and this script:
+# (deliberately NOT $MEDIA_ROOT/watch - that's Transmission's own native
+# watch-dir, already enabled in the live settings.json for general
+# downloads; sharing it would race this script's 5-min poll against
+# Transmission's own few-second watch-dir scan, which would win almost
+# every time and route ebook torrents to the wrong destination)
 #   1. Adds it to Transmission via RPC with download-dir set to a dedicated
 #      ebooks-incoming folder (Transmission's native watch-dir only supports
 #      one global destination, so this uses the RPC API instead)
@@ -41,7 +46,7 @@ TRANSMISSION_URL="http://transmission:9091/transmission/rpc"
 AUDIOBOOKSHELF_URL="http://audiobookshelf:13378"
 AUDIOBOOKSHELF_KEY="${AUDIOBOOKSHELF_API_KEY:-}"
 
-WATCH_DIR="/mnt/mediaserver/watch"
+WATCH_DIR="/mnt/mediaserver/watch-ebooks"
 INCOMING_DIR="/mnt/mediaserver/torrents/complete/ebooks-incoming"
 TRANSMISSION_DOWNLOAD_DIR="/downloads/complete/ebooks-incoming"   # Transmission's own filesystem view
 EBOOKS_LIBRARY_DIR="/mnt/mediaserver/media/ebooks"
