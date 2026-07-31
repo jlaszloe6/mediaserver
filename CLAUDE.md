@@ -80,6 +80,8 @@ Services: Jellyfin, Transmission, Sonarr, Radarr, Prowlarr, Bazarr, Seerr, Caddy
 
 `transmission-cleanup.sh` runs at end of jellyfin-cleanup.sh (no separate cron entry).
 
+`ebook-pipeline.sh` runs every 5 minutes but lives in its own `ebook-pipeline` container/crontab, not this shared cron fleet — see Ebook Pipeline below for why.
+
 ## Transmission Orphan Cleanup
 - Tracker-aware H&R policy: public → remove immediately, nCore → seed 72h minimum
 - `HNR_TRACKERS` array in script: `ncore.pro:72`, `ncore.sh:72`
@@ -106,10 +108,20 @@ Services: Jellyfin, Transmission, Sonarr, Radarr, Prowlarr, Bazarr, Seerr, Caddy
 
 ## Ebook Library
 - Separate Audiobookshelf library ("Ebooks") from Audiobooks, mounted at its own `${MEDIA_ROOT}/media/ebooks:/ebooks` volume — must not be nested inside `/audiobooks` or under another library's folder, Audiobookshelf double-scans overlapping paths into duplicate items
-- No acquisition pipeline (same as audiobooks) — add files to `media/ebooks` manually and trigger a library scan
-- **epub is the standard/default format**: Audiobookshelf only tracks reading progress for epub (not mobi/azw3), and epub is the safest format for Amazon's Send-to-Kindle. Convert other formats with Calibre's `ebook-convert` (a throwaway `lscr.io/linuxserver/calibre` container works well) before adding
+- Automated acquisition pipeline available — see Ebook Pipeline below. Manually adding files to `media/ebooks` and triggering a scan still works as a fallback for non-torrent sources
+- **epub is the standard/default format**: Audiobookshelf only tracks reading progress for epub (not mobi/azw3), and epub is the safest format for Amazon's Send-to-Kindle. Convert other formats with Calibre's `ebook-convert` (a throwaway `lscr.io/linuxserver/calibre` container works well for one-off manual conversions) before adding
 - One book per `Author/Title/` folder — never mix a flat ebook file directly under an author folder alongside title subfolders, it confuses Audiobookshelf's folder-as-item detection and misfiles the item as "missing"
 - Kindle send-to-device requires the sender address to be on Amazon's approved Personal Document E-mail List (Manage Your Content and Devices → Preferences)
+
+## Ebook Pipeline
+- Fully automated: drop a `.torrent` file into `$MEDIA_ROOT/watch`, and `ebook-pipeline.sh` (running every 5 min in its own `ebook-pipeline` container) adds it to Transmission, waits for it to finish, converts it to epub, and imports it into Audiobookshelf's "Ebooks" library
+- Own container/crontab, separate from the shared `cron` fleet — it needs Calibre (`ebook-convert`/`ebook-meta`), which requires glibc and is a poor fit for the Alpine-based `cron` image. No Docker socket is mounted anywhere in this stack, so conversion can't be delegated to a throwaway container spun up on demand either — Calibre is baked into the `ebook-pipeline` image itself (Debian-slim base, official Calibre installer, `xvfb` for headless operation)
+- Uses Transmission's JSON-RPC API (`torrent-add` / `torrent-get`) rather than Transmission's native `watch-dir` or `script-torrent-done-filename` — both of those live only in the gitignored, runtime-only `config/transmission/settings.json` and would need a container restart; native `watch-dir` also only supports one global download destination, which can't route ebook torrents to their own folder the way RPC-based `torrent-add` (with an explicit `download-dir`) can
+- Downloads land in `$MEDIA_ROOT/torrents/complete/ebooks-incoming` (Transmission's own destination for this category) — copied (not moved) into `media/ebooks` once finished, same H&R-preserving reasoning as `audiobook-import.sh`
+- Metadata (title/author) is read from the ebook file itself via Calibre's `ebook-meta`, not parsed from the filename — filenames from torrents are inconsistent and unreliable for this. Falls back to a cleaned filename + "Unknown Author" (flagged for manual review in the report email) if metadata extraction comes up empty
+- Idempotency: `$MEDIA_ROOT/torrents/complete/ebooks-incoming/.imported.log` tracks already-processed torrent hashes (destination folder names depend on extracted metadata, not the source name, so simple destination-exists checks don't work here)
+- Sends one report email per run, only when something actually happened (torrent added, book imported, or an error) — never on a quiet no-op tick
+- Known gap: `transmission-cleanup.sh`'s H&R-aware orphan removal doesn't know about ebook torrents — they seed indefinitely with no automated cleanup
 
 ## Status Page
 - Flask + SQLite, bridge network (port 8080), magic link auth

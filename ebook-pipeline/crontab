@@ -1,0 +1,5 @@
+SHELL=/bin/bash
+PATH=/usr/local/bin:/opt/calibre:/usr/bin:/bin
+
+# Ebook pipeline: watch-folder scan, completion check, convert+import, email - every 5 min
+*/5 * * * * root /scripts/ebook-pipeline.sh >> /var/log/cron/ebook-pipeline.log 2>&1

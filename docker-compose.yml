@@ -414,6 +414,35 @@ services:
     security_opt:
       - no-new-privileges:true
 
+  ebook-pipeline:
+    # Automated ebook download pipeline: drop a .torrent into $MEDIA_ROOT/watch,
+    # this container adds it to Transmission via RPC, waits for completion,
+    # converts to epub with Calibre, and imports it into Audiobookshelf.
+    # Separate from the `cron` service because Calibre needs glibc — a bad
+    # fit for the Alpine cron image.
+    build:
+      context: .
+      dockerfile: ebook-pipeline/Dockerfile
+    container_name: ebook-pipeline
+    networks:
+      - mediaserver
+    depends_on:
+      - transmission
+      - audiobookshelf
+    environment:
+      - TZ=Europe/Budapest
+      - SERVER_NAME=${SERVER_NAME:-Media Server}
+    volumes:
+      - ./scripts:/scripts:ro
+      - ./.env:/config/.env:ro
+      - ${MEDIA_ROOT}:/mnt/mediaserver
+      - ebook-pipeline-logs:/var/log/cron
+    mem_limit: 1g
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+
 volumes:
   cron-state:
   cron-logs:
+  ebook-pipeline-logs:
