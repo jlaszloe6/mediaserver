@@ -40,8 +40,12 @@ WARNINGS=0
 # Both the staging dir and the plaintext pre-encryption tarball contain
 # secrets (.env, SSH deploy keys) — clean them up on any exit, including a
 # crash partway through (e.g. openssl missing/failing), not just success.
+# KEY_TMPFILE (used below to derive the HMAC subkey without ever putting
+# BACKUP_ENCRYPTION_KEY on a process's argv) gets the same treatment.
+KEY_TMPFILE=""
 cleanup_backup_tmp() {
     rm -rf "$STAGING" "$STAGING.tar.gz"
+    [ -n "$KEY_TMPFILE" ] && rm -f "$KEY_TMPFILE"
 }
 trap cleanup_backup_tmp EXIT
 
@@ -228,11 +232,22 @@ log "  Encrypted with AES-256-CBC"
 # here (host vs. this Alpine-based cron container), so this authenticates
 # the ciphertext separately instead.
 #
-# The MAC key is derived from BACKUP_ENCRYPTION_KEY via a single HMAC step
-# (HKDF-Expand-style: master key as the HMAC key, a fixed label as the
-# "message") rather than reused directly - keeping it independent of
-# whatever AES key openssl enc's own pbkdf2 KDF derives for encryption.
-MAC_KEY="$(printf '%s' 'mediaserver-backup-hmac-v1' | openssl dgst -sha256 -hmac "$BACKUP_ENCRYPTION_KEY" | awk '{print $NF}')"
+# The MAC key is derived from BACKUP_ENCRYPTION_KEY via an HKDF-Extract-
+# style step: a fixed public label plays HMAC's "key" role and the real
+# secret plays the "message" role (read from a 600-permission temp file via
+# openssl's file argument, never as a CLI argument) - openssl's dgst/mac
+# commands have no argv-free way to supply a value that's actually acting
+# as the HMAC key, so this is what keeps BACKUP_ENCRYPTION_KEY itself off
+# argv (and thus out of `ps`/`/proc/<pid>/cmdline`). The derived MAC_KEY
+# below still has to be passed via argv for the actual tag computation -
+# a much smaller residual, since it can only be used to forge this
+# integrity check, not to decrypt anything or recover the master key.
+KEY_TMPFILE="$(mktemp)"
+chmod 600 "$KEY_TMPFILE"
+printf '%s' "$BACKUP_ENCRYPTION_KEY" > "$KEY_TMPFILE"
+MAC_KEY="$(openssl dgst -sha256 -hmac 'mediaserver-backup-hmac-v1' "$KEY_TMPFILE" | awk '{print $NF}')"
+rm -f "$KEY_TMPFILE"
+KEY_TMPFILE=""
 openssl dgst -sha256 -hmac "$MAC_KEY" "$BACKUP_FILE" | awk '{print $NF}' > "$BACKUP_FILE.hmac"
 log "  HMAC-SHA256 sidecar written for integrity verification"
 

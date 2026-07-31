@@ -123,15 +123,30 @@ if [[ "$BACKUP_FILE" == *.enc ]]; then
         exit 1
     fi
 
+    RESTORE_TMPDIR="$(mktemp -d)"
+    chmod 700 "$RESTORE_TMPDIR"
+
     # Verify the HMAC sidecar (if present) before touching the ciphertext at
     # all - this is the only thing standing between a tampered/corrupted
     # backup and CBC silently decrypting it to garbage (or, via bit-flipping,
     # attacker-influenced plaintext). Older backups predate this sidecar and
     # have no way to be verified - proceed with a warning rather than
     # refusing to restore backups made before this feature existed.
+    #
+    # Same HKDF-Extract-style derivation as backup.sh: a fixed public label
+    # plays HMAC's "key" role and BACKUP_ENCRYPTION_KEY plays the "message"
+    # role, read from a 600-permission temp file rather than passed as a
+    # CLI argument - keeps the master secret out of `ps`/`/proc/<pid>/cmdline`.
+    # The derived MAC_KEY still has to go on argv for the tag comparison
+    # itself (openssl's dgst has no argv-free way to supply an HMAC key),
+    # a much smaller residual since it can only forge this integrity check,
+    # not decrypt anything or recover the master key.
     HMAC_FILE="$BACKUP_FILE.hmac"
     if [ -f "$HMAC_FILE" ]; then
-        MAC_KEY="$(printf '%s' 'mediaserver-backup-hmac-v1' | openssl dgst -sha256 -hmac "$BACKUP_ENCRYPTION_KEY" | awk '{print $NF}')"
+        KEY_TMPFILE="$RESTORE_TMPDIR/key"
+        printf '%s' "$BACKUP_ENCRYPTION_KEY" > "$KEY_TMPFILE"
+        MAC_KEY="$(openssl dgst -sha256 -hmac 'mediaserver-backup-hmac-v1' "$KEY_TMPFILE" | awk '{print $NF}')"
+        rm -f "$KEY_TMPFILE"
         ACTUAL_HMAC="$(openssl dgst -sha256 -hmac "$MAC_KEY" "$BACKUP_FILE" | awk '{print $NF}')"
         EXPECTED_HMAC="$(cat "$HMAC_FILE")"
         if [ "$ACTUAL_HMAC" != "$EXPECTED_HMAC" ]; then
@@ -144,8 +159,6 @@ if [[ "$BACKUP_FILE" == *.enc ]]; then
         log "WARNING: no .hmac sidecar found for $BACKUP_NAME (backup predates integrity verification) — cannot confirm it wasn't tampered with or corrupted"
     fi
 
-    RESTORE_TMPDIR="$(mktemp -d)"
-    chmod 700 "$RESTORE_TMPDIR"
     TAR_FILE="$RESTORE_TMPDIR/decrypted.tar.gz"
     if ! openssl enc -d -aes-256-cbc -pbkdf2 -in "$BACKUP_FILE" -out "$TAR_FILE" -pass env:BACKUP_ENCRYPTION_KEY 2>/dev/null; then
         echo "ERROR: Decryption failed — check BACKUP_ENCRYPTION_KEY matches the key used to create this backup" >&2
