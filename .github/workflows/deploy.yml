@@ -51,10 +51,10 @@ jobs:
       - name: Detect changed services
         id: changes
         working-directory: /opt/mediaserver
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
         run: |
-          BEFORE=${{ github.event.before }}
-          AFTER=${{ github.sha }}
-
           rebuild_statuspage=false
           rebuild_cron=false
           rebuild_caddy=false
