@@ -99,7 +99,11 @@ if [ -n "$TARGET_BACKUP" ]; then
 else
     # Exclude .hmac sidecar files — they sort newest (written right after
     # their backup) and would otherwise be picked as "the latest backup".
-    BACKUP_FILE="$(ls -t "$BACKUP_DIR"/backup-*.tar.gz* 2>/dev/null | grep -v '\.hmac$' | head -1)"
+    # `|| true`: if every file present is a .hmac sidecar (e.g. orphaned
+    # after manual cleanup), grep -v finds nothing to output and exits 1;
+    # under this script's pipefail that would abort via errexit before the
+    # -z check below gets a chance to print its own "no backups" message.
+    BACKUP_FILE="$(ls -t "$BACKUP_DIR"/backup-*.tar.gz* 2>/dev/null | grep -v '\.hmac$' | head -1 || true)"
     if [ -z "$BACKUP_FILE" ]; then
         echo "ERROR: No backups found in $BACKUP_DIR" >&2
         exit 1
