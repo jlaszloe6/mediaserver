@@ -104,6 +104,13 @@ Services: Jellyfin, Transmission, Sonarr, Radarr, Prowlarr, Bazarr, Seerr, Caddy
 - Not currently wired into the crontab; run manually (`./scripts/audiobook-import.sh` or `--dry-run`) after adding an audiobook torrent
 - Requires `AUDIOBOOKSHELF_API_KEY` in `.env` — create via Settings → Users → API Keys in the Audiobookshelf UI (must have `isActive: true`, the API defaults new keys to inactive)
 
+## Ebook Library
+- Separate Audiobookshelf library ("Ebooks") from Audiobooks, mounted at its own `${MEDIA_ROOT}/media/ebooks:/ebooks` volume — must not be nested inside `/audiobooks` or under another library's folder, Audiobookshelf double-scans overlapping paths into duplicate items
+- No acquisition pipeline (same as audiobooks) — add files to `media/ebooks` manually and trigger a library scan
+- **epub is the standard/default format**: Audiobookshelf only tracks reading progress for epub (not mobi/azw3), and epub is the safest format for Amazon's Send-to-Kindle. Convert other formats with Calibre's `ebook-convert` (a throwaway `lscr.io/linuxserver/calibre` container works well) before adding
+- One book per `Author/Title/` folder — never mix a flat ebook file directly under an author folder alongside title subfolders, it confuses Audiobookshelf's folder-as-item detection and misfiles the item as "missing"
+- Kindle send-to-device requires the sender address to be on Amazon's approved Personal Document E-mail List (Manage Your Content and Devices → Preferences)
+
 ## Status Page
 - Flask + SQLite, bridge network (port 8080), magic link auth
 - Modular structure: `app.py` (init) → `config.py`, `db.py`, `auth.py`, `services/*`, `routes/*`
