@@ -171,7 +171,16 @@ fi
 
 # --- Phase 2: completion poll -> convert -> organize ---
 sanitize() {
-    echo "$1" | tr -s ' \t' ' ' | tr '/\\:*?"<>|' '_' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
+    local s
+    s=$(echo "$1" | tr -s ' \t' ' ' | tr '/\\:*?"<>|' '_' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    # Extracted metadata comes from a downloaded file's embedded fields -
+    # untrusted input. Stripping path separators above isn't enough on its
+    # own: a value of exactly "." or ".." contains no separator but would
+    # still resolve one directory level up/in-place when joined into a path.
+    case "$s" in
+        .|..) s="_" ;;
+    esac
+    echo "$s"
 }
 
 if [ -n "$SID" ]; then
@@ -196,6 +205,17 @@ if [ -n "$SID" ]; then
         if grep -qxF "$hash" "$PROCESSED_LOG" 2>/dev/null; then
             continue
         fi
+
+        # Torrent name is attacker-influenced (comes from whatever .torrent
+        # file was dropped in the watch folder) - reject anything that could
+        # escape $INCOMING_DIR when joined into a path, rather than trusting
+        # it just because it came back from Transmission's own API.
+        case "$tname" in
+            */*|*..*)
+                log "  WARN: torrent name '$tname' contains a path separator or '..' - skipping"
+                continue
+                ;;
+        esac
 
         search_root="$INCOMING_DIR/$tname"
         if [ ! -e "$search_root" ]; then

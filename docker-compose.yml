@@ -393,6 +393,9 @@ services:
     build:
       context: .
       dockerfile: cron/Dockerfile
+      args:
+        PUID: ${PUID:-1000}
+        PGID: ${PGID:-1000}
     container_name: cron
     networks:
       - mediaserver
@@ -423,6 +426,9 @@ services:
     build:
       context: .
       dockerfile: ebook-pipeline/Dockerfile
+      args:
+        PUID: ${PUID:-1000}
+        PGID: ${PGID:-1000}
     container_name: ebook-pipeline
     networks:
       - mediaserver
