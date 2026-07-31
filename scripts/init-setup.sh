@@ -52,6 +52,14 @@ log_ok()    { echo -e "${GREEN}[ OK ]${NC} $*" >&2; }
 log_warn()  { echo -e "${YELLOW}[WARN]${NC} $*" >&2; }
 log_err()   { echo -e "${RED}[ERR ]${NC} $*" >&2; ERRORS=$((ERRORS + 1)); }
 
+# env_set() below is called from inside get_api_key(), which in turn is
+# always invoked via command substitution ($(get_api_key ...)) - that runs
+# in a subshell, so a plain variable assignment inside env_set() would be
+# lost the moment that subshell exits. Recording write failures to a file
+# instead is what actually survives back to the rest of this script.
+ENV_WRITE_FAILED_FILE="$(mktemp)"
+trap 'rm -f "$ENV_WRITE_FAILED_FILE"' EXIT
+
 env_set() {
     local key="$1" value="$2"
     # Delegates to env-set.sh, which edits $ENV_FILE's existing inode in
@@ -59,7 +67,18 @@ env_set() {
     # over the original path. A rename swaps in a new inode, which strands
     # any container that already has .env bind-mounted at the old one —
     # see issue #85.
-    ENV_FILE="$ENV_FILE" "$SCRIPT_DIR/env-set.sh" "$key=$value"
+    #
+    # When this script runs inside the cron container (the documented,
+    # required way - see the top of this file), .env is bind-mounted
+    # read-only there by design (secret-hardening work in #89), so this
+    # write always fails there. That's a no-op today only because the
+    # three auto-populated keys are typically already correct in .env from
+    # an earlier run; collect the failure instead of letting env-set.sh's
+    # raw "Read-only file system" error leak out three times, and surface
+    # one clear, actionable note with the real values at the end instead.
+    if ! ENV_FILE="$ENV_FILE" "$SCRIPT_DIR/env-set.sh" "$key=$value" 2>/dev/null; then
+        echo "${key}=${value}" >> "$ENV_WRITE_FAILED_FILE"
+    fi
 }
 
 read_xml_key() {
@@ -166,6 +185,13 @@ if [ -z "$PROWLARR_KEY" ] || [ -z "$SONARR_KEY" ] || [ -z "$RADARR_KEY" ]; then
 fi
 
 log_ok "API keys loaded (Prowlarr, Sonarr, Radarr)"
+
+if [ -s "$ENV_WRITE_FAILED_FILE" ]; then
+    log_warn "Could not write the following to .env (read-only in this container) - add manually if not already present:"
+    while IFS= read -r line; do
+        log_warn "  $line"
+    done < "$ENV_WRITE_FAILED_FILE"
+fi
 
 # --- Section 2: Wait for services ---
 
