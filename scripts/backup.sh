@@ -88,9 +88,9 @@ if [ "$DRY_RUN" = true ]; then
     echo "  - statuspage (direct, via cron sqlite3)"
     log ""
     log "Backups on NAS:"
-    if ls "$BACKUP_DIR"/backup-*.tar.gz 1>/dev/null 2>&1; then
-        ls -lh "$BACKUP_DIR"/backup-*.tar.gz | awk '{print "  " $NF " (" $5 ")"}'
-        stale=$(find "$BACKUP_DIR" -name "backup-*.tar.gz" -mtime +"$BACKUP_RETENTION_DAYS" 2>/dev/null | wc -l)
+    if ls "$BACKUP_DIR"/backup-*.tar.gz* 2>/dev/null | grep -qv '\.hmac$'; then
+        ls -lh "$BACKUP_DIR"/backup-*.tar.gz* 2>/dev/null | grep -v '\.hmac$' | awk '{print "  " $NF " (" $5 ")"}'
+        stale=$(find "$BACKUP_DIR" -name "backup-*.tar.gz*" ! -name '*.hmac' -mtime +"$BACKUP_RETENTION_DAYS" 2>/dev/null | wc -l)
         log "Would delete $stale backup(s) older than $BACKUP_RETENTION_DAYS days"
     else
         log "  (none)"
@@ -220,6 +220,22 @@ log "Encrypting..."
 openssl enc -aes-256-cbc -salt -pbkdf2 -in "$PLAINTEXT_TAR" -out "$BACKUP_FILE" -pass env:BACKUP_ENCRYPTION_KEY
 log "  Encrypted with AES-256-CBC"
 
+# Encrypt-then-MAC: CBC alone has no integrity check, so a tampered or
+# corrupted ciphertext would decrypt silently to garbage (or, via CBC
+# bit-flipping, attacker-influenced plaintext) with nothing catching it at
+# restore time. openssl enc's own AEAD modes (e.g. -aes-256-gcm) don't
+# reliably surface/verify the auth tag across the openssl versions in play
+# here (host vs. this Alpine-based cron container), so this authenticates
+# the ciphertext separately instead.
+#
+# The MAC key is derived from BACKUP_ENCRYPTION_KEY via a single HMAC step
+# (HKDF-Expand-style: master key as the HMAC key, a fixed label as the
+# "message") rather than reused directly - keeping it independent of
+# whatever AES key openssl enc's own pbkdf2 KDF derives for encryption.
+MAC_KEY="$(printf '%s' 'mediaserver-backup-hmac-v1' | openssl dgst -sha256 -hmac "$BACKUP_ENCRYPTION_KEY" | awk '{print $NF}')"
+openssl dgst -sha256 -hmac "$MAC_KEY" "$BACKUP_FILE" | awk '{print $NF}' > "$BACKUP_FILE.hmac"
+log "  HMAC-SHA256 sidecar written for integrity verification"
+
 BACKUP_SIZE="$(du -sh "$BACKUP_FILE" | cut -f1)"
 log "  $(basename "$BACKUP_FILE"): $BACKUP_SIZE"
 
@@ -233,7 +249,7 @@ while IFS= read -r old_backup; do
     deleted=$((deleted + 1))
 done < <(find "$BACKUP_DIR" -name "backup-*.tar.gz*" -mtime +"$BACKUP_RETENTION_DAYS" 2>/dev/null)
 
-remaining=$(ls "$BACKUP_DIR"/backup-*.tar.gz* 2>/dev/null | wc -l)
+remaining=$(ls "$BACKUP_DIR"/backup-*.tar.gz* 2>/dev/null | grep -v '\.hmac$' | wc -l)
 total_size=$(du -sh "$BACKUP_DIR" 2>/dev/null | cut -f1)
 
 log "Rotation: deleted $deleted old backup(s), $remaining remaining ($total_size total)"

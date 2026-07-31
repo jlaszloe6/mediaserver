@@ -69,10 +69,10 @@ fi
 if [ "${LIST_MODE:-false}" = true ]; then
     echo "Available backups in $BACKUP_DIR:"
     echo ""
-    if ls "$BACKUP_DIR"/backup-*.tar.gz* 1>/dev/null 2>&1; then
-        ls -lht "$BACKUP_DIR"/backup-*.tar.gz* | awk '{printf "  %-44s %s\n", $NF, $5}'
+    if ls "$BACKUP_DIR"/backup-*.tar.gz* 2>/dev/null | grep -qv '\.hmac$'; then
+        ls -lht "$BACKUP_DIR"/backup-*.tar.gz* | grep -v '\.hmac$' | awk '{printf "  %-44s %s\n", $NF, $5}'
         echo ""
-        total=$(ls "$BACKUP_DIR"/backup-*.tar.gz* | wc -l)
+        total=$(ls "$BACKUP_DIR"/backup-*.tar.gz* | grep -cv '\.hmac$')
         total_size=$(du -sh "$BACKUP_DIR" 2>/dev/null | cut -f1)
         echo "$total backup(s), $total_size total"
     else
@@ -85,13 +85,15 @@ fi
 
 if [ -n "$TARGET_BACKUP" ]; then
     BACKUP_FILE="$BACKUP_DIR/$TARGET_BACKUP"
-    if [ ! -f "$BACKUP_FILE" ]; then
+    if [ ! -f "$BACKUP_FILE" ] || [[ "$BACKUP_FILE" == *.hmac ]]; then
         echo "ERROR: Backup not found: $BACKUP_FILE" >&2
         echo "Run '$0 --list' to see available backups" >&2
         exit 1
     fi
 else
-    BACKUP_FILE="$(ls -t "$BACKUP_DIR"/backup-*.tar.gz* 2>/dev/null | head -1)"
+    # Exclude .hmac sidecar files — they sort newest (written right after
+    # their backup) and would otherwise be picked as "the latest backup".
+    BACKUP_FILE="$(ls -t "$BACKUP_DIR"/backup-*.tar.gz* 2>/dev/null | grep -v '\.hmac$' | head -1)"
     if [ -z "$BACKUP_FILE" ]; then
         echo "ERROR: No backups found in $BACKUP_DIR" >&2
         exit 1
@@ -120,6 +122,28 @@ if [[ "$BACKUP_FILE" == *.enc ]]; then
         echo "ERROR: $BACKUP_NAME is encrypted but BACKUP_ENCRYPTION_KEY is not set in .env" >&2
         exit 1
     fi
+
+    # Verify the HMAC sidecar (if present) before touching the ciphertext at
+    # all - this is the only thing standing between a tampered/corrupted
+    # backup and CBC silently decrypting it to garbage (or, via bit-flipping,
+    # attacker-influenced plaintext). Older backups predate this sidecar and
+    # have no way to be verified - proceed with a warning rather than
+    # refusing to restore backups made before this feature existed.
+    HMAC_FILE="$BACKUP_FILE.hmac"
+    if [ -f "$HMAC_FILE" ]; then
+        MAC_KEY="$(printf '%s' 'mediaserver-backup-hmac-v1' | openssl dgst -sha256 -hmac "$BACKUP_ENCRYPTION_KEY" | awk '{print $NF}')"
+        ACTUAL_HMAC="$(openssl dgst -sha256 -hmac "$MAC_KEY" "$BACKUP_FILE" | awk '{print $NF}')"
+        EXPECTED_HMAC="$(cat "$HMAC_FILE")"
+        if [ "$ACTUAL_HMAC" != "$EXPECTED_HMAC" ]; then
+            echo "ERROR: HMAC verification failed for $BACKUP_NAME — the backup is corrupted or has been tampered with." >&2
+            echo "Refusing to restore. If BACKUP_ENCRYPTION_KEY was recently rotated, this is expected — restore with the key used to create this specific backup." >&2
+            exit 1
+        fi
+        log "HMAC verified — backup is intact and authentic"
+    else
+        log "WARNING: no .hmac sidecar found for $BACKUP_NAME (backup predates integrity verification) — cannot confirm it wasn't tampered with or corrupted"
+    fi
+
     RESTORE_TMPDIR="$(mktemp -d)"
     chmod 700 "$RESTORE_TMPDIR"
     TAR_FILE="$RESTORE_TMPDIR/decrypted.tar.gz"
@@ -129,6 +153,21 @@ if [[ "$BACKUP_FILE" == *.enc ]]; then
     fi
     log "Decrypted $BACKUP_NAME"
 fi
+
+# Sanity-check the archive itself before trusting it with a live restore:
+# catches truncation/corruption (or a wrong key that decrypted to noise
+# without openssl itself erroring) that HMAC verification wouldn't have
+# caught on an unverified legacy backup, and that would otherwise only
+# surface mid-restore after containers are already stopped.
+if ! tar -tzf "$TAR_FILE" >/dev/null 2>&1; then
+    echo "ERROR: $BACKUP_NAME is not a valid tar.gz archive (wrong key, corruption, or truncated file)" >&2
+    exit 1
+fi
+if ! tar -tzf "$TAR_FILE" | grep -q '^\(\./\)\?manifest\.txt$'; then
+    echo "ERROR: $BACKUP_NAME has no manifest.txt — does not look like a backup produced by backup.sh" >&2
+    exit 1
+fi
+log "Archive contents verified (valid tar.gz, manifest present)"
 
 # --- Dry run ---
 
