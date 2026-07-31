@@ -70,9 +70,11 @@ There's no Sonarr/Radarr-equivalent acquisition app for audiobooks (Readarr is d
 
 **First-run setup**, once, before `docker compose up -d`:
 
-1. `mkdir -p "$MEDIA_ROOT"/media/{music,audiobooks}`
+1. `mkdir -p "$MEDIA_ROOT"/media/{music,audiobooks,ebooks}`
 2. `mkdir -p config/navidrome config/audiobookshelf/{config,metadata} && chown -R "$PUID:$PGID" config/navidrome config/audiobookshelf` — **required**. Unlike the linuxserver images in this stack, Navidrome and Audiobookshelf run directly as the configured `user:` UID/GID with no ownership-fixing entrypoint. Left to Docker's auto-create, these folders come up `root:root` and both containers crash-loop on a database-open failure.
-3. Complete each service's setup wizard: Lidarr (`:8686`, add `/data/media/music` as root folder, wire up Transmission + Prowlarr same as Sonarr/Radarr), Navidrome (`:4533`, auto-scans on startup), Audiobookshelf (`:13378`, add an `/audiobooks` library, create an **active** API key for `audiobook-import.sh`).
+3. Complete each service's setup wizard: Lidarr (`:8686`, add `/data/media/music` as root folder, wire up Transmission + Prowlarr same as Sonarr/Radarr), Navidrome (`:4533`, auto-scans on startup), Audiobookshelf (`:13378`, add an `/audiobooks` library and a separate `/ebooks` library, create an **active** API key for `audiobook-import.sh`).
+
+Ebooks have no acquisition pipeline either — add files to `/media/ebooks` directly (e.g. from a Calibre export) and trigger an Audiobookshelf library scan. Amazon's Send-to-Kindle only accepts epub, mobi, pdf, and a handful of document formats — not azw3 or the older prc/Mobipocket extension, so rename `.prc` files to `.mobi` before importing if converting a Calibre library.
 
 Recommended clients: [Tempo](https://github.com/CappielloAntonio/tempo)/Tempus for Navidrome, the official Audiobookshelf app — both support Android Auto and both work off-LAN through Caddy + DuckDNS.
 
