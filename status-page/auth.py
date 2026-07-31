@@ -1,4 +1,5 @@
 import hashlib
+import hmac
 import secrets
 from datetime import datetime, timedelta, timezone
 from functools import wraps
@@ -80,7 +81,8 @@ def generate_csrf():
 
 def check_csrf():
     token = request.form.get("_csrf", "")
-    return token and token == session.get("_csrf")
+    expected = session.get("_csrf")
+    return bool(token) and bool(expected) and hmac.compare_digest(token, expected)
 
 
 def is_allowed_email(email):
