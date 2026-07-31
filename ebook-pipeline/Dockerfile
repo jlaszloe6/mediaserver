@@ -38,7 +38,11 @@ ENV LANG=en_US.UTF-8 LANGUAGE=en_US:en LC_ALL=en_US.UTF-8
 ENV PATH="/opt/calibre:${PATH}"
 
 COPY ebook-pipeline/crontab /etc/cron.d/ebook-pipeline
-RUN chmod 0644 /etc/cron.d/ebook-pipeline && crontab /etc/cron.d/ebook-pipeline
+# /etc/cron.d files need the user-field column and are picked up automatically
+# by cron - do NOT also `crontab`-load this file into root's personal
+# crontab, which uses the classic 5-field format with no user column and
+# would misparse "root" as the command to run.
+RUN chmod 0644 /etc/cron.d/ebook-pipeline
 
 COPY ebook-pipeline/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
