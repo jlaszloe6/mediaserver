@@ -278,6 +278,7 @@ services:
       - ./config/audiobookshelf/config:/config
       - ./config/audiobookshelf/metadata:/metadata
       - ${MEDIA_ROOT}/media/audiobooks:/audiobooks
+      - ${MEDIA_ROOT}/media/ebooks:/ebooks
     mem_limit: 1g
     restart: unless-stopped
     security_opt:
