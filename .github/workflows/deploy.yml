@@ -18,11 +18,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
-      - name: Bash syntax check (scripts, caddy, cron, dnsmasq)
+      - name: Bash syntax check (scripts, caddy, cron, dnsmasq, ebook-pipeline)
         run: |
           shopt -s nullglob
           status=0
-          for f in scripts/*.sh scripts/lib/*.sh tests/*.sh tests/support/*.sh caddy/*.sh cron/*.sh dnsmasq/*.sh; do
+          for f in scripts/*.sh scripts/lib/*.sh tests/*.sh tests/support/*.sh caddy/*.sh cron/*.sh dnsmasq/*.sh ebook-pipeline/*.sh; do
             echo "bash -n $f"
             bash -n "$f" || status=1
           done
@@ -59,6 +59,7 @@ jobs:
           rebuild_cron=false
           rebuild_caddy=false
           rebuild_dnsmasq=false
+          rebuild_ebook_pipeline=false
 
           changed=$(git diff --name-only "$BEFORE" "$AFTER" 2>/dev/null || echo "")
 
@@ -74,6 +75,9 @@ jobs:
           if echo "$changed" | grep -q '^dnsmasq/'; then
             rebuild_dnsmasq=true
           fi
+          if echo "$changed" | grep -q '^ebook-pipeline/'; then
+            rebuild_ebook_pipeline=true
+          fi
 
           compose_changed=false
           if echo "$changed" | grep -q '^docker-compose.yml$'; then
@@ -84,12 +88,13 @@ jobs:
           echo "rebuild_cron=$rebuild_cron" >> "$GITHUB_OUTPUT"
           echo "rebuild_caddy=$rebuild_caddy" >> "$GITHUB_OUTPUT"
           echo "rebuild_dnsmasq=$rebuild_dnsmasq" >> "$GITHUB_OUTPUT"
+          echo "rebuild_ebook_pipeline=$rebuild_ebook_pipeline" >> "$GITHUB_OUTPUT"
           echo "compose_changed=$compose_changed" >> "$GITHUB_OUTPUT"
-          echo "any_rebuild=$([ "$rebuild_statuspage" = true ] || [ "$rebuild_cron" = true ] || [ "$rebuild_caddy" = true ] || [ "$rebuild_dnsmasq" = true ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "any_rebuild=$([ "$rebuild_statuspage" = true ] || [ "$rebuild_cron" = true ] || [ "$rebuild_caddy" = true ] || [ "$rebuild_dnsmasq" = true ] || [ "$rebuild_ebook_pipeline" = true ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
 
           echo "Changed files:"
           echo "$changed"
-          echo "Rebuild: statuspage=$rebuild_statuspage cron=$rebuild_cron caddy=$rebuild_caddy dnsmasq=$rebuild_dnsmasq compose=$compose_changed"
+          echo "Rebuild: statuspage=$rebuild_statuspage cron=$rebuild_cron caddy=$rebuild_caddy dnsmasq=$rebuild_dnsmasq ebook_pipeline=$rebuild_ebook_pipeline compose=$compose_changed"
 
       - name: Build and restart statuspage
         if: steps.changes.outputs.rebuild_statuspage == 'true'
@@ -110,6 +115,11 @@ jobs:
         if: steps.changes.outputs.rebuild_dnsmasq == 'true'
         working-directory: /opt/mediaserver
         run: docker compose up -d --build --no-deps dnsmasq
+
+      - name: Build and restart ebook-pipeline
+        if: steps.changes.outputs.rebuild_ebook_pipeline == 'true'
+        working-directory: /opt/mediaserver
+        run: docker compose up -d --build --no-deps ebook-pipeline
 
       # Selective rebuilds above only touch the custom-built services that
       # changed. This step always runs afterward and reconciles the FULL
