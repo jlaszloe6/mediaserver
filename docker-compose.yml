@@ -435,13 +435,28 @@ services:
     depends_on:
       - transmission
       - audiobookshelf
+    # Only the specific secrets this script actually uses are passed in -
+    # not the whole .env - and only the three specific media-root
+    # subdirectories it touches are mounted, not the whole NAS root. This
+    # container parses untrusted downloaded file content through Calibre,
+    # so it shouldn't have blast-radius access to Sonarr/Radarr/Jellyfin/
+    # Seerr/DuckDNS/backup-encryption keys or the rest of the media library
+    # and backups if that ever went wrong.
     environment:
       - TZ=Europe/Budapest
       - SERVER_NAME=${SERVER_NAME:-Media Server}
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-}
+      - AUDIOBOOKSHELF_API_KEY=${AUDIOBOOKSHELF_API_KEY:-}
+      - SMTP_SERVER=${SMTP_SERVER:-}
+      - SMTP_PORT=${SMTP_PORT:-}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_FROM=${SMTP_FROM:-}
     volumes:
       - ./scripts:/scripts:ro
-      - ./.env:/config/.env:ro
-      - ${MEDIA_ROOT}:/mnt/mediaserver
+      - ${MEDIA_ROOT}/watch-ebooks:/mnt/mediaserver/watch-ebooks
+      - ${MEDIA_ROOT}/torrents/complete/ebooks-incoming:/mnt/mediaserver/torrents/complete/ebooks-incoming
+      - ${MEDIA_ROOT}/media/ebooks:/mnt/mediaserver/media/ebooks
       - ebook-pipeline-logs:/var/log/cron
     mem_limit: 1g
     restart: unless-stopped
