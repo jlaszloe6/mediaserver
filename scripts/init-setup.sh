@@ -768,61 +768,76 @@ else
     fi
 
     # Seerr email notification
-    seerr_settings=$(curl -sf "http://seerr:5055/api/v1/settings/notifications/email" 2>/dev/null)
-    seerr_email_enabled=$(echo "$seerr_settings" | jq -r '.enabled // false' 2>/dev/null)
-
-    if [ "$seerr_email_enabled" = "true" ]; then
-        log_ok "Email notification already configured in Seerr"
+    if [ -z "${SEERR_API_KEY:-}" ]; then
+        log_warn "SEERR_API_KEY not set in .env — skipping Seerr email notification config"
     else
-        seerr_email_payload=$(jq -n \
-            --arg from "$SMTP_FROM" \
-            --arg host "$SMTP_SERVER" \
-            --argjson port "$SMTP_PORT" \
-            --arg sender "$SEERR_SENDER_NAME" \
-            --arg user "$SMTP_USER" \
-            --arg pass "$SMTP_PASSWORD" \
-            '{
-                enabled: true,
-                embedPoster: true,
-                options: {
-                    userEmailRequired: true,
-                    emailFrom: $from,
-                    smtpHost: $host,
-                    smtpPort: $port,
-                    secure: false,
-                    ignoreTls: false,
-                    requireTls: false,
-                    allowSelfSigned: false,
-                    senderName: $sender,
-                    authUser: $user,
-                    authPass: $pass
-                },
-                types: 4062
-            }')
-        if $DRY_RUN; then
-            log_info "[DRY RUN] Would configure email notification in Seerr"
+        seerr_settings=$(curl -sf -H "X-Api-Key: $SEERR_API_KEY" "http://seerr:5055/api/v1/settings/notifications/email" 2>/dev/null)
+        seerr_email_enabled=$(echo "$seerr_settings" | jq -r '.enabled // false' 2>/dev/null)
+
+        if [ "$seerr_email_enabled" = "true" ]; then
+            log_ok "Email notification already configured in Seerr"
         else
-            seerr_result=$(curl -s -w '\n%{http_code}' -X POST \
-                "http://seerr:5055/api/v1/settings/notifications/email" \
-                -H "Content-Type: application/json" \
-                -d "$seerr_email_payload")
-            seerr_code=$(echo "$seerr_result" | tail -1)
-            if [ "$seerr_code" = "200" ] || [ "$seerr_code" = "201" ]; then
-                log_ok "Configured email notification in Seerr"
+            seerr_email_payload=$(jq -n \
+                --arg from "$SMTP_FROM" \
+                --arg host "$SMTP_SERVER" \
+                --argjson port "$SMTP_PORT" \
+                --arg sender "$SEERR_SENDER_NAME" \
+                --arg user "$SMTP_USER" \
+                --arg pass "$SMTP_PASSWORD" \
+                '{
+                    enabled: true,
+                    embedPoster: true,
+                    options: {
+                        userEmailRequired: true,
+                        emailFrom: $from,
+                        smtpHost: $host,
+                        smtpPort: $port,
+                        secure: false,
+                        ignoreTls: false,
+                        requireTls: false,
+                        allowSelfSigned: false,
+                        senderName: $sender,
+                        authUser: $user,
+                        authPass: $pass
+                    },
+                    types: 4062
+                }')
+            if $DRY_RUN; then
+                log_info "[DRY RUN] Would configure email notification in Seerr"
             else
-                log_err "Failed to configure Seerr email (HTTP $seerr_code)"
+                seerr_result=$(curl -s -w '\n%{http_code}' -X POST \
+                    "http://seerr:5055/api/v1/settings/notifications/email" \
+                    -H "X-Api-Key: $SEERR_API_KEY" \
+                    -H "Content-Type: application/json" \
+                    -d "$seerr_email_payload")
+                seerr_code=$(echo "$seerr_result" | tail -1)
+                if [ "$seerr_code" = "200" ] || [ "$seerr_code" = "201" ]; then
+                    log_ok "Configured email notification in Seerr"
+                else
+                    log_err "Failed to configure Seerr email (HTTP $seerr_code)"
+                fi
             fi
         fi
     fi
+fi
 
-    # Enable Radarr/Sonarr sync in Seerr (required for media availability status)
+# --- Section 9: Enable Radarr/Sonarr sync in Seerr ---
+# Required for media availability status in Seerr's UI - unrelated to SMTP,
+# so this must not be nested inside the email-notifications block above (it
+# used to be, which meant a deployment without SMTP configured never got
+# this enabled at all).
+
+echo ""
+if [ -z "${SEERR_API_KEY:-}" ]; then
+    log_warn "SEERR_API_KEY not set in .env — skipping Seerr Radarr/Sonarr sync config"
+else
     log_info "Enabling Radarr/Sonarr sync in Seerr..."
     SEERR_URL="http://seerr:5055"
     RADARR_FIELDS='["name","hostname","port","apiKey","useSsl","activeProfileId","activeProfileName","activeDirectory","is4k","minimumAvailability","isDefault","externalUrl","syncEnabled","preventSearch"]'
     SONARR_FIELDS='["name","hostname","port","apiKey","useSsl","activeProfileId","activeProfileName","activeDirectory","activeLanguageProfileId","is4k","isDefault","externalUrl","syncEnabled","preventSearch","enableSeasonFolders"]'
 
     for svc in radarr sonarr; do
-        configs=$(curl -sf "$SEERR_URL/api/v1/settings/$svc" 2>/dev/null) || continue
+        configs=$(curl -sf -H "X-Api-Key: $SEERR_API_KEY" "$SEERR_URL/api/v1/settings/$svc" 2>/dev/null) || continue
         if [ "$svc" = "radarr" ]; then FIELDS="$RADARR_FIELDS"; else FIELDS="$SONARR_FIELDS"; fi
 
         echo "$configs" | jq -c '.[]' | while read -r cfg; do
@@ -836,6 +851,7 @@ else
                 else
                     resp_code=$(curl -s -o /dev/null -w '%{http_code}' -X PUT \
                         "$SEERR_URL/api/v1/settings/$svc/$cfg_id" \
+                        -H "X-Api-Key: $SEERR_API_KEY" \
                         -H "Content-Type: application/json" -d "$payload")
                     if [ "$resp_code" = "200" ]; then
                         log_ok "Enabled sync for $svc '$cfg_name'"
@@ -850,7 +866,7 @@ else
     done
 fi
 
-# --- Section 8b: Guest media directories and Jellyfin guest libraries ---
+# --- Section 10: Guest media directories and Jellyfin guest libraries ---
 
 echo ""
 log_info "=== Setting up guest media directories ==="
@@ -925,7 +941,7 @@ else
     log_warn "JELLYFIN_API_KEY not set — skipping guest library creation"
 fi
 
-# --- Section 9: Summary ---
+# --- Section 11: Summary ---
 
 echo ""
 echo "=== Setup Summary ==="
