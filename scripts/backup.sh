@@ -40,8 +40,12 @@ WARNINGS=0
 # Both the staging dir and the plaintext pre-encryption tarball contain
 # secrets (.env, SSH deploy keys) — clean them up on any exit, including a
 # crash partway through (e.g. openssl missing/failing), not just success.
+# KEY_TMPFILE (used below to derive the HMAC subkey without ever putting
+# BACKUP_ENCRYPTION_KEY on a process's argv) gets the same treatment.
+KEY_TMPFILE=""
 cleanup_backup_tmp() {
     rm -rf "$STAGING" "$STAGING.tar.gz"
+    [ -n "$KEY_TMPFILE" ] && rm -f "$KEY_TMPFILE"
 }
 trap cleanup_backup_tmp EXIT
 
@@ -88,9 +92,9 @@ if [ "$DRY_RUN" = true ]; then
     echo "  - statuspage (direct, via cron sqlite3)"
     log ""
     log "Backups on NAS:"
-    if ls "$BACKUP_DIR"/backup-*.tar.gz 1>/dev/null 2>&1; then
-        ls -lh "$BACKUP_DIR"/backup-*.tar.gz | awk '{print "  " $NF " (" $5 ")"}'
-        stale=$(find "$BACKUP_DIR" -name "backup-*.tar.gz" -mtime +"$BACKUP_RETENTION_DAYS" 2>/dev/null | wc -l)
+    if ls "$BACKUP_DIR"/backup-*.tar.gz* 2>/dev/null | grep -qv '\.hmac$'; then
+        ls -lh "$BACKUP_DIR"/backup-*.tar.gz* 2>/dev/null | grep -v '\.hmac$' | awk '{print "  " $NF " (" $5 ")"}'
+        stale=$(find "$BACKUP_DIR" -name "backup-*.tar.gz*" ! -name '*.hmac' -mtime +"$BACKUP_RETENTION_DAYS" 2>/dev/null | wc -l)
         log "Would delete $stale backup(s) older than $BACKUP_RETENTION_DAYS days"
     else
         log "  (none)"
@@ -220,6 +224,33 @@ log "Encrypting..."
 openssl enc -aes-256-cbc -salt -pbkdf2 -in "$PLAINTEXT_TAR" -out "$BACKUP_FILE" -pass env:BACKUP_ENCRYPTION_KEY
 log "  Encrypted with AES-256-CBC"
 
+# Encrypt-then-MAC: CBC alone has no integrity check, so a tampered or
+# corrupted ciphertext would decrypt silently to garbage (or, via CBC
+# bit-flipping, attacker-influenced plaintext) with nothing catching it at
+# restore time. openssl enc's own AEAD modes (e.g. -aes-256-gcm) don't
+# reliably surface/verify the auth tag across the openssl versions in play
+# here (host vs. this Alpine-based cron container), so this authenticates
+# the ciphertext separately instead.
+#
+# The MAC key is derived from BACKUP_ENCRYPTION_KEY via an HKDF-Extract-
+# style step: a fixed public label plays HMAC's "key" role and the real
+# secret plays the "message" role (read from a 600-permission temp file via
+# openssl's file argument, never as a CLI argument) - openssl's dgst/mac
+# commands have no argv-free way to supply a value that's actually acting
+# as the HMAC key, so this is what keeps BACKUP_ENCRYPTION_KEY itself off
+# argv (and thus out of `ps`/`/proc/<pid>/cmdline`). The derived MAC_KEY
+# below still has to be passed via argv for the actual tag computation -
+# a much smaller residual, since it can only be used to forge this
+# integrity check, not to decrypt anything or recover the master key.
+KEY_TMPFILE="$(mktemp)"
+chmod 600 "$KEY_TMPFILE"
+printf '%s' "$BACKUP_ENCRYPTION_KEY" > "$KEY_TMPFILE"
+MAC_KEY="$(openssl dgst -sha256 -hmac 'mediaserver-backup-hmac-v1' "$KEY_TMPFILE" | awk '{print $NF}')"
+rm -f "$KEY_TMPFILE"
+KEY_TMPFILE=""
+openssl dgst -sha256 -hmac "$MAC_KEY" "$BACKUP_FILE" | awk '{print $NF}' > "$BACKUP_FILE.hmac"
+log "  HMAC-SHA256 sidecar written for integrity verification"
+
 BACKUP_SIZE="$(du -sh "$BACKUP_FILE" | cut -f1)"
 log "  $(basename "$BACKUP_FILE"): $BACKUP_SIZE"
 
@@ -233,7 +264,7 @@ while IFS= read -r old_backup; do
     deleted=$((deleted + 1))
 done < <(find "$BACKUP_DIR" -name "backup-*.tar.gz*" -mtime +"$BACKUP_RETENTION_DAYS" 2>/dev/null)
 
-remaining=$(ls "$BACKUP_DIR"/backup-*.tar.gz* 2>/dev/null | wc -l)
+remaining=$(ls "$BACKUP_DIR"/backup-*.tar.gz* 2>/dev/null | grep -v '\.hmac$' | wc -l)
 total_size=$(du -sh "$BACKUP_DIR" 2>/dev/null | cut -f1)
 
 log "Rotation: deleted $deleted old backup(s), $remaining remaining ($total_size total)"

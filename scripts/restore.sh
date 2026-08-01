@@ -10,6 +10,7 @@
 #   ./scripts/restore.sh backup-XXX.tar.gz   Restore specific backup
 #   ./scripts/restore.sh --dry-run           Show what would be restored
 #   ./scripts/restore.sh --force             Overwrite existing .env
+#   ./scripts/restore.sh --allow-unverified  Allow an encrypted backup with no .hmac sidecar
 
 set -euo pipefail
 
@@ -18,6 +19,7 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 DRY_RUN=false
 FORCE=false
+ALLOW_UNVERIFIED=false
 TARGET_BACKUP=""
 
 for arg in "$@"; do
@@ -25,6 +27,7 @@ for arg in "$@"; do
         --list) LIST_MODE=true ;;
         --dry-run) DRY_RUN=true ;;
         --force) FORCE=true ;;
+        --allow-unverified) ALLOW_UNVERIFIED=true ;;
         --help|-h) HELP=true ;;
         backup-*) TARGET_BACKUP="$arg" ;;
     esac
@@ -34,10 +37,13 @@ if [ "${HELP:-false}" = true ]; then
     echo "Usage: $0 [OPTIONS] [backup-YYYYMMDD-HHMMSS.tar.gz]"
     echo ""
     echo "Options:"
-    echo "  --list      List available backups"
-    echo "  --dry-run   Show what would be restored without making changes"
-    echo "  --force     Overwrite existing .env file"
-    echo "  --help      Show this help"
+    echo "  --list               List available backups"
+    echo "  --dry-run            Show what would be restored without making changes"
+    echo "  --force              Overwrite existing .env file"
+    echo "  --allow-unverified   Allow an encrypted backup with no .hmac sidecar"
+    echo "                       (only backups made before backup.sh started writing"
+    echo "                       sidecars should ever need this)"
+    echo "  --help               Show this help"
     echo ""
     echo "If no backup file is specified, restores the latest backup."
     exit 0
@@ -69,10 +75,10 @@ fi
 if [ "${LIST_MODE:-false}" = true ]; then
     echo "Available backups in $BACKUP_DIR:"
     echo ""
-    if ls "$BACKUP_DIR"/backup-*.tar.gz* 1>/dev/null 2>&1; then
-        ls -lht "$BACKUP_DIR"/backup-*.tar.gz* | awk '{printf "  %-44s %s\n", $NF, $5}'
+    if ls "$BACKUP_DIR"/backup-*.tar.gz* 2>/dev/null | grep -qv '\.hmac$'; then
+        ls -lht "$BACKUP_DIR"/backup-*.tar.gz* | grep -v '\.hmac$' | awk '{printf "  %-44s %s\n", $NF, $5}'
         echo ""
-        total=$(ls "$BACKUP_DIR"/backup-*.tar.gz* | wc -l)
+        total=$(ls "$BACKUP_DIR"/backup-*.tar.gz* | grep -cv '\.hmac$')
         total_size=$(du -sh "$BACKUP_DIR" 2>/dev/null | cut -f1)
         echo "$total backup(s), $total_size total"
     else
@@ -85,13 +91,19 @@ fi
 
 if [ -n "$TARGET_BACKUP" ]; then
     BACKUP_FILE="$BACKUP_DIR/$TARGET_BACKUP"
-    if [ ! -f "$BACKUP_FILE" ]; then
+    if [ ! -f "$BACKUP_FILE" ] || [[ "$BACKUP_FILE" == *.hmac ]]; then
         echo "ERROR: Backup not found: $BACKUP_FILE" >&2
         echo "Run '$0 --list' to see available backups" >&2
         exit 1
     fi
 else
-    BACKUP_FILE="$(ls -t "$BACKUP_DIR"/backup-*.tar.gz* 2>/dev/null | head -1)"
+    # Exclude .hmac sidecar files — they sort newest (written right after
+    # their backup) and would otherwise be picked as "the latest backup".
+    # `|| true`: if every file present is a .hmac sidecar (e.g. orphaned
+    # after manual cleanup), grep -v finds nothing to output and exits 1;
+    # under this script's pipefail that would abort via errexit before the
+    # -z check below gets a chance to print its own "no backups" message.
+    BACKUP_FILE="$(ls -t "$BACKUP_DIR"/backup-*.tar.gz* 2>/dev/null | grep -v '\.hmac$' | head -1 || true)"
     if [ -z "$BACKUP_FILE" ]; then
         echo "ERROR: No backups found in $BACKUP_DIR" >&2
         exit 1
@@ -120,8 +132,54 @@ if [[ "$BACKUP_FILE" == *.enc ]]; then
         echo "ERROR: $BACKUP_NAME is encrypted but BACKUP_ENCRYPTION_KEY is not set in .env" >&2
         exit 1
     fi
+
     RESTORE_TMPDIR="$(mktemp -d)"
     chmod 700 "$RESTORE_TMPDIR"
+
+    # Verify the HMAC sidecar (if present) before touching the ciphertext at
+    # all - this is the only thing standing between a tampered/corrupted
+    # backup and CBC silently decrypting it to garbage (or, via bit-flipping,
+    # attacker-influenced plaintext). Older backups predate this sidecar and
+    # have no way to be verified - proceed with a warning rather than
+    # refusing to restore backups made before this feature existed.
+    #
+    # Same HKDF-Extract-style derivation as backup.sh: a fixed public label
+    # plays HMAC's "key" role and BACKUP_ENCRYPTION_KEY plays the "message"
+    # role, read from a 600-permission temp file rather than passed as a
+    # CLI argument - keeps the master secret out of `ps`/`/proc/<pid>/cmdline`.
+    # The derived MAC_KEY still has to go on argv for the tag comparison
+    # itself (openssl's dgst has no argv-free way to supply an HMAC key),
+    # a much smaller residual since it can only forge this integrity check,
+    # not decrypt anything or recover the master key.
+    HMAC_FILE="$BACKUP_FILE.hmac"
+    if [ -f "$HMAC_FILE" ]; then
+        KEY_TMPFILE="$RESTORE_TMPDIR/key"
+        printf '%s' "$BACKUP_ENCRYPTION_KEY" > "$KEY_TMPFILE"
+        MAC_KEY="$(openssl dgst -sha256 -hmac 'mediaserver-backup-hmac-v1' "$KEY_TMPFILE" | awk '{print $NF}')"
+        rm -f "$KEY_TMPFILE"
+        ACTUAL_HMAC="$(openssl dgst -sha256 -hmac "$MAC_KEY" "$BACKUP_FILE" | awk '{print $NF}')"
+        EXPECTED_HMAC="$(cat "$HMAC_FILE")"
+        if [ "$ACTUAL_HMAC" != "$EXPECTED_HMAC" ]; then
+            echo "ERROR: HMAC verification failed for $BACKUP_NAME — the backup is corrupted or has been tampered with." >&2
+            echo "Refusing to restore. If BACKUP_ENCRYPTION_KEY was recently rotated, this is expected — restore with the key used to create this specific backup." >&2
+            exit 1
+        fi
+        log "HMAC verified — backup is intact and authentic"
+    elif [ "$ALLOW_UNVERIFIED" = true ]; then
+        log "WARNING: no .hmac sidecar found for $BACKUP_NAME — proceeding unverified (--allow-unverified was passed)"
+    else
+        # Fail closed by default: a missing sidecar could mean a genuinely
+        # legacy backup (made before backup.sh started writing them), but it
+        # could just as easily mean someone with write access to the backup
+        # directory stripped it to force this exact fallback path and bypass
+        # integrity checking entirely. Require an explicit, deliberate
+        # override rather than silently downgrading to unverified.
+        echo "ERROR: $BACKUP_NAME is encrypted but has no .hmac integrity sidecar." >&2
+        echo "This is expected only for backups made before backup.sh started writing sidecars." >&2
+        echo "If you're sure this backup is legitimate, re-run with --allow-unverified." >&2
+        exit 1
+    fi
+
     TAR_FILE="$RESTORE_TMPDIR/decrypted.tar.gz"
     if ! openssl enc -d -aes-256-cbc -pbkdf2 -in "$BACKUP_FILE" -out "$TAR_FILE" -pass env:BACKUP_ENCRYPTION_KEY 2>/dev/null; then
         echo "ERROR: Decryption failed — check BACKUP_ENCRYPTION_KEY matches the key used to create this backup" >&2
@@ -129,6 +187,34 @@ if [[ "$BACKUP_FILE" == *.enc ]]; then
     fi
     log "Decrypted $BACKUP_NAME"
 fi
+
+# Sanity-check the archive itself before trusting it with a live restore:
+# catches truncation/corruption (or a wrong key that decrypted to noise
+# without openssl itself erroring) that HMAC verification wouldn't have
+# caught on an unverified legacy backup, and that would otherwise only
+# surface mid-restore after containers are already stopped.
+if ! tar -tzf "$TAR_FILE" >/dev/null 2>&1; then
+    echo "ERROR: $BACKUP_NAME is not a valid tar.gz archive (wrong key, corruption, or truncated file)" >&2
+    exit 1
+fi
+# pipefail is disabled for this check only: grep -q exits as soon as it
+# finds a match, which sends SIGPIPE to tar while it's still listing later
+# entries - under pipefail that makes the pipeline report failure even
+# though the manifest genuinely was found. Using the pipeline as an `if`
+# condition (rather than a bare statement) also keeps a real "not found"
+# from tripping errexit before this script gets to print its own message.
+set +o pipefail
+if tar -tzf "$TAR_FILE" | grep -q '^\(\./\)\?manifest\.txt$'; then
+    manifest_found=true
+else
+    manifest_found=false
+fi
+set -o pipefail
+if [ "$manifest_found" = false ]; then
+    echo "ERROR: $BACKUP_NAME has no manifest.txt — does not look like a backup produced by backup.sh" >&2
+    exit 1
+fi
+log "Archive contents verified (valid tar.gz, manifest present)"
 
 # --- Dry run ---
 
@@ -139,7 +225,11 @@ if [ "$DRY_RUN" = true ]; then
     log "Project directory: $PROJECT_DIR"
     echo ""
     log "Archive contents:"
-    tar -tzf "$TAR_FILE" | head -50
+    # `|| true`: head closes its input after 50 lines for any archive with
+    # more entries than that (the normal case), which sends tar SIGPIPE -
+    # under this script's `pipefail`, that would otherwise abort the whole
+    # dry-run via errexit even though nothing actually went wrong.
+    tar -tzf "$TAR_FILE" | head -50 || true
     echo ""
 
     # Check manifest
