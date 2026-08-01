@@ -132,12 +132,16 @@ git clone git@github.com:jlaszloe6/mediaserver.git
 cd mediaserver
 cp .env.example .env        # fill in DuckDNS, SMTP, MaxMind, backup key, etc.
 docker compose up -d
-# complete the Jellyfin setup wizard in a browser
-docker exec cron /scripts/init-setup.sh   # auto-configures Prowlarr, Sonarr, Radarr, Transmission
+# 1. Jellyfin (http://localhost:8096): complete the setup wizard, then create
+#    an API key (Dashboard -> API Keys) and add it to .env as JELLYFIN_API_KEY -
+#    needed below to create the guest libraries.
+# 2. Seerr (http://localhost:5055): complete the setup wizard and connect
+#    Jellyfin/Sonarr/Radarr BEFORE the next step, so it has a configured
+#    instance for init-setup.sh to enable sync on.
+docker exec cron /scripts/init-setup.sh   # auto-configures Prowlarr, Sonarr, Radarr, Transmission, Seerr sync
 # init-setup.sh uses Docker service names (sonarr:8989, etc.) for all its API
 # calls, so it must run inside a container already on the mediaserver bridge
 # network - it will not resolve those hostnames run directly on the host.
-# point Seerr at Jellyfin in its web UI
 ```
 
 For a fresh server (not just a fresh stack), start with `scripts/server-setup.sh` — see [Setup](../../wiki/Setup).
