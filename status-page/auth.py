@@ -61,8 +61,16 @@ def cleanup_expired_tokens():
     # settled into a steady state of 2 (one used, one pending) and never
     # reached RATE_LIMIT_MAX. Used tokens now simply age out at their normal
     # 15-minute expires_at like unused ones do.
+    # expires_at is stored as "%Y-%m-%dT%H:%M:%SZ" (ISO 8601), but SQLite's
+    # own datetime('now') returns "YYYY-MM-DD HH:MM:SS" (space, no Z). Plain
+    # string comparison between the two formats is wrong for any same-day
+    # timestamp: 'T' (0x54) sorts after ' ' (0x20), so an expires_at from
+    # earlier today compares as "greater than" (i.e. not yet expired)
+    # regardless of the actual time - rows would only ever get cleaned up
+    # once the calendar date rolls over. Wrapping expires_at in datetime()
+    # normalizes it to SQLite's own format before comparing.
     db = get_db()
-    db.execute("DELETE FROM login_tokens WHERE expires_at < datetime('now')")
+    db.execute("DELETE FROM login_tokens WHERE datetime(expires_at) < datetime('now')")
     db.commit()
 
 
