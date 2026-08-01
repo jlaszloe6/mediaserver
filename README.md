@@ -134,23 +134,27 @@ cd mediaserver
 cp .env.example .env        # fill in DuckDNS, SMTP, MaxMind, backup key, etc.
 docker compose up -d
 # 1. Jellyfin (http://localhost:8096): complete the setup wizard, then create
-#    an API key (Dashboard -> API Keys) and add it to .env as JELLYFIN_API_KEY -
-#    needed below to create the guest libraries.
+#    an API key (Dashboard -> API Keys) - needed below to create the guest
+#    libraries. Use env-set.sh, not a text editor, to add it: a normal save
+#    (most editors) replaces the file's inode, which the already-running
+#    cron container's bind mount won't pick up; env-set.sh edits in place.
+./scripts/env-set.sh JELLYFIN_API_KEY=paste-the-key-here
 # 2. Seerr (http://localhost:5055): complete the setup wizard and connect
 #    Jellyfin/Sonarr/Radarr BEFORE the next step, so it has a configured
-#    instance for init-setup.sh to enable sync on. Then copy its API key
-#    (config/overseerr/settings.json -> main.apiKey) into .env as
-#    SEERR_API_KEY - without it, init-setup.sh skips the Seerr sync step
-#    entirely (it only auto-configures Prowlarr/Sonarr/Radarr/Transmission).
+#    instance for init-setup.sh to enable sync on. Then do the same for its
+#    API key (config/overseerr/settings.json -> main.apiKey) - without it,
+#    init-setup.sh skips the Seerr sync step entirely (it only
+#    auto-configures Prowlarr/Sonarr/Radarr/Transmission).
+./scripts/env-set.sh SEERR_API_KEY=paste-the-key-here
 docker exec cron /scripts/init-setup.sh
 # init-setup.sh uses Docker service names (sonarr:8989, etc.) for all its API
 # calls, so it must run inside a container already on the mediaserver bridge
 # network - it will not resolve those hostnames run directly on the host.
-# 3. init-setup.sh re-reads .env fresh on every run, so it already sees the
-#    keys from steps 1-2 with no extra step needed. Statuspage, on the
-#    other hand, gets these same keys baked in at container start via
-#    docker-compose's `environment:` block - it needs an explicit recreate
-#    to pick up ones added to .env after it was already running:
+# 3. init-setup.sh re-reads .env fresh on every run, so (with env-set.sh
+#    above) it already sees the keys from steps 1-2. Statuspage is
+#    different: it gets these same keys baked in at container start via
+#    docker-compose's `environment:` block, so it needs an explicit
+#    recreate regardless of how .env was edited:
 docker compose up -d --force-recreate statuspage
 ```
 
