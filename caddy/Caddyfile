@@ -11,7 +11,14 @@
 
 (strict_csp) {
 	header {
-		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-src https://challenges.cloudflare.com; connect-src 'self'; font-src 'self'"
+		# media-src needs blob: (not just 'self') because Jellyfin/Navidrome/
+		# Audiobookshelf's web players attach playback to a blob: URL from the
+		# MediaSource Extensions API whenever they transcode/remux (e.g. audio
+		# codecs the browser can't decode natively) - without it, default-src
+		# 'self' is used as the fallback for media-src, which does not permit
+		# blob:, and the browser silently blocks the video/audio element from
+		# ever loading.
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' blob:; frame-src https://challenges.cloudflare.com; connect-src 'self'; font-src 'self'"
 	}
 }
 
