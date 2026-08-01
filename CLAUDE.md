@@ -49,7 +49,8 @@ Services: Jellyfin, Transmission, Sonarr, Radarr, Prowlarr, Bazarr, Seerr, Caddy
 - V4L2 hardware transcoding available on ARM, Intel QuickSync on x86
 
 ## Prowlarr Indexers
-- Indexers: EZTV, YTS, The Pirate Bay, LimeTorrents, Knaben
+- Active indexers: YTS, The Pirate Bay, LimeTorrents, Knaben, nCore
+- EZTV and 1337x are configured but disabled — both now sit behind Cloudflare's bot challenge (`CloudFlareProtectionException`, needs FlareSolverr), failing since 2026-03 with a rolling ~24h auto-disable/retry cycle that never resolved. Deliberately not running FlareSolverr for two dead indexers when 5 others already cover movies+TV — would add an always-on component that itself needs re-fighting as Cloudflare's challenge evolves. `init-setup.sh` no longer provisions EZTV on fresh installs; 1337x was never in that script.
 - Prowlarr syncs to Sonarr + Radarr via `ApplicationIndexerSync` (fullSync)
 - Transmission download client: ratio 2.0, idle 30 min
 
