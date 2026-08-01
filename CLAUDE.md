@@ -165,6 +165,7 @@ Services: Jellyfin, Transmission, Sonarr, Radarr, Prowlarr, Bazarr, Seerr, Caddy
 - Jellyfin transcodes/cache excluded (regenerable)
 - `.env` file included in every backup
 - Manifest file tracks which services were backed up and any warnings
+- `BACKUP_ENCRYPTION_KEY` lives only in `.env`, which is itself inside the encrypted backup — store a copy off-server (password manager, printed), or a lost server + lost key means the backup can never be decrypted
 - Restore: `scripts/restore.sh` (runs on host) — `--list`, `--dry-run`, latest or specific backup
 - Restore stops containers, extracts configs, restores SQLite backups, cleans WAL/SHM journals, restarts
 

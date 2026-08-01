@@ -52,6 +52,7 @@ Music and audiobooks are separate, simpler pipelines — see [Music & Audiobooks
 | **Caddy** | Reverse proxy, TLS, GeoIP filter | **Public** (`:443`) |
 | **DuckDNS** | Dynamic DNS updater | Internal only |
 | **Cron** | Scheduled maintenance (see below) | Internal only |
+| **Ebook Pipeline** | Automated torrent-to-Audiobookshelf ebook pipeline | Internal only |
 
 Every LAN-bound port is bound to `$SERVER_IP` specifically, not `0.0.0.0` — reachable from the local network, not the internet. Everything else talks over the internal `mediaserver` bridge network by Docker service name. Only Caddy's `:443` is published to the internet, and only Jellyfin, Seerr, Statuspage, Navidrome, and Audiobookshelf are proxied through it for remote HTTPS access, behind GeoIP filtering.
 
@@ -132,7 +133,10 @@ cd mediaserver
 cp .env.example .env        # fill in DuckDNS, SMTP, MaxMind, backup key, etc.
 docker compose up -d
 # complete the Jellyfin setup wizard in a browser
-./scripts/init-setup.sh     # auto-configures Prowlarr, Sonarr, Radarr, Transmission
+docker exec cron /scripts/init-setup.sh   # auto-configures Prowlarr, Sonarr, Radarr, Transmission
+# init-setup.sh uses Docker service names (sonarr:8989, etc.) for all its API
+# calls, so it must run inside a container already on the mediaserver bridge
+# network - it will not resolve those hostnames run directly on the host.
 # point Seerr at Jellyfin in its web UI
 ```
 
