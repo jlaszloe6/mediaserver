@@ -11,15 +11,16 @@ Built for a single-operator homelab: one admin, a handful of trusted guests, int
                               │            REQUEST FLOW            │
                               └───────────────────────────────────┘
 
-                Seerr ──► Sonarr / Radarr ──► Prowlarr ──► Indexers
-              (requests)      │      ▲                        │
-                               │      │                        ▼
-                               │      └──────────────── Transmission
-                               ▼                               │
-                        Jellyfin Libraries ◄────────────────────┘
-                               ▲
-                               │
-                            Bazarr  (fetches missing English subtitles)
+     Seerr ──(request)──► Sonarr / Radarr ──(search)──► Prowlarr ──(query)──► Indexers
+                                  ▲                                              │
+                                  └────────────────(release list)────────────────┘
+                                  │
+                                  ├──(sends chosen release)──► Transmission (downloads)
+                                  │
+                                  └──(monitors, imports on completion)──► Jellyfin Libraries
+                                                                                 ▲
+                                                                                 │
+                                              Bazarr  (fetches missing English subtitles)
 
                               ┌───────────────────────────────────┐
                               │            CLEANUP FLOWS           │
@@ -44,7 +45,7 @@ Music and audiobooks are separate, simpler pipelines — see [Music & Audiobooks
 | **Radarr** | Movie acquisition | Internal only |
 | **Bazarr** | Subtitle automation for Sonarr/Radarr | Internal only |
 | **Prowlarr** | Indexer aggregator, syncs to Sonarr/Radarr/Lidarr | Internal only |
-| **Transmission** | Torrent client | LAN peer port (`:51413`) only |
+| **Transmission** | Torrent client | Peer port (`:51413`, TCP+UDP) internet-facing — required for peer connectivity |
 | **Lidarr** | Music acquisition | LAN (`:8686`) |
 | **Navidrome** | Music server (Subsonic/OpenSubsonic API) | LAN (`:4533`) + Caddy |
 | **Audiobookshelf** | Audiobook server | LAN (`:13378`) + Caddy |
@@ -54,7 +55,7 @@ Music and audiobooks are separate, simpler pipelines — see [Music & Audiobooks
 | **Cron** | Scheduled maintenance (see below) | Internal only |
 | **Ebook Pipeline** | Automated torrent-to-Audiobookshelf ebook pipeline | Internal only |
 
-Every LAN-bound port is bound to `$SERVER_IP` specifically, not `0.0.0.0` — reachable from the local network, not the internet. Everything else talks over the internal `mediaserver` bridge network by Docker service name. Only Caddy's `:443` is published to the internet, and only Jellyfin, Seerr, Statuspage, Navidrome, and Audiobookshelf are proxied through it for remote HTTPS access, behind GeoIP filtering.
+Every LAN-bound port is bound to `$SERVER_IP` specifically, not `0.0.0.0` — reachable from the local network, not the internet. Everything else talks over the internal `mediaserver` bridge network by Docker service name. Caddy's `:443` and Transmission's `:51413` (TCP+UDP, deliberately `0.0.0.0` — torrent peer connectivity requires it) are the only ports published to the internet. Only Jellyfin, Seerr, Statuspage, Navidrome, and Audiobookshelf are proxied through Caddy for remote HTTPS access, behind GeoIP filtering.
 
 Sonarr, Radarr, Prowlarr, and Lidarr are deliberately **not** proxied — their admin UIs stay LAN-only. Reach them remotely over a VPN back to the LAN if needed. (Lidarr in particular ships with no authentication enabled by default.)
 
@@ -137,11 +138,20 @@ docker compose up -d
 #    needed below to create the guest libraries.
 # 2. Seerr (http://localhost:5055): complete the setup wizard and connect
 #    Jellyfin/Sonarr/Radarr BEFORE the next step, so it has a configured
-#    instance for init-setup.sh to enable sync on.
-docker exec cron /scripts/init-setup.sh   # auto-configures Prowlarr, Sonarr, Radarr, Transmission, Seerr sync
+#    instance for init-setup.sh to enable sync on. Then copy its API key
+#    (config/overseerr/settings.json -> main.apiKey) into .env as
+#    SEERR_API_KEY - without it, init-setup.sh skips the Seerr sync step
+#    entirely (it only auto-configures Prowlarr/Sonarr/Radarr/Transmission).
+docker exec cron /scripts/init-setup.sh
 # init-setup.sh uses Docker service names (sonarr:8989, etc.) for all its API
 # calls, so it must run inside a container already on the mediaserver bridge
 # network - it will not resolve those hostnames run directly on the host.
+# 3. init-setup.sh re-reads .env fresh on every run, so it already sees the
+#    keys from steps 1-2 with no extra step needed. Statuspage, on the
+#    other hand, gets these same keys baked in at container start via
+#    docker-compose's `environment:` block - it needs an explicit recreate
+#    to pick up ones added to .env after it was already running:
+docker compose up -d --force-recreate statuspage
 ```
 
 For a fresh server (not just a fresh stack), start with `scripts/server-setup.sh` — see [Setup](../../wiki/Setup).
