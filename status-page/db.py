@@ -1,5 +1,6 @@
 import os
 import sqlite3
+from datetime import datetime, timedelta
 
 from flask import g
 
@@ -35,7 +36,8 @@ def init_db():
             email TEXT NOT NULL,
             expires_at TEXT NOT NULL,
             used INTEGER DEFAULT 0,
-            source_ip TEXT
+            source_ip TEXT,
+            created_at TEXT
         );
         CREATE TABLE IF NOT EXISTS snapshots (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -57,6 +59,32 @@ def init_db():
         conn.execute("SELECT source_ip FROM login_tokens LIMIT 0")
     except sqlite3.OperationalError:
         conn.execute("ALTER TABLE login_tokens ADD COLUMN source_ip TEXT")
+    # Idempotent migration: add created_at if missing. No SQL-level DEFAULT
+    # (unlike other tables' created_at columns) - it must be populated by the
+    # application using the exact same "%Y-%m-%dT%H:%M:%SZ" format as
+    # expires_at. Mixing that with SQLite's own datetime('now') format
+    # (space-separated, no Z) reintroduces the lexicographic-comparison bug
+    # already fixed once for cleanup_expired_tokens (see auth.py).
+    try:
+        conn.execute("SELECT created_at FROM login_tokens LIMIT 0")
+    except sqlite3.OperationalError:
+        conn.execute("ALTER TABLE login_tokens ADD COLUMN created_at TEXT")
+        # Backfill existing rows (created_at otherwise NULL) from expires_at
+        # minus the fixed 15-minute token lifetime, in the same format - a
+        # NULL created_at would make is_rate_limited()'s new query silently
+        # exclude every pre-migration token, letting anyone already at the
+        # limit right before an upgrade get a free extra window right after.
+        # Done in Python, not SQL: SQLite's own datetime() always returns its
+        # own space-separated format regardless of input, which would
+        # reintroduce the exact format mismatch this column exists to avoid.
+        rows = conn.execute("SELECT token_hash, expires_at FROM login_tokens WHERE created_at IS NULL").fetchall()
+        for token_hash, expires_at in rows:
+            try:
+                expires = datetime.strptime(expires_at, "%Y-%m-%dT%H:%M:%SZ")
+            except ValueError:
+                continue
+            created = (expires - timedelta(minutes=15)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            conn.execute("UPDATE login_tokens SET created_at = ? WHERE token_hash = ?", (created, token_hash))
     # Idempotent migration: replace v1 guests table (had trakt/plex/wg columns)
     try:
         conn.execute("SELECT jellyfin_username FROM guests LIMIT 0")

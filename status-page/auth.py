@@ -32,11 +32,17 @@ def _get_client_ip():
 
 
 def is_rate_limited(email):
+    # Counts by created_at, not expires_at: a token's 15-minute lifetime is
+    # unrelated to how long an *attempt* should count toward this 10-minute
+    # window. Counting by expires_at effectively stretched the window to
+    # RATE_LIMIT_WINDOW + token lifetime (~25 min instead of the documented
+    # 10), since a token created up to 25 minutes ago can still have
+    # expires_at in the future.
     db = get_db()
     cutoff = (datetime.now(timezone.utc) - timedelta(seconds=RATE_LIMIT_WINDOW)).strftime("%Y-%m-%dT%H:%M:%SZ")
     # Per-email limit
     row = db.execute(
-        "SELECT COUNT(*) as cnt FROM login_tokens WHERE email = ? AND expires_at > ?",
+        "SELECT COUNT(*) as cnt FROM login_tokens WHERE email = ? AND created_at > ?",
         (email.lower(), cutoff),
     ).fetchone()
     if (row["cnt"] if row else 0) >= RATE_LIMIT_MAX:
@@ -44,7 +50,7 @@ def is_rate_limited(email):
     # Per-IP limit
     ip = _get_client_ip()
     row = db.execute(
-        "SELECT COUNT(*) as cnt FROM login_tokens WHERE source_ip = ? AND expires_at > ?",
+        "SELECT COUNT(*) as cnt FROM login_tokens WHERE source_ip = ? AND created_at > ?",
         (ip, cutoff),
     ).fetchone()
     return (row["cnt"] if row else 0) >= GLOBAL_RATE_LIMIT
@@ -187,12 +193,13 @@ def login():
 
         token = secrets.token_urlsafe(32)
         token_h = hash_token(token)
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         expires = (datetime.now(timezone.utc) + timedelta(minutes=15)).strftime("%Y-%m-%dT%H:%M:%SZ")
         ip = _get_client_ip()
 
         db.execute(
-            "INSERT INTO login_tokens (token_hash, email, expires_at, source_ip) VALUES (?, ?, ?, ?)",
-            (token_h, email, expires, ip),
+            "INSERT INTO login_tokens (token_hash, email, expires_at, source_ip, created_at) VALUES (?, ?, ?, ?, ?)",
+            (token_h, email, expires, ip, now),
         )
         db.commit()
 
