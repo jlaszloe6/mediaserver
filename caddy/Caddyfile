@@ -18,7 +18,12 @@
 		# 'self' is used as the fallback for media-src, which does not permit
 		# blob:, and the browser silently blocks the video/audio element from
 		# ever loading.
-		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' blob:; frame-src https://challenges.cloudflare.com; connect-src 'self'; font-src 'self'"
+		# worker-src needs blob: too - hls.js spins up its demuxer in a Web
+		# Worker created from a blob: URL for smoother playback. Without this,
+		# worker-src falls back to script-src (also no blob:), and hls.js
+		# silently degrades to main-thread demuxing (non-fatal, but worse
+		# performance, especially on lower-power clients like Android TV boxes).
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' blob:; worker-src 'self' blob:; frame-src https://challenges.cloudflare.com; connect-src 'self'; font-src 'self'"
 	}
 }
 
