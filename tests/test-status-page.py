@@ -134,7 +134,7 @@ def test_rate_limit_window_still_counts_recent_tokens():
     email = "guest3@example.com"
     for _ in range(config.RATE_LIMIT_MAX):
         insert_token(app, email, created_offset_minutes=5)
-    with app.app_context():
+    with app.test_request_context():
         limited = auth.is_rate_limited(email)
     check("rate_limit: tokens created 5min ago (inside 10min window) still count", limited)
 
