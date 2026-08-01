@@ -49,7 +49,7 @@ def invite():
         warning = f"Seerr setup failed: {seerr_warn}"
 
     invited_by = session["user_email"]
-    if not add_guest(email, username, invited_by):
+    if not add_guest(email, username, invited_by, seerr_configured=seerr_ok):
         flash("Guest already exists in database.", "error")
         return redirect(url_for("dashboard_bp.dashboard"))
 
@@ -82,7 +82,7 @@ def remove():
 
     username = guest["jellyfin_username"]
     jf_ok = delete_jellyfin_user_by_username(username)
-    seerr_ok = delete_seerr_user(username)
+    seerr_ok = delete_seerr_user(username, seerr_configured=bool(guest["seerr_configured"]))
 
     if jf_ok and seerr_ok:
         remove_guest(email)

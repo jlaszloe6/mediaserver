@@ -105,20 +105,29 @@ def _ensure_guest_server_configs():
     return radarr_id, sonarr_id
 
 
-def delete_seerr_user(jellyfin_username):
+def delete_seerr_user(jellyfin_username, seerr_configured=True):
     """Delete a Seerr user by their Jellyfin username. Returns True on
     success, or if the user is confirmed already gone. Returns False -
     rather than treating it as "already gone" - if the lookup itself
     couldn't be completed, since a removed guest's local record must not be
     dropped based on an inconclusive check.
 
-    Seerr integration is soft-optional elsewhere (import_and_configure_seerr_user
-    lets guest creation proceed with just a warning if SEERR_API_KEY isn't
-    set), so a deployment that never configured Seerr has nothing to revoke
-    here either - treat that as success rather than a permanent block on
-    ever removing the guest."""
-    if not SEERR_API_KEY:
+    seerr_configured: whether Seerr integration actually succeeded for this
+    guest back at invite time (the caller should pass the guest's stored
+    `seerr_configured` flag). This distinguishes two situations that would
+    otherwise look identical from here alone:
+      - Seerr was never configured/succeeded for this guest -> nothing to
+        revoke regardless of whether SEERR_API_KEY happens to be set right
+        now. Return True immediately without calling the API.
+      - This guest DOES have a real Seerr account, but SEERR_API_KEY is
+        unset or invalid right now (e.g. rotated, temporarily cleared) ->
+        that must NOT be reported as "already gone", since the account
+        likely still exists and we simply can't act on it - return False.
+    """
+    if not seerr_configured:
         return True
+    if not SEERR_API_KEY:
+        return False
     try:
         seerr_user_id = _get_seerr_user_by_jellyfin_username(jellyfin_username)
     except SeerrLookupError:
