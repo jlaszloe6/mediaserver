@@ -1,11 +1,18 @@
 #!/bin/bash
-# Scripts expect .env at $SCRIPT_DIR/../.env - symlink so /scripts/../.env works
-ln -sf /config/.env /.env
-
-# Load .env into environment for cron jobs
-set -a
-source /config/.env
-set +a
+# Unlike cron, this container is NOT given the whole .env - only the
+# specific secrets scripts/ebook-pipeline.sh actually uses are passed in
+# via docker-compose's `environment:` (it parses untrusted downloaded
+# file content through Calibre, so it shouldn't have blast-radius access
+# to every other service's credentials). scripts/ebook-pipeline.sh still
+# expects to `source` a .env file at $SCRIPT_DIR/../.env though - write
+# one out from the already-scoped environment docker-compose gave this
+# container, rather than mounting/sourcing the real .env.
+{
+    for var in TZ SERVER_NAME ADMIN_EMAIL AUDIOBOOKSHELF_API_KEY \
+               SMTP_SERVER SMTP_PORT SMTP_USER SMTP_PASSWORD SMTP_FROM; do
+        printf '%s=%s\n' "$var" "${!var@Q}"
+    done
+} > /.env
 
 # Write env vars to file so cron subprocesses inherit them
 env | grep -v '^_=\|^PWD=\|^SHLVL=\|^HOSTNAME=' > /etc/environment
