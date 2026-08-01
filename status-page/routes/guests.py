@@ -42,14 +42,14 @@ def invite():
         return redirect(url_for("dashboard_bp.dashboard"))
 
     # Import into Seerr and set guest root folders
-    seerr_ok, seerr_warn = import_and_configure_seerr_user(username, jf_user_id)
+    seerr_ok, seerr_warn, seerr_account_may_exist = import_and_configure_seerr_user(username, jf_user_id)
     if not seerr_ok and warning:
         warning = f"{warning}; Seerr: {seerr_warn}"
     elif not seerr_ok:
         warning = f"Seerr setup failed: {seerr_warn}"
 
     invited_by = session["user_email"]
-    if not add_guest(email, username, invited_by, seerr_configured=seerr_ok):
+    if not add_guest(email, username, invited_by, seerr_configured=seerr_account_may_exist):
         flash("Guest already exists in database.", "error")
         return redirect(url_for("dashboard_bp.dashboard"))
 

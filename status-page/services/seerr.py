@@ -146,11 +146,19 @@ def delete_seerr_user(jellyfin_username, seerr_configured=True):
 
 
 def import_and_configure_seerr_user(jellyfin_username, jellyfin_user_id):
-    """Import Jellyfin user into Seerr and set override rule for guest servers. Returns (success, warning)."""
+    """Import Jellyfin user into Seerr and set override rule for guest servers.
+
+    Returns (success, warning, account_may_exist). `account_may_exist` is
+    True as soon as the import call itself succeeds, independent of whether
+    the remaining steps (finding the user, guest server configs, override
+    rule) do - a failure after that point still leaves a real Seerr account
+    behind that needs cleaning up on guest removal, even though setup as a
+    whole didn't succeed. Callers should persist this value (not `success`)
+    as the record of whether this guest has a Seerr account to revoke."""
     if not jellyfin_user_id:
-        return False, "No Jellyfin user ID provided"
+        return False, "No Jellyfin user ID provided", False
     if not SEERR_API_KEY:
-        return False, "Seerr API key not configured"
+        return False, "Seerr API key not configured", False
 
     # Import specific Jellyfin user into Seerr
     try:
@@ -161,22 +169,24 @@ def import_and_configure_seerr_user(jellyfin_username, jellyfin_user_id):
             timeout=API_TIMEOUT * 3,
         )
         if r.status_code not in (200, 201):
-            return False, f"Seerr import failed (HTTP {r.status_code})"
+            return False, f"Seerr import failed (HTTP {r.status_code})", False
     except requests.RequestException as e:
-        return False, f"Seerr import failed: {e}"
+        return False, f"Seerr import failed: {e}", False
+
+    account_may_exist = True
 
     # Find the imported user
     try:
         seerr_user_id = _get_seerr_user_by_jellyfin_username(jellyfin_username)
     except SeerrLookupError as e:
-        return False, f"Seerr lookup failed after import: {e}"
+        return False, f"Seerr lookup failed after import: {e}", account_may_exist
     if not seerr_user_id:
-        return False, "User imported but not found in Seerr"
+        return False, "User imported but not found in Seerr", account_may_exist
 
     # Ensure guest server configs exist
     radarr_id, sonarr_id = _ensure_guest_server_configs()
     if radarr_id is None or sonarr_id is None:
-        return False, "Failed to create guest server configs in Seerr"
+        return False, "Failed to create guest server configs in Seerr", account_may_exist
 
     # Create override rule for this user
     try:
@@ -186,7 +196,7 @@ def import_and_configure_seerr_user(jellyfin_username, jellyfin_user_id):
             "users": str(seerr_user_id),
         }, headers=SEERR_HEADERS, timeout=API_TIMEOUT)
         if r.status_code == 200:
-            return True, None
-        return False, f"Failed to create override rule (HTTP {r.status_code})"
+            return True, None, account_may_exist
+        return False, f"Failed to create override rule (HTTP {r.status_code})", account_may_exist
     except requests.RequestException as e:
-        return False, f"Failed to create override rule: {e}"
+        return False, f"Failed to create override rule: {e}", account_may_exist
