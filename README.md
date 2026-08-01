@@ -39,7 +39,7 @@ Music and audiobooks are separate, simpler pipelines — see [Music & Audiobooks
 | Service | Role | Exposure |
 |---|---|---|
 | **Jellyfin** | Media server — TV & movies | LAN (`:8096`) + Caddy |
-| **Seerr** | Request UI for movies/shows | Internal only |
+| **Seerr** | Request UI for movies/shows | LAN (`:5055`) + Caddy |
 | **Sonarr** | TV show acquisition | Internal only |
 | **Radarr** | Movie acquisition | Internal only |
 | **Bazarr** | Subtitle automation for Sonarr/Radarr | Internal only |

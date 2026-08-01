@@ -87,6 +87,8 @@ ufw --force enable
 ufw default deny incoming
 ufw allow from "$LAN_SUBNET" to any port 22 proto tcp comment "SSH (LAN only)"
 ufw allow 443/tcp comment "Caddy HTTPS"
+ufw allow 51413/tcp comment "Transmission peer port"
+ufw allow 51413/udp comment "Transmission peer port (uTP/DHT)"
 ufw allow from "$LAN_SUBNET" to any port 53 comment "DNS (dnsmasq for LAN)"
 ufw deny 3389/tcp comment "Block RDP"
 echo "  UFW rules configured"

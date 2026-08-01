@@ -215,6 +215,8 @@ services:
     container_name: seerr
     networks:
       - mediaserver
+    ports:
+      - "${SERVER_IP:-127.0.0.1}:5055:5055"
     environment:
       - TZ=Europe/Budapest
     volumes:

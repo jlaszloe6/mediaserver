@@ -11,7 +11,7 @@ Services: Jellyfin, Transmission, Sonarr, Radarr, Prowlarr, Bazarr, Seerr, Caddy
 ### Networking
 - Custom bridge network `mediaserver` for all services
 - All inter-container communication via Docker service names: `jellyfin`, `sonarr`, `radarr`, `prowlarr`, `transmission`, `seerr`, `caddy`, `statuspage`
-- Only published ports: Caddy 443 (HTTPS), Jellyfin 8096 (LAN), Transmission 51413 (torrent peers)
+- Only published ports: Caddy 443 (HTTPS), Jellyfin 8096, Lidarr 8686, Navidrome 4533, Audiobookshelf 13378, Seerr 5055 (all LAN-only, bound to `$SERVER_IP`), Transmission 51413 TCP+UDP (torrent peers, deliberately internet-facing)
 - LAN clients access Jellyfin directly via `http://SERVER_IP:8096`, remote access via DuckDNS domain through Caddy
 
 ### Storage & Boot
