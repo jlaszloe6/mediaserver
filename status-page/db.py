@@ -3,7 +3,7 @@ import sqlite3
 
 from flask import g
 
-from config import DB_PATH, SEERR_API_KEY
+from config import DB_PATH
 
 
 def get_db():
@@ -71,20 +71,22 @@ def init_db():
             )
         """)
     # Idempotent migration: add seerr_configured if missing. Existing rows
-    # predate this tracking, so there's no real per-guest signal to use -
-    # infer from whether Seerr is configured *right now* instead. If
-    # SEERR_API_KEY was never set, none of these guests could have a real
-    # Seerr account either, and defaulting them to 1 would otherwise
-    # permanently block their removal (delete_seerr_user treats
-    # seerr_configured=1 + no key as an unverifiable failure, by design -
-    # see that function's docstring). If Seerr IS configured now, keep the
-    # conservative default (1) so removal still attempts real cleanup.
+    # predate this tracking, so there's no real per-guest signal to use.
+    # Tried inferring a default from whether SEERR_API_KEY happens to be
+    # set *at migration time* - rejected, since that's a single, possibly
+    # transient reading (a typo'd .env, a startup mid-troubleshooting) that
+    # gets baked in permanently for every pre-existing row. Between the two
+    # possible wrong defaults, this deployment's whole audit round has
+    # consistently chosen to fail closed rather than fail open: defaulting
+    # to 1 can block a legacy guest's removal until an admin investigates
+    # (recoverable, and Jellyfin access is still correctly revoked either
+    # way), where defaulting to 0 could silently leave a real orphaned
+    # Seerr account while reporting "access revoked". See delete_seerr_user's
+    # docstring for the seerr_configured=1 + no-key handling this relies on.
     try:
         conn.execute("SELECT seerr_configured FROM guests LIMIT 0")
     except sqlite3.OperationalError:
         conn.execute("ALTER TABLE guests ADD COLUMN seerr_configured INTEGER DEFAULT 1")
-        if not SEERR_API_KEY:
-            conn.execute("UPDATE guests SET seerr_configured = 0")
     conn.commit()
     conn.close()
 
