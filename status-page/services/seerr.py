@@ -169,9 +169,16 @@ def import_and_configure_seerr_user(jellyfin_username, jellyfin_user_id):
             timeout=API_TIMEOUT * 3,
         )
         if r.status_code not in (200, 201):
+            # An explicit non-2xx response is Seerr itself telling us the
+            # import didn't happen - safe to say no account exists.
             return False, f"Seerr import failed (HTTP {r.status_code})", False
     except requests.RequestException as e:
-        return False, f"Seerr import failed: {e}", False
+        # Unlike an explicit error status above, this is ambiguous: the
+        # request may have reached Seerr and created the account before a
+        # timeout/dropped connection kept the response from coming back.
+        # Default to the safer assumption (an account might exist) so
+        # removal still attempts cleanup rather than silently skipping it.
+        return False, f"Seerr import failed: {e}", True
 
     account_may_exist = True
 
