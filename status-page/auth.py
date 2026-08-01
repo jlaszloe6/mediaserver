@@ -51,8 +51,26 @@ def is_rate_limited(email):
 
 
 def cleanup_expired_tokens():
+    # Only real expiry deletes a row - NOT `used = 1`. is_rate_limited() counts
+    # every non-expired token regardless of used status (that's the whole
+    # point: a superseded-but-still-fresh token should still count as a
+    # recent attempt). Deleting used tokens here, immediately after the
+    # NEXT request's rate-limit check runs but before the count check on the
+    # request after THAT, meant a token was marked used and then purged
+    # before it ever had a chance to accumulate toward the limit - the count
+    # settled into a steady state of 2 (one used, one pending) and never
+    # reached RATE_LIMIT_MAX. Used tokens now simply age out at their normal
+    # 15-minute expires_at like unused ones do.
+    # expires_at is stored as "%Y-%m-%dT%H:%M:%SZ" (ISO 8601), but SQLite's
+    # own datetime('now') returns "YYYY-MM-DD HH:MM:SS" (space, no Z). Plain
+    # string comparison between the two formats is wrong for any same-day
+    # timestamp: 'T' (0x54) sorts after ' ' (0x20), so an expires_at from
+    # earlier today compares as "greater than" (i.e. not yet expired)
+    # regardless of the actual time - rows would only ever get cleaned up
+    # once the calendar date rolls over. Wrapping expires_at in datetime()
+    # normalizes it to SQLite's own format before comparing.
     db = get_db()
-    db.execute("DELETE FROM login_tokens WHERE used = 1 OR expires_at < datetime('now')")
+    db.execute("DELETE FROM login_tokens WHERE datetime(expires_at) < datetime('now')")
     db.commit()
 
 
