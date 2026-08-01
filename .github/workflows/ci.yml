@@ -29,6 +29,11 @@ jobs:
       - name: Compile status-page
         run: python3 -m compileall -q status-page
 
+      - name: Status-page regression tests
+        run: |
+          pip install -q -r status-page/requirements.txt
+          python3 tests/test-status-page.py
+
       - name: Validate docker-compose.yml
         run: |
           cp .env.example .env
