@@ -39,7 +39,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         locales \
     && sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen \
     && locale-gen \
+    # Verify the installer script itself against a known hash before
+    # executing it - the installer already independently verifies the
+    # actual Calibre tarball's signature over a separate HTTPS channel
+    # (see check_signature()/download_tarball() in the script), but
+    # nothing was pinning the outer script's own content.
+    #
+    # Deliberately NOT pinning to a specific Calibre version=X.Y.Z here:
+    # tried it (9.12, the version this was originally tested against) and
+    # the build broke a short time later with a 404 fetching that
+    # version's signature file - calibre-ebook.com only retains signatures
+    # for a limited window of past releases, so a hardcoded old version
+    # can silently stop building. The installer's own signature check
+    # already guarantees whatever version it does fetch is authentic.
     && curl -fsSL https://download.calibre-ebook.com/linux-installer.sh -o /tmp/calibre-installer.sh \
+    && echo "5ae3933e8d0c484d8621ab8a169488e99735fe22a0cfc01536f260d2ce1a86e0  /tmp/calibre-installer.sh" | sha256sum -c - \
     && bash /tmp/calibre-installer.sh \
     && rm -f /tmp/calibre-installer.sh \
     && rm -rf /var/lib/apt/lists/* \
