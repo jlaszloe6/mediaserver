@@ -13,25 +13,45 @@ GUEST_RADARR_NAME = "Radarr (Guest)"
 GUEST_SONARR_NAME = "Sonarr (Guest)"
 
 
+class SeerrLookupError(Exception):
+    """Raised when a Seerr API lookup itself fails (bad status, network
+    error, etc.) - distinct from a lookup that succeeded and confirmed the
+    user doesn't exist. Callers that would otherwise treat "couldn't check"
+    the same as "confirmed absent" (e.g. before deleting a local record)
+    need to tell the two apart.
+    """
+
+
 def _get_seerr_user_by_jellyfin_username(username):
-    """Find a Seerr user by their Jellyfin username."""
-    try:
-        r = requests.get(
-            f"{SEERR_URL}/api/v1/user",
-            params={"take": 100},
-            headers=SEERR_HEADERS,
-            timeout=API_TIMEOUT,
-        )
+    """Find a Seerr user by their Jellyfin username. Returns None if
+    genuinely absent. Raises SeerrLookupError if the API call itself fails.
+
+    Pages through the full user list (Seerr's /api/v1/user is take/skip-
+    paginated) rather than only checking the first 100 - a deployment with
+    enough users could otherwise push a real guest past the first page and
+    have them wrongly treated as absent."""
+    take = 100
+    skip = 0
+    while True:
+        try:
+            r = requests.get(
+                f"{SEERR_URL}/api/v1/user",
+                params={"take": take, "skip": skip},
+                headers=SEERR_HEADERS,
+                timeout=API_TIMEOUT,
+            )
+        except requests.RequestException as e:
+            raise SeerrLookupError(str(e)) from e
         if r.status_code != 200:
-            return None
+            raise SeerrLookupError(f"Seerr returned {r.status_code}")
         data = r.json()
         users = data.get("results", data) if isinstance(data, dict) else data
         for user in users:
             if user.get("jellyfinUsername") == username:
                 return user.get("id")
-    except requests.RequestException:
-        pass
-    return None
+        if len(users) < take:
+            return None
+        skip += take
 
 
 def _ensure_guest_server_configs():
@@ -85,6 +105,37 @@ def _ensure_guest_server_configs():
     return radarr_id, sonarr_id
 
 
+def delete_seerr_user(jellyfin_username):
+    """Delete a Seerr user by their Jellyfin username. Returns True on
+    success, or if the user is confirmed already gone. Returns False -
+    rather than treating it as "already gone" - if the lookup itself
+    couldn't be completed, since a removed guest's local record must not be
+    dropped based on an inconclusive check.
+
+    Seerr integration is soft-optional elsewhere (import_and_configure_seerr_user
+    lets guest creation proceed with just a warning if SEERR_API_KEY isn't
+    set), so a deployment that never configured Seerr has nothing to revoke
+    here either - treat that as success rather than a permanent block on
+    ever removing the guest."""
+    if not SEERR_API_KEY:
+        return True
+    try:
+        seerr_user_id = _get_seerr_user_by_jellyfin_username(jellyfin_username)
+    except SeerrLookupError:
+        return False
+    if not seerr_user_id:
+        return True
+    try:
+        r = requests.delete(
+            f"{SEERR_URL}/api/v1/user/{seerr_user_id}",
+            headers=SEERR_HEADERS,
+            timeout=API_TIMEOUT,
+        )
+        return r.status_code in (200, 204)
+    except requests.RequestException:
+        return False
+
+
 def import_and_configure_seerr_user(jellyfin_username, jellyfin_user_id):
     """Import Jellyfin user into Seerr and set override rule for guest servers. Returns (success, warning)."""
     if not jellyfin_user_id:
@@ -106,7 +157,10 @@ def import_and_configure_seerr_user(jellyfin_username, jellyfin_user_id):
         return False, f"Seerr import failed: {e}"
 
     # Find the imported user
-    seerr_user_id = _get_seerr_user_by_jellyfin_username(jellyfin_username)
+    try:
+        seerr_user_id = _get_seerr_user_by_jellyfin_username(jellyfin_username)
+    except SeerrLookupError as e:
+        return False, f"Seerr lookup failed after import: {e}"
     if not seerr_user_id:
         return False, "User imported but not found in Seerr"
 

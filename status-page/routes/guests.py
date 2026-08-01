@@ -4,10 +4,10 @@ import secrets
 from flask import Blueprint, abort, flash, redirect, request, session, url_for
 
 from auth import admin_required, check_csrf, is_allowed_email
-from db import add_guest, remove_guest
+from db import add_guest, get_guest, remove_guest
 from services.email import send_welcome_email
-from services.jellyfin import create_jellyfin_user
-from services.seerr import import_and_configure_seerr_user
+from services.jellyfin import create_jellyfin_user, delete_jellyfin_user_by_username
+from services.seerr import delete_seerr_user, import_and_configure_seerr_user
 
 guests_bp = Blueprint("guests_bp", __name__)
 
@@ -75,6 +75,27 @@ def remove():
     if not email:
         abort(400)
 
-    remove_guest(email)
-    flash(f"Removed {email} from guests.", "info")
+    guest = get_guest(email)
+    if not guest:
+        flash(f"{email} is not a guest.", "error")
+        return redirect(url_for("dashboard_bp.dashboard"))
+
+    username = guest["jellyfin_username"]
+    jf_ok = delete_jellyfin_user_by_username(username)
+    seerr_ok = delete_seerr_user(username)
+
+    if jf_ok and seerr_ok:
+        remove_guest(email)
+        flash(f"Removed {email} — Jellyfin and Seerr access revoked.", "info")
+    else:
+        # Keep the guest record on a partial/failed revoke: it's the only
+        # place jellyfin_username is stored, and dropping it here would
+        # leave no way to retry once the underlying issue (API down, bad
+        # key, etc.) is fixed.
+        failed = [name for name, ok in (("Jellyfin", jf_ok), ("Seerr", seerr_ok)) if not ok]
+        flash(
+            f"Could not fully revoke access for {email} in: {', '.join(failed)}. "
+            f"Guest record kept — fix the issue and remove again to retry.",
+            "error",
+        )
     return redirect(url_for("dashboard_bp.dashboard"))

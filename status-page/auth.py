@@ -100,7 +100,15 @@ def is_admin(email=None):
 def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        if "user_email" not in session:
+        email = session.get("user_email")
+        if not email:
+            return redirect(url_for("auth_bp.login"))
+        # Re-check on every request, not just at login time: a removed guest's
+        # existing session (valid up to 30 days) must lose access immediately,
+        # not just be blocked from a future login.
+        if not is_allowed_email(email):
+            session.clear()
+            flash("Your access has been removed.", "error")
             return redirect(url_for("auth_bp.login"))
         return f(*args, **kwargs)
     return decorated
