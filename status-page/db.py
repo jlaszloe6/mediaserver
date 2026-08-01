@@ -48,7 +48,8 @@ def init_db():
             jellyfin_username TEXT NOT NULL,
             invited_by TEXT NOT NULL,
             created_at TEXT DEFAULT (datetime('now')),
-            seerr_configured INTEGER DEFAULT 1
+            seerr_configured INTEGER DEFAULT 1,
+            revoked INTEGER DEFAULT 0
         );
     """)
     # Idempotent migration: add source_ip if missing
@@ -67,7 +68,8 @@ def init_db():
                 jellyfin_username TEXT NOT NULL,
                 invited_by TEXT NOT NULL,
                 created_at TEXT DEFAULT (datetime('now')),
-                seerr_configured INTEGER DEFAULT 1
+                seerr_configured INTEGER DEFAULT 1,
+                revoked INTEGER DEFAULT 0
             )
         """)
     # Idempotent migration: add seerr_configured if missing. Existing rows
@@ -87,13 +89,25 @@ def init_db():
         conn.execute("SELECT seerr_configured FROM guests LIMIT 0")
     except sqlite3.OperationalError:
         conn.execute("ALTER TABLE guests ADD COLUMN seerr_configured INTEGER DEFAULT 1")
+    # Idempotent migration: add revoked if missing. Existing rows default to
+    # 0 (not revoked) - unlike seerr_configured, there's no ambiguity here:
+    # a pre-existing guest simply hasn't been through the new revoke flow yet.
+    try:
+        conn.execute("SELECT revoked FROM guests LIMIT 0")
+    except sqlite3.OperationalError:
+        conn.execute("ALTER TABLE guests ADD COLUMN revoked INTEGER DEFAULT 0")
     conn.commit()
     conn.close()
 
 
 def get_all_guest_emails():
+    # Excludes revoked guests: a guest kept in the table after a partial
+    # Jellyfin/Seerr cleanup failure (see revoke_guest/remove_guest below)
+    # must not still count as "allowed" just because their row exists -
+    # access is revoked immediately, independent of whether the external
+    # cleanup has fully succeeded yet.
     db = get_db()
-    rows = db.execute("SELECT email FROM guests").fetchall()
+    rows = db.execute("SELECT email FROM guests WHERE revoked = 0").fetchall()
     return {row["email"] for row in rows}
 
 
@@ -110,6 +124,17 @@ def add_guest(email, jellyfin_username, invited_by, seerr_configured=True):
         return False
 
 
+def revoke_guest(email):
+    """Mark a guest revoked without deleting their row. Cuts off status page
+    access (see get_all_guest_emails) immediately, independent of whether
+    the external Jellyfin/Seerr cleanup succeeds - call this before
+    attempting that cleanup, not after, so access is never left active
+    just because an external service was slow or down."""
+    db = get_db()
+    db.execute("UPDATE guests SET revoked = 1 WHERE email = ?", (email.lower(),))
+    db.commit()
+
+
 def remove_guest(email):
     db = get_db()
     db.execute("DELETE FROM guests WHERE email = ?", (email.lower(),))
@@ -119,7 +144,7 @@ def remove_guest(email):
 def get_guest(email):
     db = get_db()
     row = db.execute(
-        "SELECT email, jellyfin_username, invited_by, created_at, seerr_configured FROM guests WHERE email = ?",
+        "SELECT email, jellyfin_username, invited_by, created_at, seerr_configured, revoked FROM guests WHERE email = ?",
         (email.lower(),),
     ).fetchone()
     return dict(row) if row else None
@@ -128,6 +153,6 @@ def get_guest(email):
 def get_guests():
     db = get_db()
     rows = db.execute(
-        "SELECT email, jellyfin_username, invited_by, created_at, seerr_configured FROM guests ORDER BY created_at DESC"
+        "SELECT email, jellyfin_username, invited_by, created_at, seerr_configured, revoked FROM guests ORDER BY created_at DESC"
     ).fetchall()
     return [dict(row) for row in rows]
