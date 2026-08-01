@@ -35,7 +35,8 @@ def init_db():
             email TEXT NOT NULL,
             expires_at TEXT NOT NULL,
             used INTEGER DEFAULT 0,
-            source_ip TEXT
+            source_ip TEXT,
+            created_at TEXT
         );
         CREATE TABLE IF NOT EXISTS snapshots (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -57,6 +58,16 @@ def init_db():
         conn.execute("SELECT source_ip FROM login_tokens LIMIT 0")
     except sqlite3.OperationalError:
         conn.execute("ALTER TABLE login_tokens ADD COLUMN source_ip TEXT")
+    # Idempotent migration: add created_at if missing. No SQL-level DEFAULT
+    # (unlike other tables' created_at columns) - it must be populated by the
+    # application using the exact same "%Y-%m-%dT%H:%M:%SZ" format as
+    # expires_at. Mixing that with SQLite's own datetime('now') format
+    # (space-separated, no Z) reintroduces the lexicographic-comparison bug
+    # already fixed once for cleanup_expired_tokens (see auth.py).
+    try:
+        conn.execute("SELECT created_at FROM login_tokens LIMIT 0")
+    except sqlite3.OperationalError:
+        conn.execute("ALTER TABLE login_tokens ADD COLUMN created_at TEXT")
     # Idempotent migration: replace v1 guests table (had trakt/plex/wg columns)
     try:
         conn.execute("SELECT jellyfin_username FROM guests LIMIT 0")
