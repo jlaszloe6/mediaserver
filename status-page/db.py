@@ -3,7 +3,7 @@ import sqlite3
 
 from flask import g
 
-from config import DB_PATH
+from config import DB_PATH, SEERR_API_KEY
 
 
 def get_db():
@@ -70,15 +70,21 @@ def init_db():
                 seerr_configured INTEGER DEFAULT 1
             )
         """)
-    # Idempotent migration: add seerr_configured if missing. Defaults existing
-    # rows to 1 (assume configured) rather than 0 - we don't know their real
-    # invite-time outcome, and the safer failure mode is still attempting a
-    # Seerr lookup/delete (which itself already handles "not actually there"
-    # gracefully) rather than silently skipping a cleanup that may be needed.
+    # Idempotent migration: add seerr_configured if missing. Existing rows
+    # predate this tracking, so there's no real per-guest signal to use -
+    # infer from whether Seerr is configured *right now* instead. If
+    # SEERR_API_KEY was never set, none of these guests could have a real
+    # Seerr account either, and defaulting them to 1 would otherwise
+    # permanently block their removal (delete_seerr_user treats
+    # seerr_configured=1 + no key as an unverifiable failure, by design -
+    # see that function's docstring). If Seerr IS configured now, keep the
+    # conservative default (1) so removal still attempts real cleanup.
     try:
         conn.execute("SELECT seerr_configured FROM guests LIMIT 0")
     except sqlite3.OperationalError:
         conn.execute("ALTER TABLE guests ADD COLUMN seerr_configured INTEGER DEFAULT 1")
+        if not SEERR_API_KEY:
+            conn.execute("UPDATE guests SET seerr_configured = 0")
     conn.commit()
     conn.close()
 
