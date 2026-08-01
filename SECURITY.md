@@ -17,8 +17,8 @@ Only the latest commit on `master` is actively maintained.
 This is a personal homelab media server. The security model assumes:
 
 - A single trusted operator
-- Internet exposure only through Caddy reverse proxy (port 443)
-- GeoIP filtering on all public endpoints
+- Web-facing services exposed only through Caddy reverse proxy (port 443), GeoIP-filtered
+- Transmission's torrent peer port (51413, TCP+UDP) is a separate, deliberate exception -- internet-facing without GeoIP/TLS, since raw BitTorrent peer traffic needs to be reachable from arbitrary peers
 - Magic-link email authentication with Cloudflare Turnstile
 
 ### What Not to Disclose Publicly
