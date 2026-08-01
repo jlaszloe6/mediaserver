@@ -2,7 +2,7 @@
 
 A self-hosted media stack running on Docker Compose. Request a movie or show through Seerr and it downloads, gets organized, and shows up in Jellyfin automatically — no manual searching, no manual filing. Music and audiobooks follow their own, lighter-weight pipelines. Everything is watched over by a small cron fleet that keeps storage clean and emails the owner when something needs attention.
 
-Built for a single-operator homelab: one admin, a handful of trusted guests, internet exposure limited to a single reverse-proxied port.
+Built for a single-operator homelab: one admin, a handful of trusted guests. Web-facing services go through a single reverse-proxied port (Caddy `:443`, GeoIP-filtered); Transmission's torrent peer port (`:51413`, TCP+UDP) is a separate, deliberately internet-facing exception — see [Security Model](../../wiki/Security-Model).
 
 ## Architecture
 
@@ -133,13 +133,17 @@ git clone git@github.com:jlaszloe6/mediaserver.git
 cd mediaserver
 cp .env.example .env        # fill in DuckDNS, SMTP, MaxMind, backup key, etc.
 docker compose up -d
-# 1. Jellyfin (http://localhost:8096): complete the setup wizard, then create
-#    an API key (Dashboard -> API Keys) - needed below to create the guest
-#    libraries. Use env-set.sh, not a text editor, to add it: a normal save
-#    (most editors) replaces the file's inode, which the already-running
-#    cron container's bind mount won't pick up; env-set.sh edits in place.
+# 1. Jellyfin (http://<SERVER_IP>:8096 - NOT localhost: Docker publishes
+#    this port bound to $SERVER_IP specifically, not 127.0.0.1, so
+#    "localhost" won't resolve to it even from a browser on the server
+#    itself): complete the setup wizard, then create an API key
+#    (Dashboard -> API Keys) - needed below to create the guest libraries.
+#    Use env-set.sh, not a text editor, to add it: a normal save (most
+#    editors) replaces the file's inode, which the already-running cron
+#    container's bind mount won't pick up; env-set.sh edits in place.
 ./scripts/env-set.sh JELLYFIN_API_KEY=paste-the-key-here
-# 2. Seerr (http://localhost:5055): complete the setup wizard and connect
+# 2. Seerr (http://<SERVER_IP>:5055 - same reasoning, not localhost):
+#    complete the setup wizard and connect
 #    Jellyfin/Sonarr/Radarr BEFORE the next step, so it has a configured
 #    instance for init-setup.sh to enable sync on. Then do the same for its
 #    API key (config/overseerr/settings.json -> main.apiKey) - without it,
