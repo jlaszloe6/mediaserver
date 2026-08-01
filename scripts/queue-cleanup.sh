@@ -120,7 +120,16 @@ handle_suspicious() {
 
     log "  Found $count suspicious file(s) in $service_name"
 
-    echo "$suspicious" | jq -c '.[]' | while IFS= read -r item; do
+    # `done < <(...)` / here-string, NOT `... | while ...`: piping into the
+    # loop runs its body in a subshell, so ERRORS/ALERT_MESSAGES updates
+    # inside it (via queue_alert, below) never make it back to this
+    # function's caller - the file still gets removed/blocklisted for real,
+    # but the alert email and error count silently vanish. This is exactly
+    # the bug transmission-cleanup.sh's loops already avoid the same way.
+    local suspicious_items
+    suspicious_items=$(echo "$suspicious" | jq -c '.[]')
+    while IFS= read -r item; do
+        [ -z "$item" ] && continue
         local id title indexer
         id=$(echo "$item" | jq -r '.id')
         title=$(echo "$item" | jq -r '.title')
@@ -147,7 +156,7 @@ handle_suspicious() {
             queue_alert "[NEEDS ATTENTION] $service_name: Could not remove suspicious file '$title' from indexer '$indexer'"
             ERRORS=$((ERRORS + 1))
         fi
-    done
+    done <<< "$suspicious_items"
 }
 
 # --- Handle import-blocked items ---
@@ -171,7 +180,13 @@ handle_import_blocked() {
 
     log "  Found $count import-blocked item(s) in $service_name"
 
-    echo "$blocked" | jq -c '.[]' | while IFS= read -r item; do
+    # See handle_suspicious's comment above: `| while` runs the loop body in
+    # a subshell, silently losing every ERRORS/queue_alert update this loop
+    # makes (i.e. most of what this function actually does).
+    local blocked_items
+    blocked_items=$(echo "$blocked" | jq -c '.[]')
+    while IFS= read -r item; do
+        [ -z "$item" ] && continue
         local id title download_id output_path messages
         id=$(echo "$item" | jq -r '.id')
         title=$(echo "$item" | jq -r '.title')
@@ -319,12 +334,15 @@ handle_import_blocked() {
                 }]")
             fi
 
+            # importMode "copy" (hardlink), not "move": move deletes the
+            # source file from Transmission's download dir, breaking
+            # nCore's 72h H&R seeding requirement for this release.
             local import_result
             import_result=$(curl -s -w '\n%{http_code}' -X POST \
                 -H "X-Api-Key: $api_key" \
                 -H "Content-Type: application/json" \
                 "$base_url/api/v3/command" \
-                -d "{\"name\":\"ManualImport\",\"importMode\":\"move\",\"files\":$import_payload}")
+                -d "{\"name\":\"ManualImport\",\"importMode\":\"copy\",\"files\":$import_payload}")
 
             local import_code
             import_code=$(echo "$import_result" | tail -1)
@@ -338,7 +356,7 @@ handle_import_blocked() {
                 ERRORS=$((ERRORS + 1))
             fi
         fi
-    done
+    done <<< "$blocked_items"
 }
 
 # --- Handle stalled downloads ---
@@ -362,12 +380,17 @@ handle_stalled() {
 
     log "  Found $count stalled/warning download(s) in $service_name"
 
-    echo "$stalled" | jq -c '.[]' | while IFS= read -r item; do
+    # Same subshell issue as the loops above - queue_alert here is this
+    # function's entire purpose, so piping into the loop made it a no-op.
+    local stalled_items
+    stalled_items=$(echo "$stalled" | jq -c '.[]')
+    while IFS= read -r item; do
+        [ -z "$item" ] && continue
         local title messages
         title=$(echo "$item" | jq -r '.title')
         messages=$(echo "$item" | jq -r '[.statusMessages[].messages[]] | join("; ")')
         queue_alert "[STALLED] $service_name: '$title' — $messages"
-    done
+    done <<< "$stalled_items"
 }
 
 # --- Main ---
