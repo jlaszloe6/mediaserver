@@ -6,8 +6,9 @@
 # 1. Import blocked (name mismatch): auto-imports if there's exactly one
 #    matching file candidate. Otherwise sends an email alert.
 #
-# 2. Suspicious files (.exe, .msi, .bat, .scr, .cmd, .ps1, .vbs):
-#    auto-removes from the queue and blocklists the release.
+# 2. Suspicious files (.exe, .msi, .bat, .scr, .cmd, .ps1, .vbs, .com,
+#    .pif, .js, .lnk): auto-removes from the queue and blocklists the
+#    release.
 #
 # 3. Stalled downloads (no progress for 2+ hours): sends an email alert.
 #
@@ -42,7 +43,7 @@ RADARR_KEY="$RADARR_API_KEY"
 # Instance list: "label|sonarr_url|sonarr_key|radarr_url|radarr_key"
 QUEUE_INSTANCES="owner|http://sonarr:8989|$SONARR_KEY|http://radarr:7878|$RADARR_KEY"
 
-SUSPICIOUS_EXTENSIONS="exe|msi|bat|scr|cmd|ps1|vbs|com|pif"
+SUSPICIOUS_EXTENSIONS="exe|msi|bat|scr|cmd|ps1|vbs|com|pif|js|lnk"
 
 ERRORS=0
 ALERT_MESSAGES=""
@@ -120,11 +121,12 @@ handle_suspicious() {
     log "  Found $count suspicious file(s) in $service_name"
 
     echo "$suspicious" | jq -c '.[]' | while IFS= read -r item; do
-        local id title
+        local id title indexer
         id=$(echo "$item" | jq -r '.id')
         title=$(echo "$item" | jq -r '.title')
+        indexer=$(echo "$item" | jq -r '.indexer // "unknown"')
 
-        log "  Rejecting suspicious: $title"
+        log "  Rejecting suspicious: $title (indexer: $indexer)"
 
         if $DRY_RUN; then
             log "  [DRY RUN] Would remove '$title' from queue and blocklist"
@@ -139,10 +141,10 @@ handle_suspicious() {
 
         if [ "$del_code" = "200" ]; then
             log "  Removed and blocklisted '$title'"
-            queue_alert "[AUTO-FIXED] $service_name: Rejected suspicious file '$title' (blocklisted)"
+            queue_alert "[AUTO-FIXED] $service_name: Rejected suspicious file '$title' from indexer '$indexer' (blocklisted)"
         else
             log "  ERROR: Failed to remove '$title' (HTTP $del_code)"
-            queue_alert "[NEEDS ATTENTION] $service_name: Could not remove suspicious file '$title'"
+            queue_alert "[NEEDS ATTENTION] $service_name: Could not remove suspicious file '$title' from indexer '$indexer'"
             ERRORS=$((ERRORS + 1))
         fi
     done
