@@ -365,7 +365,7 @@
                     <tbody>
                         {% for g in guests %}
                         <tr>
-                            <td>{{ g.email }}</td>
+                            <td>{{ g.email }}{% if g.revoked %} <span style="font-size:0.7rem;color:#e94560;" title="Status page access already revoked; Jellyfin/Seerr cleanup still pending - remove again to retry">(revoked, cleanup pending)</span>{% endif %}</td>
                             <td>{{ g.jellyfin_username }}</td>
                             <td style="white-space:nowrap">{{ g.created_at[:10] }}</td>
                             <td>
