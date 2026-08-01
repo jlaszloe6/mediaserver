@@ -264,7 +264,6 @@ IEOF
 
 NO_TAGS="[]"
 
-add_indexer "eztv"          "https://eztvx.to/"              "$NO_TAGS"
 add_indexer "yts"           "https://yts.mx/"                "$NO_TAGS"
 add_indexer "thepiratebay"  "https://thepiratebay.org/"      "$NO_TAGS"
 add_indexer "limetorrents"  "https://www.limetorrents.lol/"  "$NO_TAGS"
