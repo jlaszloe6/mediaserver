@@ -149,12 +149,18 @@ def import_and_configure_seerr_user(jellyfin_username, jellyfin_user_id):
     """Import Jellyfin user into Seerr and set override rule for guest servers.
 
     Returns (success, warning, account_may_exist). `account_may_exist` is
-    True as soon as the import call itself succeeds, independent of whether
-    the remaining steps (finding the user, guest server configs, override
-    rule) do - a failure after that point still leaves a real Seerr account
+    False only for the pre-flight checks below, before Seerr is ever
+    actually contacted. Once the import request is sent, ANY outcome -
+    success, an error status, a timeout, a dropped connection - defaults
+    to True: an error status doesn't prove nothing was created server-side
+    (a 5xx can happen after a write succeeds; a 409/conflict can mean the
+    account already existed from before), and a request that never got a
+    response is even less conclusive. Callers should persist this value
+    (not `success`) as the record of whether this guest has a Seerr
+    account to revoke - a failure in one of the LATER steps (finding the
+    user, guest server configs, override rule) still leaves a real account
     behind that needs cleaning up on guest removal, even though setup as a
-    whole didn't succeed. Callers should persist this value (not `success`)
-    as the record of whether this guest has a Seerr account to revoke."""
+    whole didn't succeed."""
     if not jellyfin_user_id:
         return False, "No Jellyfin user ID provided", False
     if not SEERR_API_KEY:
@@ -169,13 +175,8 @@ def import_and_configure_seerr_user(jellyfin_username, jellyfin_user_id):
             timeout=API_TIMEOUT * 3,
         )
         if r.status_code not in (200, 201):
-            # An explicit non-2xx response is Seerr itself telling us the
-            # import didn't happen - safe to say no account exists.
-            return False, f"Seerr import failed (HTTP {r.status_code})", False
+            return False, f"Seerr import failed (HTTP {r.status_code})", True
     except requests.RequestException as e:
-        # Unlike an explicit error status above, this is ambiguous: the
-        # request may have reached Seerr and created the account before a
-        # timeout/dropped connection kept the response from coming back.
         # Default to the safer assumption (an account might exist) so
         # removal still attempts cleanup rather than silently skipping it.
         return False, f"Seerr import failed: {e}", True
