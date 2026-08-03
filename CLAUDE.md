@@ -22,7 +22,7 @@ Services: Jellyfin, Transmission, Sonarr, Radarr, Prowlarr, Bazarr, Seerr, Caddy
 ## Runtime Separation
 - Runtime directory: `/opt/mediaserver` (NOT developer home directory)
 - Dedicated `mediaserver` system user (no login shell, in docker group) owns the runtime
-- Developer user (`janoslaszlo`) keeps code repo at `~/Documents/mediaserver`
+- Developer user (`janoslaszlo`) keeps code repo at `~/Documents/projects/mediaserver`
 - PUID/PGID env vars in `.env` match the `mediaserver` user's UID/GID
 - Container file ownership aligns with the service user, not the developer
 - Seerr runs as UID 1000 internally (not PUID/PGID), config dir must be owned by 1000:1000
