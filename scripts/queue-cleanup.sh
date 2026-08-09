@@ -398,20 +398,17 @@ handle_stalled() {
         done <<< "$warning_records"
     fi
 
-    # Downloads sitting at literally 0% for 2+ hours (sizeleft == size),
-    # regardless of trackedDownloadStatus - these are almost always dead
-    # torrents with no seeders. This is the exact same signal
-    # pipeline-monitor.sh uses for its "stuck download (0% after 2h)"
-    # alert (same threshold, same sizeleft==size check), so anything that
-    # would trigger that alert gets auto-remediated here instead: remove
-    # from queue, blocklist the release, and trigger a fresh search - the
-    # same remedy already used for unparseable BR-DISK releases above.
-    local now_epoch
-    now_epoch=$(date +%s)
-    local stuck_threshold=7200  # 2 hours
-
+    # Downloads sitting at literally 0% (sizeleft == size) with the client
+    # itself confirming an active "downloading" status - these are almost
+    # always dead/unseeded torrents. This is the same core signal
+    # pipeline-monitor.sh uses for its "stuck download (0% after 2h)" alert,
+    # so anything that would trigger that alert gets auto-remediated here
+    # instead: remove from queue, blocklist the release, and trigger a
+    # fresh search - the same remedy already used for unparseable BR-DISK
+    # releases above.
+    #
     # Excludes warning/error status explicitly - those are the branch above's
-    # job. A 0%-for-2h item with a disk-space or client-side warning is an
+    # job. A 0% item with a disk-space or client-side warning is an
     # infrastructure problem, not a dead release, and blocklisting it would
     # just repeat the same failure against a different torrent.
     #
@@ -420,33 +417,73 @@ handle_stalled() {
     # "queued" or "paused", e.g. behind a download-queue-size limit) also
     # reports trackedDownloadState "downloading" while genuinely at 0%
     # through no fault of its own - it just hasn't been handed to the
-    # client yet. Only a client-confirmed active "downloading" status that's
-    # still at 0% after 2h is actually a dead/unseeded torrent.
+    # client yet.
+    #
+    # Age is tracked via a STATE_FILE keyed by downloadId (the torrent
+    # hash), NOT via Sonarr/Radarr's `.added` (when the release was
+    # grabbed): a release that spent hours queued behind other downloads
+    # before finally starting would otherwise look "stuck since grab time"
+    # and get wrongly blocklisted seconds into a legitimate download.
+    # Debouncing against our own repeated observations instead (this runs
+    # every 30 min) means an item only ever gets auto-fixed after WE have
+    # personally seen it at 0% with a confirmed "downloading" status for
+    # 2+ hours running, regardless of how long it sat queued before that.
+    # One state file per service (keyed off service_name) since download
+    # IDs are per-service queues and rebuilding blindly would otherwise let
+    # the Radarr call wipe out entries the Sonarr call just wrote.
+    local now_epoch
+    now_epoch=$(date +%s)
+    local stuck_threshold=7200  # 2 hours
+
+    local state_suffix
+    state_suffix=$(echo "$service_name" | tr -c '[:alnum:]' '_')
+    local state_file="/var/tmp/queue-cleanup-zero-progress-${state_suffix}.state"
+    touch "$state_file" 2>/dev/null || true
+
     local downloading_items
-    downloading_items=$(echo "$queue" | jq -c '[.records[] | select(.trackedDownloadState == "downloading" and .status == "downloading" and .trackedDownloadStatus != "warning" and .trackedDownloadStatus != "error")]')
+    downloading_items=$(echo "$queue" | jq -c '[.records[] | select(.trackedDownloadState == "downloading" and .status == "downloading" and .trackedDownloadStatus != "warning" and .trackedDownloadStatus != "error" and .sizeleft == .size)]')
     local downloading_records
     downloading_records=$(echo "$downloading_items" | jq -c '.[]')
+
+    # Rebuilt from scratch below with only the entries worth keeping - items
+    # that resolved (started progressing, left the queue) simply never get
+    # re-added, so the file can't grow stale or unbounded.
+    local new_state=""
     while IFS= read -r item; do
         [ -z "$item" ] && continue
-        local title added sizeleft size id
+        local title download_id id
         title=$(echo "$item" | jq -r '.title')
-        added=$(echo "$item" | jq -r '.added')
-        sizeleft=$(echo "$item" | jq -r '.sizeleft')
-        size=$(echo "$item" | jq -r '.size')
+        download_id=$(echo "$item" | jq -r '.downloadId // empty')
         id=$(echo "$item" | jq -r '.id')
 
-        local added_epoch
-        added_epoch=$(date -d "$added" +%s 2>/dev/null) || continue
-        local age=$((now_epoch - added_epoch))
-
-        if [ "$age" -le "$stuck_threshold" ] || [ "$sizeleft" != "$size" ]; then
+        if [ -z "$download_id" ]; then
             continue
         fi
 
-        log "  Zero progress after $((age / 3600))h: $title — removing, blocklisting, and re-searching"
+        local first_seen
+        first_seen=$(awk -v id="$download_id" '$1 == id { print $2 }' "$state_file" 2>/dev/null)
+
+        if [ -z "$first_seen" ]; then
+            log "  First seen at 0%: $title — tracking, will re-check next run"
+            new_state="${new_state}${download_id} ${now_epoch}
+"
+            continue
+        fi
+
+        local age=$((now_epoch - first_seen))
+
+        if [ "$age" -le "$stuck_threshold" ]; then
+            new_state="${new_state}${download_id} ${first_seen}
+"
+            continue
+        fi
+
+        log "  Zero progress for $((age / 3600))h: $title — removing, blocklisting, and re-searching"
 
         if $DRY_RUN; then
             log "  [DRY RUN] Would remove '$title', blocklist, and search for new release"
+            new_state="${new_state}${download_id} ${first_seen}
+"
             continue
         fi
 
@@ -463,6 +500,10 @@ handle_stalled() {
             log "  ERROR: Failed to remove '$title' (HTTP $del_code)"
             queue_alert "[NEEDS ATTENTION] $service_name: Could not remove zero-progress download '$title'"
             ERRORS=$((ERRORS + 1))
+            # Still stuck in the queue - keep tracking it so the next run
+            # retries the removal instead of forgetting it was ever stuck.
+            new_state="${new_state}${download_id} ${first_seen}
+"
             continue
         fi
 
@@ -500,6 +541,8 @@ handle_stalled() {
             queue_alert "[AUTO-FIXED, SEARCH FAILED] $service_name: Removed and blocklisted zero-progress download '$title' (0% after $((age / 3600))h), but the follow-up search request failed — search manually"
         fi
     done <<< "$downloading_records"
+
+    printf '%s' "$new_state" > "$state_file"
 }
 
 # --- Main ---
