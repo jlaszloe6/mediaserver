@@ -10,9 +10,13 @@
 #    .pif, .js, .lnk): auto-removes from the queue and blocklists the
 #    release.
 #
-# 3. Stalled downloads (no progress for 2+ hours): sends an email alert.
+# 3. Downloads stuck at 0% for 2+ hours (dead torrent, no seeders): same
+#    signal pipeline-monitor.sh alerts on - removes from the queue,
+#    blocklists the release, and triggers a new search.
 #
-# 4. Any other warnings/errors: sends an email alert.
+# 4. Downloads Sonarr/Radarr itself flags with an in-progress warning/error
+#    (disk space, indexer issues, etc.): sends an email alert. Too many
+#    different causes to safely auto-remediate the same way as #3.
 #
 # SMTP credentials are read from Radarr's email notification config.
 # Run every 30 minutes via cron.
@@ -364,33 +368,105 @@ handle_stalled() {
     local service_name="$1"
     local base_url="$2"
     local api_key="$3"
+    local media_type="$4"  # "movie" or "series"
 
     local queue
     queue=$(curl -sf -H "X-Api-Key: $api_key" "$base_url/api/v3/queue?page=1&pageSize=100") || return 1
 
     # Find items that are "downloading" but have statusMessages with warnings
-    local stalled
-    stalled=$(echo "$queue" | jq -c '[.records[] | select(.trackedDownloadState == "downloading" and .trackedDownloadStatus == "warning")]')
-    local count
-    count=$(echo "$stalled" | jq 'length')
+    local warning_items
+    warning_items=$(echo "$queue" | jq -c '[.records[] | select(.trackedDownloadState == "downloading" and .trackedDownloadStatus == "warning")]')
+    local warning_count
+    warning_count=$(echo "$warning_items" | jq 'length')
 
-    if [ "$count" -eq 0 ]; then
-        return 0
+    if [ "$warning_count" -gt 0 ]; then
+        log "  Found $warning_count stalled/warning download(s) in $service_name"
+
+        # Same subshell issue as the loops above - queue_alert here is this
+        # branch's entire purpose, so piping into the loop made it a no-op.
+        local warning_records
+        warning_records=$(echo "$warning_items" | jq -c '.[]')
+        while IFS= read -r item; do
+            [ -z "$item" ] && continue
+            local title messages
+            title=$(echo "$item" | jq -r '.title')
+            messages=$(echo "$item" | jq -r '[.statusMessages[].messages[]] | join("; ")')
+            queue_alert "[STALLED] $service_name: '$title' — $messages"
+        done <<< "$warning_records"
     fi
 
-    log "  Found $count stalled/warning download(s) in $service_name"
+    # Downloads sitting at literally 0% for 2+ hours (sizeleft == size),
+    # regardless of trackedDownloadStatus - these are almost always dead
+    # torrents with no seeders. This is the exact same signal
+    # pipeline-monitor.sh uses for its "stuck download (0% after 2h)"
+    # alert (same threshold, same sizeleft==size check), so anything that
+    # would trigger that alert gets auto-remediated here instead: remove
+    # from queue, blocklist the release, and trigger a fresh search - the
+    # same remedy already used for unparseable BR-DISK releases above.
+    local now_epoch
+    now_epoch=$(date +%s)
+    local stuck_threshold=7200  # 2 hours
 
-    # Same subshell issue as the loops above - queue_alert here is this
-    # function's entire purpose, so piping into the loop made it a no-op.
-    local stalled_items
-    stalled_items=$(echo "$stalled" | jq -c '.[]')
+    local downloading_items
+    downloading_items=$(echo "$queue" | jq -c '[.records[] | select(.trackedDownloadState == "downloading")]')
+    local downloading_records
+    downloading_records=$(echo "$downloading_items" | jq -c '.[]')
     while IFS= read -r item; do
         [ -z "$item" ] && continue
-        local title messages
+        local title added sizeleft size id
         title=$(echo "$item" | jq -r '.title')
-        messages=$(echo "$item" | jq -r '[.statusMessages[].messages[]] | join("; ")')
-        queue_alert "[STALLED] $service_name: '$title' — $messages"
-    done <<< "$stalled_items"
+        added=$(echo "$item" | jq -r '.added')
+        sizeleft=$(echo "$item" | jq -r '.sizeleft')
+        size=$(echo "$item" | jq -r '.size')
+        id=$(echo "$item" | jq -r '.id')
+
+        local added_epoch
+        added_epoch=$(date -d "$added" +%s 2>/dev/null) || continue
+        local age=$((now_epoch - added_epoch))
+
+        if [ "$age" -le "$stuck_threshold" ] || [ "$sizeleft" != "$size" ]; then
+            continue
+        fi
+
+        log "  Zero progress after $((age / 3600))h: $title — removing, blocklisting, and re-searching"
+
+        if $DRY_RUN; then
+            log "  [DRY RUN] Would remove '$title', blocklist, and search for new release"
+            continue
+        fi
+
+        local del_code
+        del_code=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE \
+            -H "X-Api-Key: $api_key" \
+            "$base_url/api/v3/queue/$id?removeFromClient=true&blocklist=true&skipReprocess=false")
+
+        if [ "$del_code" != "200" ]; then
+            log "  ERROR: Failed to remove '$title' (HTTP $del_code)"
+            queue_alert "[NEEDS ATTENTION] $service_name: Could not remove zero-progress download '$title'"
+            ERRORS=$((ERRORS + 1))
+            continue
+        fi
+
+        local media_id_for_search
+        if [ "$media_type" = "movie" ]; then
+            media_id_for_search=$(echo "$item" | jq -r '.movieId // empty')
+            if [ -n "$media_id_for_search" ]; then
+                curl -sf -X POST -H "X-Api-Key: $api_key" -H "Content-Type: application/json" \
+                    "$base_url/api/v3/command" \
+                    -d "{\"name\":\"MoviesSearch\",\"movieIds\":[$media_id_for_search]}" > /dev/null 2>&1
+            fi
+        else
+            media_id_for_search=$(echo "$item" | jq -r '.seriesId // empty')
+            if [ -n "$media_id_for_search" ]; then
+                curl -sf -X POST -H "X-Api-Key: $api_key" -H "Content-Type: application/json" \
+                    "$base_url/api/v3/command" \
+                    -d "{\"name\":\"SeriesSearch\",\"seriesId\":$media_id_for_search}" > /dev/null 2>&1
+            fi
+        fi
+
+        log "  Removed and blocklisted '$title'"
+        queue_alert "[AUTO-FIXED] $service_name: Removed zero-progress download '$title' (0% after $((age / 3600))h), blocklisted, searching for new release"
+    done <<< "$downloading_records"
 }
 
 # --- Main ---
@@ -416,8 +492,8 @@ while IFS= read -r inst; do
     handle_import_blocked "Radarr ($label)" "$radarr_url" "$radarr_key" "movie"
 
     log "Checking for stalled downloads..."
-    handle_stalled "Sonarr ($label)" "$sonarr_url" "$sonarr_key"
-    handle_stalled "Radarr ($label)" "$radarr_url" "$radarr_key"
+    handle_stalled "Sonarr ($label)" "$sonarr_url" "$sonarr_key" "series"
+    handle_stalled "Radarr ($label)" "$radarr_url" "$radarr_key" "movie"
 done <<< "$QUEUE_INSTANCES"
 
 # Send consolidated email if there were any issues
