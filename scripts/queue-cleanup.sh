@@ -438,7 +438,14 @@ handle_stalled() {
     local state_suffix
     state_suffix=$(echo "$service_name" | tr -c '[:alnum:]' '_')
     local state_file="/var/tmp/queue-cleanup-zero-progress-${state_suffix}.state"
-    touch "$state_file" 2>/dev/null || true
+    # Real cron runs execute as the unprivileged `cronjob` user; a manual
+    # `--dry-run` invocation (e.g. `docker exec` defaults to root) must not
+    # touch this file at all if it doesn't exist yet - a root-owned 0644
+    # file would then block the real run's write at the end of this
+    # function under set -e, breaking cleanup/alerts until fixed by hand.
+    if ! $DRY_RUN; then
+        touch "$state_file" 2>/dev/null || true
+    fi
 
     local downloading_items
     downloading_items=$(echo "$queue" | jq -c '[.records[] | select(.trackedDownloadState == "downloading" and .status == "downloading" and .trackedDownloadStatus != "warning" and .trackedDownloadStatus != "error" and .sizeleft == .size)]')
@@ -460,8 +467,11 @@ handle_stalled() {
             continue
         fi
 
+        # `|| first_seen=""`: covers both a missing state file (dry-run
+        # skipped the touch above) and any other awk failure - without it,
+        # a bare failed command substitution aborts the script under set -e.
         local first_seen
-        first_seen=$(awk -v id="$download_id" '$1 == id { print $2 }' "$state_file" 2>/dev/null)
+        first_seen=$(awk -v id="$download_id" '$1 == id { print $2 }' "$state_file" 2>/dev/null) || first_seen=""
 
         if [ -z "$first_seen" ]; then
             log "  First seen at 0%: $title — tracking, will re-check next run"
