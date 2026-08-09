@@ -146,6 +146,42 @@ parse_response() {
     RESP_BODY=$(echo "$result" | sed '$d')
 }
 
+# fetch_existing(url, api_key, description) - shared GET helper for the
+# "does X already exist?" checks throughout this script. Reuses api_call()
+# (GET is just -X GET with no body, which it already supports unchanged)
+# and parse_response(), so it inherits api_call's --connect-timeout/
+# --max-time for free instead of every call site needing its own bare,
+# unbounded `curl -sf ...`.
+#
+# Echoes the response body on a 2xx status (including a legitimately empty
+# body/`[]` - that's just "nothing configured yet", not a failure) and
+# returns 0. On any other outcome it logs a clear error via log_err
+# (which also increments the script's ERRORS counter) and returns 1 -
+# callers combine this with `|| exit 1` (top-level) or `|| return 1`
+# (inside a function) so a fetch failure is never silently treated as "the
+# resource doesn't exist yet" and doesn't risk creating a duplicate.
+#
+# RESP_CODE is "000" specifically when curl itself failed to get any HTTP
+# response at all (connection refused, DNS failure, timeout) - api_call's
+# curl has no -f, so a real HTTP error status (401, 500, ...) always shows
+# up as that actual code instead. The error message distinguishes the two
+# rather than reporting "000" as if it were a real HTTP response.
+fetch_existing() {
+    local url="$1" api_key="$2" description="$3"
+    parse_response "$(api_call GET "$url" "$api_key")"
+    local code="${RESP_CODE:-000}"
+    if [[ "$code" =~ ^2[0-9][0-9]$ ]]; then
+        echo "$RESP_BODY"
+        return 0
+    fi
+    if [ "$code" = "000" ]; then
+        log_err "Failed to fetch $description (connection/transport error or timeout)"
+    else
+        log_err "Failed to fetch $description (HTTP $code)"
+    fi
+    return 1
+}
+
 # --- Parse arguments ---
 
 for arg in "$@"; do
@@ -227,7 +263,7 @@ echo ""
 log_info "=== Configuring Prowlarr ==="
 
 # 3a: Add indexers
-existing_indexers=$(curl -sf -H "X-Api-Key: $PROWLARR_KEY" "http://prowlarr:9696/api/v1/indexer")
+existing_indexers=$(fetch_existing "http://prowlarr:9696/api/v1/indexer" "$PROWLARR_KEY" "Prowlarr indexers") || exit 1
 
 add_indexer() {
     local def_name="$1" base_url="$2" tags="$3" extra_fields="${4:-}"
@@ -323,7 +359,7 @@ else
 fi
 
 # 3b: Add Sonarr as application
-existing_apps=$(curl -sf -H "X-Api-Key: $PROWLARR_KEY" "http://prowlarr:9696/api/v1/applications")
+existing_apps=$(fetch_existing "http://prowlarr:9696/api/v1/applications" "$PROWLARR_KEY" "Prowlarr applications") || exit 1
 sonarr_app_exists=$(echo "$existing_apps" | jq -r '.[] | select(.name == "Sonarr") | .id')
 
 if [ -z "$sonarr_app_exists" ]; then
@@ -412,7 +448,7 @@ setup_quality_profile() {
 
     # Check if custom formats already exist
     local existing_cf
-    existing_cf=$(curl -sf -H "X-Api-Key: $key" "$url/api/v3/customformat")
+    existing_cf=$(fetch_existing "$url/api/v3/customformat" "$key" "$svc custom formats") || return 1
     if echo "$existing_cf" | jq -e '.[] | select(.name == "Hungarian + Original")' > /dev/null 2>&1; then
         log_ok "$svc custom formats already configured"
     else
@@ -440,8 +476,9 @@ setup_quality_profile() {
     fi
 
     # Update HD-1080p profile to HD-1080p Max with custom format scores
-    local profile_name
-    profile_name=$(curl -sf -H "X-Api-Key: $key" "$url/api/v3/qualityprofile/4" | jq -r '.name')
+    local profile_name profile_json_for_name
+    profile_json_for_name=$(fetch_existing "$url/api/v3/qualityprofile/4" "$key" "$svc quality profile") || return 1
+    profile_name=$(echo "$profile_json_for_name" | jq -r '.name')
     if [ "$profile_name" = "HD-1080p Max" ]; then
         log_ok "$svc quality profile 'HD-1080p Max' already configured"
     else
@@ -449,7 +486,7 @@ setup_quality_profile() {
             log_info "[DRY RUN] Would update $svc quality profile to HD-1080p Max"
         else
             local formats
-            formats=$(curl -sf -H "X-Api-Key: $key" "$url/api/v3/customformat")
+            formats=$(fetch_existing "$url/api/v3/customformat" "$key" "$svc custom formats") || return 1
             local ho es honly fk
             ho=$(echo "$formats" | jq -r '.[] | select(.name=="Hungarian + Original") | .id')
             es=$(echo "$formats" | jq -r '.[] | select(.name=="English SRT Subs") | .id')
@@ -457,7 +494,7 @@ setup_quality_profile() {
             fk=$(echo "$formats" | jq -r '.[] | select(.name=="4K") | .id')
 
             local profile updated
-            profile=$(curl -sf -H "X-Api-Key: $key" "$url/api/v3/qualityprofile/4")
+            profile=$(fetch_existing "$url/api/v3/qualityprofile/4" "$key" "$svc quality profile") || return 1
             updated=$(echo "$profile" | jq \
                 --argjson ho "$ho" --argjson es "$es" --argjson honly "$honly" --argjson fk "$fk" \
                 '.name = "HD-1080p Max" | .upgradeAllowed = true | .formatItems = [
@@ -486,7 +523,7 @@ echo ""
 log_info "=== Configuring Sonarr ==="
 
 # Root folder
-existing_roots=$(curl -sf -H "X-Api-Key: $SONARR_KEY" "http://sonarr:8989/api/v3/rootfolder")
+existing_roots=$(fetch_existing "http://sonarr:8989/api/v3/rootfolder" "$SONARR_KEY" "Sonarr root folders") || exit 1
 sonarr_root_exists=$(echo "$existing_roots" | jq -r '.[] | select(.path == "/data/media/tv") | .id')
 
 if [ -z "$sonarr_root_exists" ]; then
@@ -522,7 +559,7 @@ else
 fi
 
 # Download client
-existing_dl=$(curl -sf -H "X-Api-Key: $SONARR_KEY" "http://sonarr:8989/api/v3/downloadclient")
+existing_dl=$(fetch_existing "http://sonarr:8989/api/v3/downloadclient" "$SONARR_KEY" "Sonarr download clients") || exit 1
 sonarr_dl_exists=$(echo "$existing_dl" | jq -r '.[] | select(.name == "Transmission") | .id')
 
 if [ -z "$sonarr_dl_exists" ]; then
@@ -570,7 +607,7 @@ echo ""
 log_info "=== Configuring Radarr ==="
 
 # Root folder
-existing_roots=$(curl -sf -H "X-Api-Key: $RADARR_KEY" "http://radarr:7878/api/v3/rootfolder")
+existing_roots=$(fetch_existing "http://radarr:7878/api/v3/rootfolder" "$RADARR_KEY" "Radarr root folders") || exit 1
 radarr_root_exists=$(echo "$existing_roots" | jq -r '.[] | select(.path == "/data/media/movies") | .id')
 
 if [ -z "$radarr_root_exists" ]; then
@@ -606,7 +643,7 @@ else
 fi
 
 # Download client
-existing_dl=$(curl -sf -H "X-Api-Key: $RADARR_KEY" "http://radarr:7878/api/v3/downloadclient")
+existing_dl=$(fetch_existing "http://radarr:7878/api/v3/downloadclient" "$RADARR_KEY" "Radarr download clients") || exit 1
 radarr_dl_exists=$(echo "$existing_dl" | jq -r '.[] | select(.name == "Transmission") | .id')
 
 if [ -z "$radarr_dl_exists" ]; then
@@ -656,12 +693,22 @@ log_info "=== Configuring Transmission ==="
 if $DRY_RUN; then
     log_info "[DRY RUN] Would set seed ratio=2.0, idle seeding limit=disabled (per-indexer seed times used instead)"
 else
-    SESSION_ID=$(curl -si http://transmission:9091/transmission/rpc 2>/dev/null | grep -i 'X-Transmission-Session-Id:' | head -1 | awk '{print $2}' | tr -cd 'a-zA-Z0-9')
+    # `|| SESSION_ID=""`: this doesn't fit fetch_existing's "GET a JSON
+    # resource" shape (it extracts a raw response header, not a body), but
+    # needs the same guard - a transport failure here would otherwise abort
+    # the script under set -e instead of falling through to the existing
+    # "Could not get Transmission session ID" handling below. Timeouts
+    # added too, matching api_call's bounds for consistency.
+    SESSION_ID=$(curl -si --connect-timeout 5 --max-time 30 http://transmission:9091/transmission/rpc 2>/dev/null | grep -i 'X-Transmission-Session-Id:' | head -1 | awk '{print $2}' | tr -cd 'a-zA-Z0-9') || SESSION_ID=""
     if [ -n "$SESSION_ID" ]; then
-        result=$(curl -s -w '\n%{http_code}' -X POST http://transmission:9091/transmission/rpc \
+        # Same guard as above: without `|| result=""`, a transport failure
+        # here would abort under set -e instead of reaching the existing
+        # HTTP-status check below (which already correctly handles a
+        # non-200 code, including the empty/"000" case this produces).
+        result=$(curl -s --connect-timeout 5 --max-time 30 -w '\n%{http_code}' -X POST http://transmission:9091/transmission/rpc \
             -H "X-Transmission-Session-Id: $SESSION_ID" \
             -H "Content-Type: application/json" \
-            -d '{"method":"session-set","arguments":{"seedRatioLimited":true,"seedRatioLimit":2.0,"idle-seeding-limit-enabled":false}}')
+            -d '{"method":"session-set","arguments":{"seedRatioLimited":true,"seedRatioLimit":2.0,"idle-seeding-limit-enabled":false}}') || result=""
         code=$(echo "$result" | tail -1)
         if [ "$code" = "200" ]; then
             log_ok "Set Transmission seed limits (ratio=2.0, idle seeding limit=disabled)"
@@ -698,7 +745,7 @@ else
     SMTP_TO_JSON=$(echo "$SMTP_TO" | tr ',' '\n' | sed 's/^ *//;s/ *$//' | jq -R . | jq -s .)
 
     # Sonarr email notification
-    existing_notif=$(curl -sf -H "X-Api-Key: $SONARR_KEY" "http://sonarr:8989/api/v3/notification")
+    existing_notif=$(fetch_existing "http://sonarr:8989/api/v3/notification" "$SONARR_KEY" "Sonarr notifications") || exit 1
     sonarr_email_exists=$(echo "$existing_notif" | jq -r '.[] | select(.name == "Email") | .id')
 
     if [ -z "$sonarr_email_exists" ]; then
@@ -742,7 +789,7 @@ else
     fi
 
     # Radarr email notification
-    existing_notif=$(curl -sf -H "X-Api-Key: $RADARR_KEY" "http://radarr:7878/api/v3/notification")
+    existing_notif=$(fetch_existing "http://radarr:7878/api/v3/notification" "$RADARR_KEY" "Radarr notifications") || exit 1
     radarr_email_exists=$(echo "$existing_notif" | jq -r '.[] | select(.name == "Email") | .id')
 
     if [ -z "$radarr_email_exists" ]; then
@@ -789,7 +836,7 @@ else
     if [ -z "${SEERR_API_KEY:-}" ]; then
         log_warn "SEERR_API_KEY not set in .env — skipping Seerr email notification config"
     else
-        seerr_settings=$(curl -sf -H "X-Api-Key: $SEERR_API_KEY" "http://seerr:5055/api/v1/settings/notifications/email" 2>/dev/null)
+        seerr_settings=$(fetch_existing "http://seerr:5055/api/v1/settings/notifications/email" "$SEERR_API_KEY" "Seerr email notification settings") || exit 1
         seerr_email_enabled=$(echo "$seerr_settings" | jq -r '.enabled // false' 2>/dev/null)
 
         if [ "$seerr_email_enabled" = "true" ]; then
