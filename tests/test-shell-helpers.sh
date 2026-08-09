@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-# test-shell-helpers.sh - regression tests for scripts/env-set.sh and
-# scripts/lib/curl-secrets.sh.
+# test-shell-helpers.sh - regression tests for scripts/env-set.sh,
+# scripts/lib/curl-secrets.sh, and select scripts/init-setup.sh helpers.
 #
 # Self-contained: no network access, no external services. curl itself is
 # replaced by tests/support/mock-curl.sh (via a PATH shim), which records
 # what the real curl binary would have received instead of making requests.
+# The init-setup.sh tests below use their own small inline mocks instead,
+# since they need stateful (per-invocation) curl behavior that
+# mock-curl.sh's single MOCK_CURL_EXIT_CODE doesn't support.
 #
 # Run directly: ./tests/test-shell-helpers.sh
 
@@ -227,6 +230,152 @@ test_newline_in_header_rejected() {
     mock_curl_teardown
 }
 
+# --- init-setup.sh tests ---------------------------------------------------
+#
+# init-setup.sh runs its whole setup flow unconditionally when executed (it
+# isn't structured with a sourcing guard), so it can't be `source`d directly
+# in a test without it trying to configure a real stack. Instead these tests
+# extract just the function under test verbatim out of the real file with
+# sed (anchored on its unindented opening/closing braces, which every
+# function in this file uses) and eval it in an isolated subshell - this
+# tests the actual shipped code, not a reimplementation of it, while still
+# avoiding any of the file's top-level side effects.
+
+extract_bash_function() {
+    local func_name="$1" file="$2"
+    sed -n "/^${func_name}() {/,/^}/p" "$file"
+}
+
+test_wait_for_service_survives_transport_failure() {
+    local mockdir counter func_src result
+    mockdir=$(mktemp -d)
+    mkdir -p "$mockdir/bin"
+    counter="$mockdir/count"
+    echo 0 > "$counter"
+
+    # Fails (exit 7, curl's real "couldn't connect" code) for the first two
+    # invocations - one for wait_for_service's main -sf check, one for the
+    # Transmission-specific %{http_code} check that used to be unguarded -
+    # then succeeds on the third, simulating the service coming up during
+    # a retry. If the old bare `code=$(curl ...)` bug were still present,
+    # the second invocation's failure would raise an uncaught command
+    # substitution error under set -e and this subshell would abort
+    # instead of reaching a third attempt.
+    cat > "$mockdir/bin/curl" <<'MOCKEOF'
+#!/usr/bin/env bash
+n=$(cat "$COUNTER_FILE")
+n=$((n + 1))
+echo "$n" > "$COUNTER_FILE"
+if [ "$n" -lt 3 ]; then
+    exit 7
+fi
+exit 0
+MOCKEOF
+    chmod +x "$mockdir/bin/curl"
+
+    func_src=$(extract_bash_function "wait_for_service" "$REPO_ROOT/scripts/init-setup.sh")
+
+    (
+        set -euo pipefail
+        export COUNTER_FILE="$counter"
+        export PATH="$mockdir/bin:$ORIGINAL_PATH"
+        log_info() { :; }
+        log_ok() { :; }
+        log_err() { :; }
+        sleep() { :; }
+        eval "$func_src"
+        wait_for_service "Transmission" "http://example.invalid/transmission/rpc"
+    )
+    result=$?
+
+    if [ "$result" -eq 0 ]; then
+        pass "wait_for_service retries past a transport-level curl failure instead of aborting under set -e"
+    else
+        fail "wait_for_service retries past a transport-level curl failure instead of aborting under set -e (exit=$result)"
+    fi
+    rm -rf "$mockdir"
+}
+
+test_wait_for_service_still_detects_transmission_409() {
+    local mockdir counter func_src result
+    mockdir=$(mktemp -d)
+    mkdir -p "$mockdir/bin"
+    counter="$mockdir/count"
+    echo 0 > "$counter"
+
+    # Invocation 1 = the main -sf check: fails, as -f does for any non-2xx
+    # response (Transmission's real HTTP 409). Invocation 2 = the
+    # Transmission-specific check: succeeds and prints "409", the exact
+    # signal this function treats as "ready" despite the non-2xx status -
+    # pre-existing, unchanged-by-this-fix behavior that must still work.
+    cat > "$mockdir/bin/curl" <<'MOCKEOF'
+#!/usr/bin/env bash
+n=$(cat "$COUNTER_FILE")
+n=$((n + 1))
+echo "$n" > "$COUNTER_FILE"
+if [ "$n" -eq 1 ]; then
+    exit 22
+fi
+echo -n "409"
+exit 0
+MOCKEOF
+    chmod +x "$mockdir/bin/curl"
+
+    func_src=$(extract_bash_function "wait_for_service" "$REPO_ROOT/scripts/init-setup.sh")
+
+    (
+        set -euo pipefail
+        export COUNTER_FILE="$counter"
+        export PATH="$mockdir/bin:$ORIGINAL_PATH"
+        log_info() { :; }
+        log_ok() { :; }
+        log_err() { :; }
+        sleep() { :; }
+        eval "$func_src"
+        wait_for_service "Transmission" "http://example.invalid/transmission/rpc"
+    )
+    result=$?
+
+    if [ "$result" -eq 0 ]; then
+        pass "wait_for_service still treats a Transmission HTTP 409 as ready"
+    else
+        fail "wait_for_service still treats a Transmission HTTP 409 as ready (exit=$result)"
+    fi
+    rm -rf "$mockdir"
+}
+
+test_api_call_has_timeouts_and_preserves_existing_flags() {
+    local func_src
+    func_src=$(extract_bash_function "api_call" "$REPO_ROOT/scripts/init-setup.sh")
+
+    mock_curl_setup
+    (
+        eval "$func_src"
+        api_call POST "http://example.invalid/api/v3/indexer" "test-api-key" '{"name":"test"}' >/dev/null
+    )
+
+    # --connect-timeout/--max-time and the method/URL are not secrets, so
+    # curl-secrets.sh's wrapper (sourced by init-setup.sh) passes them
+    # through to argv untouched - but the API key header and JSON body ARE
+    # secrets it deliberately diverts into anonymous-fd captures instead
+    # (see the curl-secrets.sh tests above), so those two are checked in
+    # $MOCK_CAPTURE_DIR, not $MOCK_ARGV, matching how curl actually receives
+    # them.
+    if grep -qxF -- '--connect-timeout' "$MOCK_ARGV" && grep -qxF -- '--max-time' "$MOCK_ARGV"; then
+        pass "api_call includes --connect-timeout and --max-time"
+    else
+        fail "api_call includes --connect-timeout and --max-time"
+    fi
+
+    if grep -qxF -- 'POST' "$MOCK_ARGV" && grep -qxF -- 'http://example.invalid/api/v3/indexer' "$MOCK_ARGV" \
+        && grep -rq "X-Api-Key: test-api-key" "$MOCK_CAPTURE_DIR" && grep -rq '{"name":"test"}' "$MOCK_CAPTURE_DIR"; then
+        pass "api_call preserves its existing method/url/header/data flags unchanged"
+    else
+        fail "api_call preserves its existing method/url/header/data flags unchanged"
+    fi
+    mock_curl_teardown
+}
+
 # --- run everything -------------------------------------------------------
 
 test_env_set_preserves_inode
@@ -241,6 +390,9 @@ test_data_raw_at_prefix_is_still_literal
 test_values_still_reach_curl_via_fd
 test_no_secrets_no_op_passthrough
 test_newline_in_header_rejected
+test_wait_for_service_survives_transport_failure
+test_wait_for_service_still_detects_transmission_409
+test_api_call_has_timeouts_and_preserves_existing_flags
 
 echo
 echo "$PASS_COUNT passed, $FAIL_COUNT failed"

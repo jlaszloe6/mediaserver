@@ -101,7 +101,18 @@ wait_for_service() {
         # Transmission returns 409 with session ID — that's fine
         if [ "$name" = "Transmission" ]; then
             local code
-            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 "$url" 2>/dev/null)
+            # `|| code="000"`: a transport-level curl failure (connection
+            # refused - the normal state right after `docker compose up -d`,
+            # before Transmission starts listening, which is exactly what
+            # this retry loop exists to tolerate) must not raise a bare
+            # command-substitution failure here, or it aborts this whole
+            # script under set -e instead of letting the loop below retry
+            # like it's designed to. No -f here deliberately - Transmission
+            # returning HTTP 409 (no session yet) on a fresh request is a
+            # *successful*, meaningful response this check needs to see,
+            # not a curl-level failure, so transport failure and an HTTP
+            # status must stay distinguishable.
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 "$url" 2>/dev/null) || code="000"
             if [ "$code" = "409" ]; then
                 log_ok "$name is ready"
                 return 0
@@ -116,7 +127,15 @@ wait_for_service() {
 
 api_call() {
     local method="$1" url="$2" api_key="$3" data="${4:-}"
-    local args=(-s -w '\n%{http_code}' -X "$method" -H "X-Api-Key: $api_key" -H "Content-Type: application/json")
+    # --connect-timeout/--max-time bound this helper, used by ~15 POST/PUT
+    # call sites throughout this script - without them, a stalled
+    # connection would hang the whole (manual, foreground) setup run
+    # indefinitely. Deliberately no retry here: POST/PUT against these
+    # APIs (creating indexers, notifications, etc.) aren't guaranteed
+    # idempotent, so blindly retrying a timeout could create a duplicate
+    # instead of correctly reporting a failure for the human running this
+    # to see and act on.
+    local args=(-s --connect-timeout 5 --max-time 30 -w '\n%{http_code}' -X "$method" -H "X-Api-Key: $api_key" -H "Content-Type: application/json")
     [ -n "$data" ] && args+=(-d "$data")
     curl "${args[@]}" "$url"
 }
