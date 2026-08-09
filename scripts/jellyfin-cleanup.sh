@@ -118,13 +118,11 @@ process_movies() {
     local movies
     movies=$(curl -sf --max-time 15 -H "X-Api-Key: $api_key" "$base_url/api/v3/movie") || {
         log "  ERROR: Failed to fetch movies from Radarr"
+        errors=$((errors + 1))
         echo "$errors" >> "$errors_file"
         echo "{}"
         return
     }
-
-    local current_state
-    current_state=$(echo "$movies" | jq '[.[] | {key: (.id | tostring), value: .hasFile}] | from_entries')
 
     local deleted
     deleted=$(echo "$movies" | jq -c --argjson prev "$prev_state" '
@@ -134,6 +132,15 @@ process_movies() {
             ($prev[(.id | tostring)] // null) == true
         ) | {id, title}
     ')
+
+    # IDs whose deletion attempt failed - their hasFile in the state we save
+    # below must NOT be updated to the real (false) value. If it were, the
+    # true->false transition detected this run would already look "seen"
+    # next run (prev[id] would already be false), so a transient delete
+    # failure would silently cancel the retry forever even though the
+    # movie is still sitting in Radarr, monitored, and not excluded from
+    # re-import.
+    local failed_ids="[]"
 
     if [ -n "$deleted" ]; then
         local count=0
@@ -165,6 +172,7 @@ process_movies() {
             else
                 log "  ERROR: Failed to remove movie '$title' (HTTP $del_code)"
                 errors=$((errors + 1))
+                failed_ids=$(echo "$failed_ids" | jq -c --argjson id "$id" '. + [$id]')
             fi
         done <<< "$deleted"
         log "  Cleaned up $count movie(s) deleted from library"
@@ -173,7 +181,9 @@ process_movies() {
     fi
 
     echo "$errors" >> "$errors_file"
-    echo "$movies" | jq '[.[] | {key: (.id | tostring), value: .hasFile}] | from_entries'
+    echo "$movies" | jq --argjson prev "$prev_state" --argjson failed "$failed_ids" '
+        [.[] | {key: (.id | tostring), value: (if (.id | IN($failed[])) then ($prev[(.id | tostring)] // .hasFile) else .hasFile end)}] | from_entries
+    '
 }
 
 # Process series: detect deleted files and cleanup
@@ -189,13 +199,11 @@ process_series() {
     local series
     series=$(curl -sf --max-time 15 -H "X-Api-Key: $api_key" "$base_url/api/v3/series") || {
         log "  ERROR: Failed to fetch series from Sonarr"
+        errors=$((errors + 1))
         echo "$errors" >> "$errors_file"
         echo "{}"
         return
     }
-
-    local current_state
-    current_state=$(echo "$series" | jq '[.[] | {key: (.id | tostring), value: (.statistics.sizeOnDisk // 0)}] | from_entries')
 
     local deleted
     deleted=$(echo "$series" | jq -c --argjson prev "$prev_state" '
@@ -205,6 +213,10 @@ process_series() {
             ($prev[(.id | tostring)] // 0) > 0
         ) | {id, title}
     ')
+
+    # See process_movies' matching comment above re: failed_ids and why
+    # a failed deletion must not advance the saved state for that item.
+    local failed_ids="[]"
 
     if [ -n "$deleted" ]; then
         local count=0
@@ -231,6 +243,7 @@ process_series() {
             else
                 log "  ERROR: Failed to remove series '$title' (HTTP $del_code)"
                 errors=$((errors + 1))
+                failed_ids=$(echo "$failed_ids" | jq -c --argjson id "$id" '. + [$id]')
             fi
         done <<< "$deleted"
         log "  Cleaned up $count series deleted from library"
@@ -239,7 +252,9 @@ process_series() {
     fi
 
     echo "$errors" >> "$errors_file"
-    echo "$current_state"
+    echo "$series" | jq --argjson prev "$prev_state" --argjson failed "$failed_ids" '
+        [.[] | {key: (.id | tostring), value: (if (.id | IN($failed[])) then ($prev[(.id | tostring)] // (.statistics.sizeOnDisk // 0)) else (.statistics.sizeOnDisk // 0) end)}] | from_entries
+    '
 }
 
 # --- Process ---
