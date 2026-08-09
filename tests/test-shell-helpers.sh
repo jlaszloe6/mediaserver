@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # test-shell-helpers.sh - regression tests for scripts/env-set.sh,
-# scripts/lib/curl-secrets.sh, and select scripts/init-setup.sh helpers.
+# scripts/lib/curl-secrets.sh, select scripts/init-setup.sh helpers, and
+# caddy/download-geodb.sh + caddy/entrypoint.sh.
 #
 # Self-contained: no network access, no external services. curl itself is
 # replaced by tests/support/mock-curl.sh (via a PATH shim), which records
@@ -505,6 +506,470 @@ test_init_setup_no_unguarded_curl_sf() {
     fi
 }
 
+# --- caddy/download-geodb.sh and caddy/entrypoint.sh tests -----------------
+#
+# Both are standalone POSIX /bin/sh scripts (not bash functions), so they
+# run as real subprocesses via `sh` rather than being extracted/eval'd like
+# the init-setup.sh helpers above - this also genuinely exercises them
+# under their actual intended interpreter, not bash's superset of it.
+
+# Includes the real MaxMind marker string so this fixture satisfies
+# download-geodb.sh's own post-extraction marker validation, not just its
+# non-empty check - a fixture without it would make the success test fail
+# against the *current, correct* script, not just against a regression.
+make_geodb_fixture_tarball() {
+    local out="$1"
+    local workdir
+    workdir=$(mktemp -d)
+    mkdir -p "$workdir/GeoLite2-Country_fixture"
+    printf 'fake-mmdb-content MaxMind.com fixture' > "$workdir/GeoLite2-Country_fixture/GeoLite2-Country.mmdb"
+    (cd "$workdir" && tar -czf "$out" GeoLite2-Country_fixture)
+    rm -rf "$workdir"
+}
+
+# Deliberately lacks the MaxMind marker - simulates a corrupt/truncated
+# extraction that is non-empty but not a real database.
+make_geodb_fixture_tarball_no_marker() {
+    local out="$1"
+    local workdir
+    workdir=$(mktemp -d)
+    mkdir -p "$workdir/GeoLite2-Country_fixture"
+    printf 'not-a-real-database' > "$workdir/GeoLite2-Country_fixture/GeoLite2-Country.mmdb"
+    (cd "$workdir" && tar -czf "$out" GeoLite2-Country_fixture)
+    rm -rf "$workdir"
+}
+
+write_mock_curl_for_geodb() {
+    local mockdir="$1"
+    mkdir -p "$mockdir/bin"
+    # Parses just enough of curl's argv (the -o output path) to behave
+    # like real curl would for download-geodb.sh's fixed invocation shape,
+    # branching on $MOCK_MODE. Mirrors real curl's actual --fail behavior
+    # (verified directly beforehand): on an HTTP error the -o file is never
+    # written and %{http_code} still reports the real code; on a transport
+    # failure neither the file nor a real code ever materializes ("000").
+    cat > "$mockdir/bin/curl" <<'MOCKEOF'
+#!/bin/sh
+outfile=""
+prev=""
+has_fail=0
+has_w=0
+for arg in "$@"; do
+    if [ "$prev" = "-o" ]; then
+        outfile="$arg"
+    fi
+    case "$arg" in
+        --fail) has_fail=1 ;;
+        -w) has_w=1 ;;
+    esac
+    prev="$arg"
+done
+
+# Real curl's --fail is what makes an HTTP error a non-zero exit at all,
+# and -w '%{http_code}' is what lets the caller tell that apart from a
+# transport failure - if the real invocation ever drops either flag, this
+# mock should stop pretending to reproduce curl's --fail behavior for it
+# rather than silently keep passing the http_error/transport_error tests.
+if [ "$MOCK_MODE" = "http_error" ] || [ "$MOCK_MODE" = "transport_error" ]; then
+    if [ "$has_fail" -ne 1 ] || [ "$has_w" -ne 1 ]; then
+        echo "mock curl: expected --fail and -w in argv, got: $*" >&2
+        exit 98
+    fi
+fi
+
+case "$MOCK_MODE" in
+    success)
+        cp "$MOCK_FIXTURE_TARBALL" "$outfile"
+        printf '200'
+        exit 0
+        ;;
+    invalid_archive)
+        printf 'this is not a valid gzip archive' > "$outfile"
+        printf '200'
+        exit 0
+        ;;
+    http_error)
+        printf '404'
+        exit 22
+        ;;
+    transport_error)
+        printf '000'
+        exit 6
+        ;;
+    *)
+        echo "mock curl: unknown MOCK_MODE '$MOCK_MODE'" >&2
+        exit 99
+        ;;
+esac
+MOCKEOF
+    chmod +x "$mockdir/bin/curl"
+}
+
+# Runs a patched copy of the real download-geodb.sh (only $DB_DIR
+# redirected to a scratch directory - everything else is the shipped
+# script, unmodified) under the given mock curl mode. Sets
+# DOWNLOAD_GEODB_EXIT, DOWNLOAD_GEODB_DB_DIR, and DOWNLOAD_GEODB_OUTPUT
+# (combined stdout+stderr) for the caller to inspect; called directly
+# (never inside its own subshell) so those globals aren't lost the way
+# subshell-local variables would be.
+#
+# Capturing OUTPUT matters, not just the exit code: the *old* script also
+# aborts cleanly (via bare set -e, no -f/-w) on a failing curl or a bad
+# tar - it just does so with no diagnostic at all (old curl has -s with no
+# --show-error) or a confusing raw tar error, not a real gap in "does it
+# stop." The actual improvement here is a clear, distinguishing message,
+# which only an output-content check can verify.
+run_download_geodb() {
+    local mock_mode="$1" mockdir="$2"
+    DOWNLOAD_GEODB_DB_DIR=$(mktemp -d)
+
+    local script_copy="$mockdir/download-geodb.sh"
+    cp "$REPO_ROOT/caddy/download-geodb.sh" "$script_copy"
+    sed -i "s#^DB_DIR=\"/data/geolite2\"#DB_DIR=\"$DOWNLOAD_GEODB_DB_DIR\"#" "$script_copy"
+    chmod +x "$script_copy"
+
+    DOWNLOAD_GEODB_OUTPUT=$(
+        export PATH="$mockdir/bin:$ORIGINAL_PATH"
+        export MOCK_MODE="$mock_mode"
+        export MAXMIND_LICENSE_KEY="test-license-key"
+        sh "$script_copy" 2>&1
+    )
+    DOWNLOAD_GEODB_EXIT=$?
+}
+
+# Static tripwire: locks in the `strings | grep -F` marker-check shape in
+# both caddy scripts. A bare `grep -a 'MaxMind.com' "$file"` looks
+# equivalent and would pass every other test here (this dev machine's GNU
+# grep finds the marker fine either way), but was verified live to
+# silently fail against the real production .mmdb under busybox/Alpine's
+# grep - the discrepancy isn't reproducible with a synthetic fixture under
+# GNU tooling, so this static check is the only thing standing between a
+# "looks like a harmless simplification" edit and that regression.
+# `-F` (not bare `grep -q`) also guards the marker match being a literal
+# string, not a regex where the `.` in "MaxMind.com" would match any char.
+test_caddy_marker_check_uses_strings_not_bare_grep() {
+    local f bad=""
+    for f in "$REPO_ROOT/caddy/entrypoint.sh" "$REPO_ROOT/caddy/download-geodb.sh"; do
+        if ! grep -q "strings .*| *grep -Fq 'MaxMind.com'" "$f"; then
+            bad="$bad $f"
+        fi
+        if grep -Eq "grep -a[a-zA-Z]* 'MaxMind" "$f"; then
+            bad="$bad $f(bare-grep-a)"
+        fi
+    done
+    if [ -z "$bad" ]; then
+        pass "caddy entrypoint.sh/download-geodb.sh validate the MaxMind marker via strings | grep -F, not a bare grep -a"
+    else
+        fail "caddy entrypoint.sh/download-geodb.sh validate the MaxMind marker via strings | grep -F - found issue(s) in:$bad"
+    fi
+}
+
+test_download_geodb_success_installs_db_atomically() {
+    local mockdir fixture leftover_tmp db_file
+    mockdir=$(mktemp -d)
+    write_mock_curl_for_geodb "$mockdir"
+    fixture="$mockdir/fixture.tar.gz"
+    make_geodb_fixture_tarball "$fixture"
+
+    export MOCK_FIXTURE_TARBALL="$fixture"
+    run_download_geodb success "$mockdir"
+    unset MOCK_FIXTURE_TARBALL
+
+    db_file="$DOWNLOAD_GEODB_DB_DIR/GeoLite2-Country.mmdb"
+    leftover_tmp=$(find "$DOWNLOAD_GEODB_DB_DIR" -maxdepth 1 -name '.download-*' 2>/dev/null)
+
+    if [ "$DOWNLOAD_GEODB_EXIT" -eq 0 ] && [ -f "$db_file" ] \
+        && [ "$(cat "$db_file")" = "fake-mmdb-content MaxMind.com fixture" ] && [ -z "$leftover_tmp" ]; then
+        pass "download-geodb.sh installs the database atomically on success, with no leftover temp dir"
+    else
+        fail "download-geodb.sh installs the database atomically on success (exit=$DOWNLOAD_GEODB_EXIT, leftover='$leftover_tmp')"
+    fi
+    rm -rf "$mockdir" "$DOWNLOAD_GEODB_DB_DIR"
+}
+
+test_download_geodb_http_error_leaves_no_db_file() {
+    local mockdir db_file leftover_tmp
+    mockdir=$(mktemp -d)
+    write_mock_curl_for_geodb "$mockdir"
+
+    run_download_geodb http_error "$mockdir"
+
+    db_file="$DOWNLOAD_GEODB_DB_DIR/GeoLite2-Country.mmdb"
+    leftover_tmp=$(find "$DOWNLOAD_GEODB_DB_DIR" -maxdepth 1 -name '.download-*' 2>/dev/null)
+
+    # Checking the message content (not just exit code/file absence)
+    # matters: the *old* script also died via bare set -e on any curl
+    # failure, exit code and file absence alone don't distinguish that
+    # from the fix - only the diagnostic being clear and specifically
+    # naming "HTTP 404" (not a raw/confusing tar error, not silence) does.
+    if [ "$DOWNLOAD_GEODB_EXIT" -ne 0 ] && [ ! -e "$db_file" ] && [ -z "$leftover_tmp" ] \
+        && echo "$DOWNLOAD_GEODB_OUTPUT" | grep -q "HTTP 404"; then
+        pass "download-geodb.sh fails cleanly on an HTTP error with a clear, specific diagnostic"
+    else
+        fail "download-geodb.sh fails cleanly on an HTTP error with a clear diagnostic (exit=$DOWNLOAD_GEODB_EXIT, leftover='$leftover_tmp', output='$DOWNLOAD_GEODB_OUTPUT')"
+    fi
+    rm -rf "$mockdir" "$DOWNLOAD_GEODB_DB_DIR"
+}
+
+test_download_geodb_transport_error_leaves_no_db_file() {
+    local mockdir db_file leftover_tmp
+    mockdir=$(mktemp -d)
+    write_mock_curl_for_geodb "$mockdir"
+
+    run_download_geodb transport_error "$mockdir"
+
+    db_file="$DOWNLOAD_GEODB_DB_DIR/GeoLite2-Country.mmdb"
+    leftover_tmp=$(find "$DOWNLOAD_GEODB_DB_DIR" -maxdepth 1 -name '.download-*' 2>/dev/null)
+
+    # Same reasoning as the HTTP-error test above: must say "connection/
+    # transport error or timeout" distinctly, not "000" as if that were a
+    # real HTTP response, and not the old script's silence (-s with no
+    # --show-error produced no diagnostic here at all).
+    if [ "$DOWNLOAD_GEODB_EXIT" -ne 0 ] && [ ! -e "$db_file" ] && [ -z "$leftover_tmp" ] \
+        && echo "$DOWNLOAD_GEODB_OUTPUT" | grep -qi "connection/transport error or timeout"; then
+        pass "download-geodb.sh fails cleanly on a transport/timeout error with a clear, distinct diagnostic"
+    else
+        fail "download-geodb.sh fails cleanly on a transport/timeout error with a clear diagnostic (exit=$DOWNLOAD_GEODB_EXIT, leftover='$leftover_tmp', output='$DOWNLOAD_GEODB_OUTPUT')"
+    fi
+    rm -rf "$mockdir" "$DOWNLOAD_GEODB_DB_DIR"
+}
+
+test_download_geodb_invalid_archive_leaves_no_db_file() {
+    local mockdir db_file leftover_tmp
+    mockdir=$(mktemp -d)
+    write_mock_curl_for_geodb "$mockdir"
+
+    run_download_geodb invalid_archive "$mockdir"
+
+    db_file="$DOWNLOAD_GEODB_DB_DIR/GeoLite2-Country.mmdb"
+    leftover_tmp=$(find "$DOWNLOAD_GEODB_DB_DIR" -maxdepth 1 -name '.download-*' 2>/dev/null)
+
+    # The old script would fail here too (tar aborts, set -e kills it),
+    # but only via tar's own raw, unlabeled error text - this checks for
+    # the new script's explicit "ERROR: ... not a valid gzip/tar file"
+    # message specifically.
+    if [ "$DOWNLOAD_GEODB_EXIT" -ne 0 ] && [ ! -e "$db_file" ] && [ -z "$leftover_tmp" ] \
+        && echo "$DOWNLOAD_GEODB_OUTPUT" | grep -q "not a valid gzip/tar file"; then
+        pass "download-geodb.sh fails cleanly on a non-gzip/invalid response body with a clear diagnostic"
+    else
+        fail "download-geodb.sh fails cleanly on a non-gzip/invalid response body with a clear diagnostic (exit=$DOWNLOAD_GEODB_EXIT, leftover='$leftover_tmp', output='$DOWNLOAD_GEODB_OUTPUT')"
+    fi
+    rm -rf "$mockdir" "$DOWNLOAD_GEODB_DB_DIR"
+}
+
+test_download_geodb_extracted_without_marker_leaves_no_db_file() {
+    local mockdir fixture leftover_tmp db_file
+    mockdir=$(mktemp -d)
+    write_mock_curl_for_geodb "$mockdir"
+    fixture="$mockdir/fixture.tar.gz"
+    make_geodb_fixture_tarball_no_marker "$fixture"
+
+    export MOCK_FIXTURE_TARBALL="$fixture"
+    run_download_geodb success "$mockdir"
+    unset MOCK_FIXTURE_TARBALL
+
+    db_file="$DOWNLOAD_GEODB_DB_DIR/GeoLite2-Country.mmdb"
+    leftover_tmp=$(find "$DOWNLOAD_GEODB_DB_DIR" -maxdepth 1 -name '.download-*' 2>/dev/null)
+
+    # A non-empty but non-marker extraction (e.g. a substituted or
+    # truncated file) must not get moved into place just because it's
+    # "present" - the marker check exists precisely to catch this even
+    # though the earlier -s/-z checks already passed.
+    if [ "$DOWNLOAD_GEODB_EXIT" -ne 0 ] && [ ! -e "$db_file" ] && [ -z "$leftover_tmp" ] \
+        && echo "$DOWNLOAD_GEODB_OUTPUT" | grep -q "MaxMind database marker"; then
+        pass "download-geodb.sh rejects a non-empty extraction that lacks the MaxMind marker"
+    else
+        fail "download-geodb.sh rejects a non-empty extraction that lacks the MaxMind marker (exit=$DOWNLOAD_GEODB_EXIT, leftover='$leftover_tmp', output='$DOWNLOAD_GEODB_OUTPUT')"
+    fi
+    rm -rf "$mockdir" "$DOWNLOAD_GEODB_DB_DIR"
+}
+
+test_caddy_entrypoint_does_not_start_caddy_when_geodb_fails() {
+    local mockdir entrypoint_copy caddy_marker result
+    mockdir=$(mktemp -d)
+    mkdir -p "$mockdir/bin"
+    caddy_marker="$mockdir/caddy-was-started"
+
+    cat > "$mockdir/bin/caddy" <<MOCKEOF
+#!/bin/sh
+touch "$caddy_marker"
+exit 0
+MOCKEOF
+    chmod +x "$mockdir/bin/caddy"
+
+    # Simulates a completely unavailable GeoIP database - the exact
+    # scenario that must not let Caddy start (fail-closed).
+    cat > "$mockdir/bin/download-geodb.sh" <<'MOCKEOF'
+#!/bin/sh
+echo "mock: simulating a failed GeoDB download" >&2
+exit 1
+MOCKEOF
+    chmod +x "$mockdir/bin/download-geodb.sh"
+
+    entrypoint_copy="$mockdir/entrypoint.sh"
+    cp "$REPO_ROOT/caddy/entrypoint.sh" "$entrypoint_copy"
+    sed -i "s#/usr/local/bin/download-geodb.sh#$mockdir/bin/download-geodb.sh#" "$entrypoint_copy"
+    sed -i "s#DB_FILE=\"/data/geolite2/GeoLite2-Country.mmdb\"#DB_FILE=\"$mockdir/nonexistent.mmdb\"#" "$entrypoint_copy"
+    chmod +x "$entrypoint_copy"
+
+    (
+        export PATH="$mockdir/bin:$ORIGINAL_PATH"
+        sh "$entrypoint_copy"
+    )
+    result=$?
+
+    if [ "$result" -ne 0 ] && [ ! -e "$caddy_marker" ]; then
+        pass "entrypoint.sh does not start Caddy when GeoDB acquisition fails (fail-closed preserved)"
+    else
+        fail "entrypoint.sh does not start Caddy when GeoDB acquisition fails (exit=$result, caddy_started=$([ -e "$caddy_marker" ] && echo yes || echo no))"
+    fi
+    rm -rf "$mockdir"
+}
+
+test_caddy_entrypoint_starts_caddy_when_geodb_succeeds() {
+    local mockdir entrypoint_copy caddy_marker result db_file
+    mockdir=$(mktemp -d)
+    mkdir -p "$mockdir/bin"
+    caddy_marker="$mockdir/caddy-was-started"
+    db_file="$mockdir/GeoLite2-Country.mmdb"
+
+    cat > "$mockdir/bin/caddy" <<MOCKEOF
+#!/bin/sh
+touch "$caddy_marker"
+exit 0
+MOCKEOF
+    chmod +x "$mockdir/bin/caddy"
+
+    # Realistic success: actually creates the database file, matching what
+    # the real download-geodb.sh guarantees whenever it exits 0. A mock
+    # that only exits 0 without creating the file (the previous version of
+    # this test) would also pass entrypoint.sh's fail-open gap - see the
+    # dedicated test for that below.
+    cat > "$mockdir/bin/download-geodb.sh" <<MOCKEOF
+#!/bin/sh
+echo "mock: simulating a successful GeoDB download"
+echo "fake-mmdb-content MaxMind.com fixture" > "$db_file"
+exit 0
+MOCKEOF
+    chmod +x "$mockdir/bin/download-geodb.sh"
+
+    entrypoint_copy="$mockdir/entrypoint.sh"
+    cp "$REPO_ROOT/caddy/entrypoint.sh" "$entrypoint_copy"
+    sed -i "s#/usr/local/bin/download-geodb.sh#$mockdir/bin/download-geodb.sh#" "$entrypoint_copy"
+    sed -i "s#DB_FILE=\"/data/geolite2/GeoLite2-Country.mmdb\"#DB_FILE=\"$db_file\"#" "$entrypoint_copy"
+    chmod +x "$entrypoint_copy"
+
+    (
+        export PATH="$mockdir/bin:$ORIGINAL_PATH"
+        sh "$entrypoint_copy"
+    )
+    result=$?
+
+    if [ "$result" -eq 0 ] && [ -e "$caddy_marker" ]; then
+        pass "entrypoint.sh starts Caddy once GeoDB acquisition succeeds and the database actually exists"
+    else
+        fail "entrypoint.sh starts Caddy once GeoDB acquisition succeeds (exit=$result, caddy_started=$([ -e "$caddy_marker" ] && echo yes || echo no))"
+    fi
+    rm -rf "$mockdir"
+}
+
+test_caddy_entrypoint_refuses_caddy_if_geodb_reports_success_but_file_missing() {
+    local mockdir entrypoint_copy caddy_marker result db_file
+    mockdir=$(mktemp -d)
+    mkdir -p "$mockdir/bin"
+    caddy_marker="$mockdir/caddy-was-started"
+    db_file="$mockdir/GeoLite2-Country.mmdb"
+
+    cat > "$mockdir/bin/caddy" <<MOCKEOF
+#!/bin/sh
+touch "$caddy_marker"
+exit 0
+MOCKEOF
+    chmod +x "$mockdir/bin/caddy"
+
+    # A "lying" downloader: reports success (exit 0) without actually
+    # creating the database. This is exactly the fail-open gap
+    # entrypoint.sh's own post-download existence re-check exists to
+    # catch, independent of whether download-geodb.sh itself is correct
+    # today, buggy tomorrow, or ever replaced - the guarantee shouldn't
+    # rest solely on trusting its exit code.
+    cat > "$mockdir/bin/download-geodb.sh" <<'MOCKEOF'
+#!/bin/sh
+echo "mock: reporting success without actually creating the database"
+exit 0
+MOCKEOF
+    chmod +x "$mockdir/bin/download-geodb.sh"
+
+    entrypoint_copy="$mockdir/entrypoint.sh"
+    cp "$REPO_ROOT/caddy/entrypoint.sh" "$entrypoint_copy"
+    sed -i "s#/usr/local/bin/download-geodb.sh#$mockdir/bin/download-geodb.sh#" "$entrypoint_copy"
+    sed -i "s#DB_FILE=\"/data/geolite2/GeoLite2-Country.mmdb\"#DB_FILE=\"$db_file\"#" "$entrypoint_copy"
+    chmod +x "$entrypoint_copy"
+
+    (
+        export PATH="$mockdir/bin:$ORIGINAL_PATH"
+        sh "$entrypoint_copy"
+    )
+    result=$?
+
+    if [ "$result" -ne 0 ] && [ ! -e "$caddy_marker" ]; then
+        pass "entrypoint.sh refuses to start Caddy if the database is still missing even after a downloader reporting success"
+    else
+        fail "entrypoint.sh refuses to start Caddy if the database is still missing after a 'successful' download (exit=$result, caddy_started=$([ -e "$caddy_marker" ] && echo yes || echo no))"
+    fi
+    rm -rf "$mockdir"
+}
+
+test_caddy_entrypoint_redownloads_when_existing_db_file_is_invalid() {
+    local mockdir entrypoint_copy caddy_marker download_marker result db_file
+    mockdir=$(mktemp -d)
+    mkdir -p "$mockdir/bin"
+    caddy_marker="$mockdir/caddy-was-started"
+    download_marker="$mockdir/download-was-invoked"
+    db_file="$mockdir/GeoLite2-Country.mmdb"
+
+    # A leftover file that *exists* and is non-empty but isn't a real
+    # database - e.g. from before this marker validation existed, or a
+    # previously truncated download. This is exactly the P1 gap: a bare
+    # `-f`/`-s` check would treat this as already-present and skip
+    # re-downloading, leaving Caddy running without real GeoIP protection.
+    printf 'leftover-corrupt-not-a-real-db' > "$db_file"
+
+    cat > "$mockdir/bin/caddy" <<MOCKEOF
+#!/bin/sh
+touch "$caddy_marker"
+exit 0
+MOCKEOF
+    chmod +x "$mockdir/bin/caddy"
+
+    cat > "$mockdir/bin/download-geodb.sh" <<MOCKEOF
+#!/bin/sh
+touch "$download_marker"
+echo "fake-mmdb-content MaxMind.com fixture" > "$db_file"
+exit 0
+MOCKEOF
+    chmod +x "$mockdir/bin/download-geodb.sh"
+
+    entrypoint_copy="$mockdir/entrypoint.sh"
+    cp "$REPO_ROOT/caddy/entrypoint.sh" "$entrypoint_copy"
+    sed -i "s#/usr/local/bin/download-geodb.sh#$mockdir/bin/download-geodb.sh#" "$entrypoint_copy"
+    sed -i "s#DB_FILE=\"/data/geolite2/GeoLite2-Country.mmdb\"#DB_FILE=\"$db_file\"#" "$entrypoint_copy"
+    chmod +x "$entrypoint_copy"
+
+    (
+        export PATH="$mockdir/bin:$ORIGINAL_PATH"
+        sh "$entrypoint_copy"
+    )
+    result=$?
+
+    if [ "$result" -eq 0 ] && [ -e "$download_marker" ] && [ -e "$caddy_marker" ]; then
+        pass "entrypoint.sh re-downloads and starts Caddy when an existing DB_FILE is present but invalid"
+    else
+        fail "entrypoint.sh re-downloads when an existing DB_FILE is invalid (exit=$result, download_invoked=$([ -e "$download_marker" ] && echo yes || echo no), caddy_started=$([ -e "$caddy_marker" ] && echo yes || echo no))"
+    fi
+    rm -rf "$mockdir"
+}
+
 # --- run everything -------------------------------------------------------
 
 test_env_set_preserves_inode
@@ -526,6 +991,16 @@ test_fetch_existing_returns_body_on_success
 test_fetch_existing_reports_http_error_distinctly
 test_fetch_existing_distinguishes_transport_failure
 test_init_setup_no_unguarded_curl_sf
+test_caddy_marker_check_uses_strings_not_bare_grep
+test_download_geodb_success_installs_db_atomically
+test_download_geodb_http_error_leaves_no_db_file
+test_download_geodb_transport_error_leaves_no_db_file
+test_download_geodb_invalid_archive_leaves_no_db_file
+test_download_geodb_extracted_without_marker_leaves_no_db_file
+test_caddy_entrypoint_does_not_start_caddy_when_geodb_fails
+test_caddy_entrypoint_redownloads_when_existing_db_file_is_invalid
+test_caddy_entrypoint_starts_caddy_when_geodb_succeeds
+test_caddy_entrypoint_refuses_caddy_if_geodb_reports_success_but_file_missing
 
 echo
 echo "$PASS_COUNT passed, $FAIL_COUNT failed"
