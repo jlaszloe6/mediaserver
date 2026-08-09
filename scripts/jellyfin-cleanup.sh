@@ -120,7 +120,13 @@ process_movies() {
         log "  ERROR: Failed to fetch movies from Radarr"
         errors=$((errors + 1))
         echo "$errors" >> "$errors_file"
-        echo "{}"
+        # Return the PREVIOUS state unchanged, not {} - the caller saves
+        # whatever this function outputs as the new baseline. Saving {}
+        # here would wipe out every movie's true baseline on one transient
+        # fetch failure, and the next run's true->false transition check
+        # (which needs prev[id] == true) could then never fire for
+        # whatever was already deleted from Jellyfin before this failure.
+        echo "$prev_state"
         return
     }
 
@@ -201,7 +207,10 @@ process_series() {
         log "  ERROR: Failed to fetch series from Sonarr"
         errors=$((errors + 1))
         echo "$errors" >> "$errors_file"
-        echo "{}"
+        # See process_movies' matching comment above - return the previous
+        # state, not {}, so a transient fetch failure can't wipe the
+        # baseline needed to detect an already-deleted series next run.
+        echo "$prev_state"
         return
     }
 

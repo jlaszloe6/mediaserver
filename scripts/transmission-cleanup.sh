@@ -249,9 +249,21 @@ while IFS= read -r torrent; do
         DLDIR=$(echo "$torrent" | jq -r '.downloadDir // empty' 2>/dev/null || true)
         if [ -n "$DLDIR" ]; then
             HOST_DIR="${DLDIR/#\/downloads//mnt/mediaserver/torrents}"
+            # `|| MAIN_FILE=""`: this per-torrent RPC call is now bounded by
+            # transmission_rpc's --max-time, so a stalled/failed lookup for
+            # ONE old torrent actually returns a failure rather than
+            # hanging - without this guard, that failure would abort the
+            # whole script under set -e/pipefail, stopping processing of
+            # every other torrent in the loop over a single item's lookup.
+            # An empty MAIN_FILE just means "can't confirm via hardlink
+            # check", which correctly leaves ORPHANED unset for this
+            # torrent rather than wrongly asserting either outcome.
             MAIN_FILE=$(transmission_rpc "$SID" \
                 "{\"method\":\"torrent-get\",\"arguments\":{\"ids\":[$ID],\"fields\":[\"files\"]}}" \
-                | jq -r '[.arguments.torrents[0].files[] | {name, length}] | sort_by(-.length) | .[0].name // empty')
+                | jq -r '[.arguments.torrents[0].files[] | {name, length}] | sort_by(-.length) | .[0].name // empty') || {
+                log "  WARN: Could not query files for '$NAME' (RPC failed) - skipping hardlink check"
+                MAIN_FILE=""
+            }
             # File names come from the torrent's own metadata (attacker-
             # influenced) - reject anything containing ".." before joining
             # it into a filesystem path, even though this only feeds a

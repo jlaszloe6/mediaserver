@@ -149,13 +149,20 @@ for user_id in $user_ids; do
         # itself, only on individual episodes, so derive it from the most
         # recently watched episode instead.
         #
-        # `|| continue`: matches the guard already on the played_movies/
-        # played_series fetches above - without it, a single Jellyfin
-        # request failure here would abort the whole script under set -e
-        # instead of just skipping this one series and moving to the next.
+        # Guards against aborting the whole script under set -e on one
+        # Jellyfin request failure (matches the guard already on the
+        # played_movies/played_series fetches above), but unlike those,
+        # this one is now logged and counted - a real request failure
+        # here means a genuine watched-series candidate never even got
+        # evaluated, not just "no episodes played," so it shouldn't look
+        # like a clean run in the final ERRORS-driven exit code.
         last_played=$(curl -sf --max-time 15 $HEADERS \
             "$JELLYFIN_URL/Users/$user_id/Items?ParentId=$series_id&Recursive=true&IncludeItemTypes=Episode&IsPlayed=true" 2>/dev/null \
-            | jq -r '[.Items[].UserData.LastPlayedDate // empty] | max // empty') || continue
+            | jq -r '[.Items[].UserData.LastPlayedDate // empty] | max // empty') || {
+            log "  ERROR: Failed to fetch episode watch data for series '$title'"
+            ERRORS=$((ERRORS + 1))
+            continue
+        }
         [ -z "$last_played" ] && continue
 
         if [[ "$last_played" > "$CUTOFF" ]]; then
