@@ -41,8 +41,17 @@ disable_ongrab() {
         return 1
     }
 
+    # jq parses are guarded too, not just the curls: since disable_ongrab
+    # runs with set -e ignored for its whole body (see comment above), a
+    # malformed-JSON response or a jq failure would otherwise leave
+    # notif_id empty and silently fall into the "no Email notification"
+    # SKIP branch below - indistinguishable from the genuinely-nothing-
+    # to-do case, even though onGrab was never actually checked.
     local notif_id
-    notif_id=$(echo "$notif_list" | jq -r '.[] | select(.name=="Email") | .id')
+    notif_id=$(echo "$notif_list" | jq -r '.[] | select(.name=="Email") | .id') || {
+        echo "ERROR: $name — failed to parse notification list"
+        return 1
+    }
 
     if [ -z "$notif_id" ]; then
         echo "SKIP: $name — no Email notification configured"
@@ -56,14 +65,20 @@ disable_ongrab() {
     }
 
     local on_grab
-    on_grab=$(echo "$current" | jq -r '.onGrab')
+    on_grab=$(echo "$current" | jq -r '.onGrab') || {
+        echo "ERROR: $name — failed to parse notification $notif_id"
+        return 1
+    }
     if [ "$on_grab" = "false" ]; then
         echo "OK:   $name — onGrab already disabled"
         return 0
     fi
 
     local updated
-    updated=$(echo "$current" | jq '.onGrab = false')
+    updated=$(echo "$current" | jq '.onGrab = false') || {
+        echo "ERROR: $name — failed to build update payload for notification $notif_id"
+        return 1
+    }
     curl -sf --max-time 15 -X PUT -H "X-Api-Key: $api_key" -H "Content-Type: application/json" \
         "$base_url/api/v3/notification/$notif_id" -d "$updated" > /dev/null || {
         echo "ERROR: $name — failed to update notification $notif_id"
