@@ -213,7 +213,16 @@ echo ""
 # --- 7. Cron ---
 
 echo "[Cron Jobs]"
-if docker exec cron crontab -l >/dev/null 2>&1; then
+# Read the crontab exactly once and reuse that same content for both the
+# reachability check and the count - the original two-call version
+# (`docker exec ... >/dev/null` to check, then a second separate
+# `docker exec ...` to capture) could see the first call succeed and the
+# second transiently fail, which `|| true` would then silently report as
+# "no scheduled jobs" instead of the more accurate "Cannot read cron
+# jobs". Using the capture itself as the if-condition is exempt from
+# set -e (an if-condition, one of the standard exemptions) and preserves
+# the exact same branching as before with no redundant second read.
+if crontab_content=$(docker exec cron crontab -l 2>/dev/null); then
     # `grep -c` prints the count correctly even on zero matches, but still
     # exits 1 in that case (its normal "no match" status, not a real
     # failure) - `|| echo 0` looked like a safe fallback but actually
@@ -224,7 +233,7 @@ if docker exec cron crontab -l >/dev/null 2>&1; then
     # the numeric `-gt` comparison below with a stray "integer expression
     # expected" error. `|| true` neutralizes the same exit status without
     # adding any extra output, since grep's own count is already correct.
-    job_count=$(docker exec cron crontab -l 2>/dev/null | grep -c '^[^#]' || true)
+    job_count=$(printf '%s\n' "$crontab_content" | grep -c '^[^#]' || true)
     if [ "$job_count" -gt 0 ]; then
         pass "Cron has $job_count scheduled job(s)"
     else

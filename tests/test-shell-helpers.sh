@@ -1486,6 +1486,85 @@ test_reboot_test_job_count_nonzero_jobs_reports_correct_count() {
     fi
 }
 
+test_reboot_test_cron_unreadable_reports_cannot_read() {
+    local snippet output
+    snippet=$(extract_reboot_test_cron_section)
+
+    # Previously untested: the original code called `docker exec cron
+    # crontab -l` twice - once discarded (just to check reachability),
+    # once captured for the count - which meant a transient failure on
+    # specifically the *second* call could get silently misreported as
+    # "no scheduled jobs" instead of "Cannot read cron jobs" (a real
+    # finding from this PR's own review). The fix reads the crontab
+    # exactly once, so there's now only a single failure mode to verify:
+    # `docker exec` itself failing outright must still report clearly as
+    # unreadable, not as zero jobs.
+    output=$(
+        set -euo pipefail
+        PASSED=0 FAILED=0 WARNED=0
+        GREEN='' RED='' YELLOW='' NC=''
+        pass() { echo "PASS: $*"; PASSED=$((PASSED + 1)); }
+        fail() { echo "FAIL: $*"; FAILED=$((FAILED + 1)); }
+        warn_check() { echo "WARN: $*"; WARNED=$((WARNED + 1)); }
+        docker() { return 1; }
+        eval "$snippet"
+    )
+
+    if echo "$output" | grep -q "FAIL: Cannot read cron jobs" \
+        && ! echo "$output" | grep -qi "no scheduled jobs"; then
+        pass "reboot-test.sh reports 'Cannot read cron jobs' distinctly when docker exec itself fails, not as zero jobs"
+    else
+        fail "reboot-test.sh reports 'Cannot read cron jobs' distinctly when docker exec itself fails, not as zero jobs (output='$output')"
+    fi
+}
+
+test_reboot_test_cron_reads_crontab_exactly_once() {
+    local snippet counter output
+    snippet=$(extract_reboot_test_cron_section)
+    counter=$(mktemp)
+    echo 0 > "$counter"
+
+    # Reproduces the specific race this PR's own review flagged: the old
+    # code called `docker exec cron crontab -l` TWICE (once discarded,
+    # just to check reachability; once captured, for the count) - if the
+    # first call succeeded but a second, separate call transiently
+    # failed, the old `|| true` fallback on that second call's pipe would
+    # have silently reported "no scheduled jobs" instead of the more
+    # accurate "Cannot read cron jobs". This mock succeeds on the first
+    # invocation and fails on any subsequent one, matching that exact
+    # worst case - the fixed code reads the crontab exactly once, so
+    # there's no second call left to ever hit this mock's failure branch.
+    output=$(
+        set -euo pipefail
+        PASSED=0 FAILED=0 WARNED=0
+        GREEN='' RED='' YELLOW='' NC=''
+        pass() { echo "PASS: $*"; PASSED=$((PASSED + 1)); }
+        fail() { echo "FAIL: $*"; FAILED=$((FAILED + 1)); }
+        warn_check() { echo "WARN: $*"; WARNED=$((WARNED + 1)); }
+        COUNTER_FILE="$counter"
+        docker() {
+            local n
+            n=$(cat "$COUNTER_FILE")
+            n=$((n + 1))
+            echo "$n" > "$COUNTER_FILE"
+            if [ "$n" -eq 1 ]; then
+                printf '*/30 * * * * /scripts/a.sh\n'
+                return 0
+            fi
+            return 1
+        }
+        eval "$snippet"
+    )
+
+    if echo "$output" | grep -q "PASS: Cron has 1 scheduled job(s)" \
+        && [ "$(cat "$counter")" -eq 1 ]; then
+        pass "reboot-test.sh reads the crontab exactly once, so a hypothetical second-read failure can no longer mask itself as zero jobs"
+    else
+        fail "reboot-test.sh reads the crontab exactly once, so a hypothetical second-read failure can no longer mask itself as zero jobs (output='$output', invocations=$(cat "$counter"))"
+    fi
+    rm -f "$counter"
+}
+
 test_count_encrypted_backups_empty_dir_returns_zero() {
     local func_src empty_dir result
     func_src=$(extract_bash_function "count_encrypted_backups" "$REPO_ROOT/scripts/reboot-test.sh")
@@ -1690,6 +1769,8 @@ test_fetch_completed_torrents_mv_failure_is_reported_not_silently_successful
 test_fetch_completed_torrents_failure_does_not_abort_caller
 test_reboot_test_job_count_zero_jobs_reports_cleanly
 test_reboot_test_job_count_nonzero_jobs_reports_correct_count
+test_reboot_test_cron_unreadable_reports_cannot_read
+test_reboot_test_cron_reads_crontab_exactly_once
 test_count_encrypted_backups_empty_dir_returns_zero
 test_count_encrypted_backups_counts_existing_files
 test_latest_encrypted_backup_selects_newest_by_mtime
