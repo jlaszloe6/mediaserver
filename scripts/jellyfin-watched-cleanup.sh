@@ -107,7 +107,7 @@ for user_id in $user_ids; do
         # aborts the whole script under set -e before the HTTP-status
         # check below runs, which could otherwise look like every
         # remaining watched item silently got skipped rather than failed.
-        del_code=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE \
+        del_code=$(curl -s --max-time 15 -o /dev/null -w '%{http_code}' -X DELETE \
             -H "X-Api-Key: $RADARR_KEY" \
             "$RADARR_URL/api/v3/movie/$radarr_id?deleteFiles=true&addImportExclusion=true") || del_code="000"
 
@@ -153,7 +153,7 @@ for user_id in $user_ids; do
         # played_series fetches above - without it, a single Jellyfin
         # request failure here would abort the whole script under set -e
         # instead of just skipping this one series and moving to the next.
-        last_played=$(curl -sf $HEADERS \
+        last_played=$(curl -sf --max-time 15 $HEADERS \
             "$JELLYFIN_URL/Users/$user_id/Items?ParentId=$series_id&Recursive=true&IncludeItemTypes=Episode&IsPlayed=true" 2>/dev/null \
             | jq -r '[.Items[].UserData.LastPlayedDate // empty] | max // empty') || continue
         [ -z "$last_played" ] && continue
@@ -183,7 +183,7 @@ for user_id in $user_ids; do
         fi
 
         # Same set -e guard as the movie DELETE above.
-        del_code=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE \
+        del_code=$(curl -s --max-time 15 -o /dev/null -w '%{http_code}' -X DELETE \
             -H "X-Api-Key: $SONARR_KEY" \
             "$SONARR_URL/api/v3/series/$sonarr_id?deleteFiles=true&addImportListExclusion=true") || del_code="000"
 

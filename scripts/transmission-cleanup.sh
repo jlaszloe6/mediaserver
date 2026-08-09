@@ -59,7 +59,12 @@ HNR_DEFAULT_HOURS=72
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 
 transmission_rpc() {
-    curl -sf "$TRANSMISSION_URL" \
+    # --max-time bounds every caller of this helper (session-get,
+    # torrent-get, torrent-remove) - without it, a stalled (not just
+    # refused/errored) connection to Transmission would hang this cron
+    # job indefinitely instead of ever reaching any of the `||` error
+    # handling built around these calls.
+    curl -sf --max-time 30 "$TRANSMISSION_URL" \
         -H "X-Transmission-Session-Id: $1" \
         -H "Content-Type: application/json" \
         -d "$2" 2>/dev/null
@@ -97,7 +102,7 @@ get_hnr_hours() {
 log "=== Transmission orphan cleanup ==="
 
 # --- Connect to Transmission ---
-SID=$(curl -si "$TRANSMISSION_URL" 2>/dev/null \
+SID=$(curl -si --max-time 15 "$TRANSMISSION_URL" 2>/dev/null \
     | grep -oP '(?<=X-Transmission-Session-Id: )\S+' | head -1) || true
 if [ -z "$SID" ]; then
     log "ERROR: Cannot connect to Transmission"
@@ -138,26 +143,26 @@ while IFS= read -r inst; do
     IFS='|' read -r s_url s_key r_url r_key <<< "$inst"
 
     # Queue hashes
-    curl -sf -H "X-Api-Key: $s_key" "$s_url/api/v3/queue?pageSize=200" 2>/dev/null \
+    curl -sf --max-time 15 -H "X-Api-Key: $s_key" "$s_url/api/v3/queue?pageSize=200" 2>/dev/null \
         | jq -r '.records[].downloadId // empty' 2>/dev/null >> "$QUEUE_HASHES" \
         || { log "ERROR: Failed to fetch Sonarr queue ($s_url)"; FETCH_ERRORS=$((FETCH_ERRORS + 1)); }
-    curl -sf -H "X-Api-Key: $r_key" "$r_url/api/v3/queue?pageSize=200" 2>/dev/null \
+    curl -sf --max-time 15 -H "X-Api-Key: $r_key" "$r_url/api/v3/queue?pageSize=200" 2>/dev/null \
         | jq -r '.records[].downloadId // empty' 2>/dev/null >> "$QUEUE_HASHES" \
         || { log "ERROR: Failed to fetch Radarr queue ($r_url)"; FETCH_ERRORS=$((FETCH_ERRORS + 1)); }
 
     # Library IDs
-    curl -sf -H "X-Api-Key: $r_key" "$r_url/api/v3/movie" 2>/dev/null \
+    curl -sf --max-time 15 -H "X-Api-Key: $r_key" "$r_url/api/v3/movie" 2>/dev/null \
         | jq -r '.[].id' >> "$RADARR_IDS" \
         || { log "ERROR: Failed to fetch Radarr movie library ($r_url)"; FETCH_ERRORS=$((FETCH_ERRORS + 1)); }
-    curl -sf -H "X-Api-Key: $s_key" "$s_url/api/v3/series" 2>/dev/null \
+    curl -sf --max-time 15 -H "X-Api-Key: $s_key" "$s_url/api/v3/series" 2>/dev/null \
         | jq -r '.[].id' >> "$SONARR_IDS" \
         || { log "ERROR: Failed to fetch Sonarr series library ($s_url)"; FETCH_ERRORS=$((FETCH_ERRORS + 1)); }
 
     # History mapping
-    curl -sf -H "X-Api-Key: $r_key" "$r_url/api/v3/history?pageSize=500" 2>/dev/null \
+    curl -sf --max-time 15 -H "X-Api-Key: $r_key" "$r_url/api/v3/history?pageSize=500" 2>/dev/null \
         | jq -r '.records[] | select(.downloadId != null) | "R:" + (.downloadId | ascii_downcase) + ":" + (.movieId | tostring)' 2>/dev/null >> "$HISTORY_MAP" \
         || { log "ERROR: Failed to fetch Radarr history ($r_url)"; FETCH_ERRORS=$((FETCH_ERRORS + 1)); }
-    curl -sf -H "X-Api-Key: $s_key" "$s_url/api/v3/history?pageSize=500" 2>/dev/null \
+    curl -sf --max-time 15 -H "X-Api-Key: $s_key" "$s_url/api/v3/history?pageSize=500" 2>/dev/null \
         | jq -r '.records[] | select(.downloadId != null) | "S:" + (.downloadId | ascii_downcase) + ":" + (.seriesId | tostring)' 2>/dev/null >> "$HISTORY_MAP" \
         || { log "ERROR: Failed to fetch Sonarr history ($s_url)"; FETCH_ERRORS=$((FETCH_ERRORS + 1)); }
 done <<< "$INSTANCE_CONFIGS"

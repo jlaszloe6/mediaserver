@@ -51,8 +51,12 @@ log "Downloading GeoLite2-Country database..."
 # would then fail on it, but with a confusing "not a gzip file" error
 # instead of a clear download failure. `if ...; then` (not a bare
 # statement) makes the failure explicit and controlled rather than an
-# unexplained set -e abort.
-if ! curl -sfL --config <(printf 'url = "%s"\n' "$(_curl_secrets_escape "$URL")") -o /tmp/geolite2.tar.gz; then
+# unexplained set -e abort. `--connect-timeout`/`--max-time` added too:
+# without a bound, a stalled connection (as opposed to a clean
+# refused/error response) would hang this weekly cron job indefinitely
+# instead of ever reaching this error handling at all.
+if ! curl -sfL --connect-timeout 10 --max-time 120 \
+    --config <(printf 'url = "%s"\n' "$(_curl_secrets_escape "$URL")") -o /tmp/geolite2.tar.gz; then
     log "ERROR: Failed to download GeoLite2-Country database"
     exit 1
 fi
