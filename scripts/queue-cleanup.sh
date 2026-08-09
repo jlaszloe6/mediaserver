@@ -463,21 +463,24 @@ handle_stalled() {
         # on the next run - capture success/failure explicitly (rather than
         # a blind `|| true`) so the alert below can say so, instead of
         # silently claiming a search that didn't actually go out.
+        # search_ok defaults to false: a record with no movieId/seriesId
+        # (unknown/deleted media) must count as a failed search too, not
+        # silently stay "true" just because no request was ever attempted.
         local media_id_for_search search_ok
-        search_ok=true
+        search_ok=false
         if [ "$media_type" = "movie" ]; then
             media_id_for_search=$(echo "$item" | jq -r '.movieId // empty')
             if [ -n "$media_id_for_search" ]; then
                 curl -sf -X POST -H "X-Api-Key: $api_key" -H "Content-Type: application/json" \
                     "$base_url/api/v3/command" \
-                    -d "{\"name\":\"MoviesSearch\",\"movieIds\":[$media_id_for_search]}" > /dev/null 2>&1 || search_ok=false
+                    -d "{\"name\":\"MoviesSearch\",\"movieIds\":[$media_id_for_search]}" > /dev/null 2>&1 && search_ok=true
             fi
         else
             media_id_for_search=$(echo "$item" | jq -r '.seriesId // empty')
             if [ -n "$media_id_for_search" ]; then
                 curl -sf -X POST -H "X-Api-Key: $api_key" -H "Content-Type: application/json" \
                     "$base_url/api/v3/command" \
-                    -d "{\"name\":\"SeriesSearch\",\"seriesId\":$media_id_for_search}" > /dev/null 2>&1 || search_ok=false
+                    -d "{\"name\":\"SeriesSearch\",\"seriesId\":$media_id_for_search}" > /dev/null 2>&1 && search_ok=true
             fi
         fi
 
