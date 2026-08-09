@@ -44,7 +44,18 @@ URL="https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-Country
 log "Downloading GeoLite2-Country database..."
 # The license key lives in $URL — route it through curl's config input
 # (an anonymous fd) instead of argv, where it'd be visible via ps/procfs.
-curl -sL --config <(printf 'url = "%s"\n' "$(_curl_secrets_escape "$URL")") -o /tmp/geolite2.tar.gz
+#
+# `-f` added (was missing): without it, a non-2xx response (e.g. an
+# expired/invalid license key) would still download and write an HTML
+# error page to geolite2.tar.gz as if it were the real database - tar
+# would then fail on it, but with a confusing "not a gzip file" error
+# instead of a clear download failure. `if ...; then` (not a bare
+# statement) makes the failure explicit and controlled rather than an
+# unexplained set -e abort.
+if ! curl -sfL --config <(printf 'url = "%s"\n' "$(_curl_secrets_escape "$URL")") -o /tmp/geolite2.tar.gz; then
+    log "ERROR: Failed to download GeoLite2-Country database"
+    exit 1
+fi
 
 tar -xzf /tmp/geolite2.tar.gz -C /tmp
 cp /tmp/GeoLite2-Country_*/GeoLite2-Country.mmdb "$DB_FILE"

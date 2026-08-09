@@ -103,9 +103,13 @@ for user_id in $user_ids; do
             continue
         fi
 
+        # `|| del_code="000"`: without it, a transport-level curl failure
+        # aborts the whole script under set -e before the HTTP-status
+        # check below runs, which could otherwise look like every
+        # remaining watched item silently got skipped rather than failed.
         del_code=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE \
             -H "X-Api-Key: $RADARR_KEY" \
-            "$RADARR_URL/api/v3/movie/$radarr_id?deleteFiles=true&addImportExclusion=true")
+            "$RADARR_URL/api/v3/movie/$radarr_id?deleteFiles=true&addImportExclusion=true") || del_code="000"
 
         if [ "$del_code" = "200" ]; then
             log "  Removed movie '$title' (watched by $user_name on $last_played)"
@@ -144,9 +148,14 @@ for user_id in $user_ids; do
         # Jellyfin never sets UserData.LastPlayedDate on the series item
         # itself, only on individual episodes, so derive it from the most
         # recently watched episode instead.
+        #
+        # `|| continue`: matches the guard already on the played_movies/
+        # played_series fetches above - without it, a single Jellyfin
+        # request failure here would abort the whole script under set -e
+        # instead of just skipping this one series and moving to the next.
         last_played=$(curl -sf $HEADERS \
             "$JELLYFIN_URL/Users/$user_id/Items?ParentId=$series_id&Recursive=true&IncludeItemTypes=Episode&IsPlayed=true" 2>/dev/null \
-            | jq -r '[.Items[].UserData.LastPlayedDate // empty] | max // empty')
+            | jq -r '[.Items[].UserData.LastPlayedDate // empty] | max // empty') || continue
         [ -z "$last_played" ] && continue
 
         if [[ "$last_played" > "$CUTOFF" ]]; then
@@ -173,9 +182,10 @@ for user_id in $user_ids; do
             continue
         fi
 
+        # Same set -e guard as the movie DELETE above.
         del_code=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE \
             -H "X-Api-Key: $SONARR_KEY" \
-            "$SONARR_URL/api/v3/series/$sonarr_id?deleteFiles=true&addImportListExclusion=true")
+            "$SONARR_URL/api/v3/series/$sonarr_id?deleteFiles=true&addImportListExclusion=true") || del_code="000"
 
         if [ "$del_code" = "200" ]; then
             log "  Removed series '$title' (watched by $user_name on $last_played)"

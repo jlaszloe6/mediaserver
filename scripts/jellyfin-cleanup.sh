@@ -133,9 +133,15 @@ process_movies() {
                 continue
             fi
 
+            # `|| del_code="000"`: without it, a transport-level curl
+            # failure (Radarr mid-restart, network blip) would abort the
+            # whole script right here under set -e, before the existing
+            # HTTP-status check below ever ran - "000" correctly falls
+            # into that check's else branch instead, so a delete that
+            # never actually happened can't be silently treated as done.
             del_code=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE \
                 -H "X-Api-Key: $api_key" \
-                "$base_url/api/v3/movie/$id?deleteFiles=true&addImportExclusion=true")
+                "$base_url/api/v3/movie/$id?deleteFiles=true&addImportExclusion=true") || del_code="000"
 
             if [ "$del_code" = "200" ]; then
                 log "  Removed movie '$title' (deleted from library, excluded from re-import)"
@@ -193,9 +199,10 @@ process_series() {
                 continue
             fi
 
+            # Same set -e guard as the movie DELETE above.
             del_code=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE \
                 -H "X-Api-Key: $api_key" \
-                "$base_url/api/v3/series/$id?deleteFiles=true&addImportListExclusion=true")
+                "$base_url/api/v3/series/$id?deleteFiles=true&addImportListExclusion=true") || del_code="000"
 
             if [ "$del_code" = "200" ]; then
                 log "  Removed series '$title' (deleted from library, excluded from re-import)"
