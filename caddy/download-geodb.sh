@@ -22,11 +22,15 @@ mkdir -p "$DB_DIR"
 URL="https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-Country&license_key=${LICENSE_KEY}&suffix=tar.gz"
 
 TMP_ARCHIVE=$(mktemp)
+# Explicitly reset before the trap is installed: an inherited environment
+# variable named TMP_EXTRACT_DIR (however unlikely) must not be handed to
+# `rm -rf` if the mktemp -d below fails before ever assigning it itself.
+TMP_EXTRACT_DIR=""
 # Trap installed right after the first tempfile exists, before attempting
 # to create the second one below - if that second mktemp fails, set -e
 # would otherwise exit before any trap was registered, leaking
-# $TMP_ARCHIVE. $TMP_EXTRACT_DIR is safely empty/unset at that point;
-# `rm -rf ""` is a harmless no-op (verified directly), not an error.
+# $TMP_ARCHIVE. $TMP_EXTRACT_DIR is safely empty at that point; `rm -rf
+# ""` is a harmless no-op (verified directly), not an error.
 cleanup() {
     rm -f "$TMP_ARCHIVE"
     rm -rf "$TMP_EXTRACT_DIR"
@@ -92,6 +96,19 @@ fi
 EXTRACTED_MMDB=$(find "$TMP_EXTRACT_DIR" -name 'GeoLite2-Country.mmdb' -type f | head -1)
 if [ -z "$EXTRACTED_MMDB" ] || [ ! -s "$EXTRACTED_MMDB" ]; then
     echo "ERROR: Extracted archive does not contain a valid, non-empty GeoLite2-Country.mmdb" >&2
+    exit 1
+fi
+
+# Same marker check entrypoint.sh uses to decide whether an existing
+# $DB_FILE can be trusted - applied here too so a corrupt-but-non-empty
+# extraction (truncated download, wrong file substituted upstream) can't
+# get moved into place as if it were a real database. `strings | grep`,
+# not `grep -a` directly on the binary - verified against the real
+# production database that busybox/Alpine grep's `-a` mode misses this
+# marker even though it's genuinely present; strings' text extraction
+# finds it reliably.
+if ! strings "$EXTRACTED_MMDB" | grep -q 'MaxMind.com'; then
+    echo "ERROR: Extracted GeoLite2-Country.mmdb does not contain the expected MaxMind database marker" >&2
     exit 1
 fi
 
