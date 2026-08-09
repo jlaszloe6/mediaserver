@@ -533,8 +533,13 @@ handle_stalled() {
                 # in the series, not just replace the one that died. Only
                 # fall back to SeriesSearch when the item has no episode
                 # ID at all (e.g. a season-pack release).
+                # `// null`, not `// empty`: with `empty`, a missing
+                # .episodeIds makes the `as $ids` binding itself produce
+                # zero outputs, so the `elif .episodeId` fallback below
+                # never even runs - silently defeating the whole point of
+                # this scoping for the common single-episode case.
                 local episode_ids
-                episode_ids=$(echo "$item" | jq -c '(.episodeIds // empty) as $ids | if ($ids | type) == "array" and ($ids | length) > 0 then $ids elif .episodeId then [.episodeId] else empty end')
+                episode_ids=$(echo "$item" | jq -c '(.episodeIds // null) as $ids | if ($ids | type) == "array" and ($ids | length) > 0 then $ids elif .episodeId then [.episodeId] else empty end')
                 if [ -n "$episode_ids" ] && [ "$episode_ids" != "null" ]; then
                     curl -sf -X POST -H "X-Api-Key: $api_key" -H "Content-Type: application/json" \
                         "$base_url/api/v3/command" \
