@@ -1207,6 +1207,43 @@ test_fetch_completed_torrents_success_replaces_file() {
     rm -f "$out_file"
 }
 
+test_fetch_completed_torrents_mv_failure_is_reported_not_silently_successful() {
+    local func_src out_file output
+    func_src=$(extract_bash_function "fetch_completed_torrents" "$REPO_ROOT/scripts/ebook-pipeline.sh")
+    out_file=$(mktemp)
+    printf 'PREVIOUS-GOOD-CONTENT\n' > "$out_file"
+
+    output=$(
+        set -euo pipefail
+        ERRORS=0
+        log() { echo "$*"; }
+        transmission_rpc() {
+            echo '{"arguments":{"torrents":[]}}'
+            return 0
+        }
+        # A real mv failure (disk full, permissions, a genuinely exotic
+        # same-filesystem rename error) is awkward to reproduce reliably
+        # against a real filesystem - overriding the command name as a
+        # shell function is resolved before PATH lookup, so this
+        # intercepts fetch_completed_torrents()'s own `mv` call directly
+        # and deterministically, to verify the function checks mv's exit
+        # status rather than assuming success once it's been invoked.
+        mv() { return 1; }
+        eval "$func_src"
+        fetch_completed_torrents "fake-sid" "/downloads/complete/ebooks-incoming" "$out_file" \
+            && echo "RETURNED_0" || echo "RETURNED_1"
+        echo "ERRORS=$ERRORS"
+    )
+
+    if echo "$output" | grep -q "RETURNED_1" && echo "$output" | grep -q "ERRORS=1" \
+        && [ "$(cat "$out_file")" = "PREVIOUS-GOOD-CONTENT" ]; then
+        pass "fetch_completed_torrents: an mv failure is reported as an error, not silently treated as success"
+    else
+        fail "fetch_completed_torrents: an mv failure is reported as an error, not silently treated as success (output='$output', file='$(cat "$out_file")')"
+    fi
+    rm -f "$out_file"
+}
+
 test_fetch_completed_torrents_failure_does_not_abort_caller() {
     local func_src out_file output
     func_src=$(extract_bash_function "fetch_completed_torrents" "$REPO_ROOT/scripts/ebook-pipeline.sh")
@@ -1277,6 +1314,7 @@ test_trigger_audiobookshelf_scan_transport_failure_does_not_abort_caller
 test_fetch_completed_torrents_rpc_failure_preserves_existing_file
 test_fetch_completed_torrents_malformed_json_preserves_existing_file
 test_fetch_completed_torrents_success_replaces_file
+test_fetch_completed_torrents_mv_failure_is_reported_not_silently_successful
 test_fetch_completed_torrents_failure_does_not_abort_caller
 
 echo

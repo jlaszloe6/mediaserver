@@ -194,14 +194,27 @@ fetch_completed_torrents() {
         return 1
     fi
 
-    filtered_tmp=$(mktemp)
-    if echo "$raw_response" | jq -c --arg dir "$dest_dir" \
+    # Created alongside $out_file (not the default tmpdir) so the `mv`
+    # below is guaranteed to be a same-filesystem rename, not a
+    # cross-filesystem fallback copy that could itself fail partway.
+    filtered_tmp=$(mktemp "$(dirname "$out_file")/.fetch-completed-XXXXXX")
+    if ! echo "$raw_response" | jq -c --arg dir "$dest_dir" \
             '.arguments.torrents[]? | select(.downloadDir == $dir and .percentDone == 1)' \
             > "$filtered_tmp" 2>/dev/null; then
-        mv "$filtered_tmp" "$out_file"
+        log "  ERROR: Failed to parse Transmission torrent-get response - skipping completion check this run"
+        ERRORS=$((ERRORS + 1))
+        rm -f "$filtered_tmp"
+        return 1
+    fi
+
+    # mv's own exit status is checked explicitly, not assumed: reporting
+    # success here without verifying it would mean a rare mv failure (e.g.
+    # a permissions or disk-space issue) makes the caller wrongly believe
+    # this run's completion poll succeeded, with nothing logged or counted.
+    if mv "$filtered_tmp" "$out_file"; then
         return 0
     else
-        log "  ERROR: Failed to parse Transmission torrent-get response - skipping completion check this run"
+        log "  ERROR: Failed to write Transmission torrent-get result to $out_file"
         ERRORS=$((ERRORS + 1))
         rm -f "$filtered_tmp"
         return 1
