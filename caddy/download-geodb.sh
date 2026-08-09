@@ -107,7 +107,7 @@ fi
 # production database that busybox/Alpine grep's `-a` mode misses this
 # marker even though it's genuinely present; strings' text extraction
 # finds it reliably.
-if ! strings "$EXTRACTED_MMDB" | grep -q 'MaxMind.com'; then
+if ! strings "$EXTRACTED_MMDB" | grep -Fq 'MaxMind.com'; then
     echo "ERROR: Extracted GeoLite2-Country.mmdb does not contain the expected MaxMind database marker" >&2
     exit 1
 fi

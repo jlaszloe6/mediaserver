@@ -22,7 +22,7 @@ DB_FILE="/data/geolite2/GeoLite2-Country.mmdb"
 # build running in the caddy container - do not simplify back to a bare
 # `grep -a` on the binary file.
 is_valid_geodb() {
-    [ -s "$1" ] && strings "$1" | grep -q 'MaxMind.com'
+    [ -s "$1" ] && strings "$1" | grep -Fq 'MaxMind.com'
 }
 
 if ! is_valid_geodb "$DB_FILE"; then

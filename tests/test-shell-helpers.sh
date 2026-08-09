@@ -637,6 +637,33 @@ run_download_geodb() {
     DOWNLOAD_GEODB_EXIT=$?
 }
 
+# Static tripwire: locks in the `strings | grep -F` marker-check shape in
+# both caddy scripts. A bare `grep -a 'MaxMind.com' "$file"` looks
+# equivalent and would pass every other test here (this dev machine's GNU
+# grep finds the marker fine either way), but was verified live to
+# silently fail against the real production .mmdb under busybox/Alpine's
+# grep - the discrepancy isn't reproducible with a synthetic fixture under
+# GNU tooling, so this static check is the only thing standing between a
+# "looks like a harmless simplification" edit and that regression.
+# `-F` (not bare `grep -q`) also guards the marker match being a literal
+# string, not a regex where the `.` in "MaxMind.com" would match any char.
+test_caddy_marker_check_uses_strings_not_bare_grep() {
+    local f bad=""
+    for f in "$REPO_ROOT/caddy/entrypoint.sh" "$REPO_ROOT/caddy/download-geodb.sh"; do
+        if ! grep -q "strings .*| *grep -Fq 'MaxMind.com'" "$f"; then
+            bad="$bad $f"
+        fi
+        if grep -Eq "grep -a[a-zA-Z]* 'MaxMind" "$f"; then
+            bad="$bad $f(bare-grep-a)"
+        fi
+    done
+    if [ -z "$bad" ]; then
+        pass "caddy entrypoint.sh/download-geodb.sh validate the MaxMind marker via strings | grep -F, not a bare grep -a"
+    else
+        fail "caddy entrypoint.sh/download-geodb.sh validate the MaxMind marker via strings | grep -F - found issue(s) in:$bad"
+    fi
+}
+
 test_download_geodb_success_installs_db_atomically() {
     local mockdir fixture leftover_tmp db_file
     mockdir=$(mktemp -d)
@@ -964,6 +991,7 @@ test_fetch_existing_returns_body_on_success
 test_fetch_existing_reports_http_error_distinctly
 test_fetch_existing_distinguishes_transport_failure
 test_init_setup_no_unguarded_curl_sf
+test_caddy_marker_check_uses_strings_not_bare_grep
 test_download_geodb_success_installs_db_atomically
 test_download_geodb_http_error_leaves_no_db_file
 test_download_geodb_transport_error_leaves_no_db_file
