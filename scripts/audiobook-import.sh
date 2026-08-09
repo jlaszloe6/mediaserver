@@ -98,9 +98,14 @@ if [ "$IMPORTED" -gt 0 ] && ! $DRY_RUN; then
         log "ERROR: Could not find 'Audiobooks' library in Audiobookshelf"
         ERRORS=$((ERRORS + 1))
     else
-        scan_code=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+        # --max-time bounds the request; `|| scan_code="000"` keeps a
+        # transport-level failure (Audiobookshelf down/restarting) from
+        # aborting the script under set -e before the HTTP-status check
+        # below runs - "000" correctly falls into that check's else branch
+        # instead of being treated as if the scan had been triggered.
+        scan_code=$(curl -s --max-time 15 -o /dev/null -w '%{http_code}' -X POST \
             -H "Authorization: Bearer $AUDIOBOOKSHELF_KEY" \
-            "$AUDIOBOOKSHELF_URL/api/libraries/$library_id/scan")
+            "$AUDIOBOOKSHELF_URL/api/libraries/$library_id/scan") || scan_code="000"
 
         if [ "$scan_code" = "200" ]; then
             log "  Scan triggered"
