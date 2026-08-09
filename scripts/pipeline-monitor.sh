@@ -78,6 +78,7 @@ EOF
         log "Email sent: $subject"
     else
         log "WARN: Failed to send email"
+        return 1
     fi
 }
 
@@ -192,11 +193,17 @@ check_zero_progress() {
 
     local new_state=""
     for i in $(seq 0 $((count - 1))); do
-        local client_status tracked_state
+        local client_status tracked_state tracked_status
         client_status=$(echo "$records" | jq -r ".[$i].status")
         tracked_state=$(echo "$records" | jq -r ".[$i].trackedDownloadState")
+        tracked_status=$(echo "$records" | jq -r ".[$i].trackedDownloadStatus")
 
-        if [ "$client_status" != "downloading" ] || [ "$tracked_state" != "downloading" ]; then
+        # Items already alerted above (warning/error) are excluded here too -
+        # a disk-space or client-side warning item that also happens to be
+        # at 0% would otherwise get a second, misleading "stuck download"
+        # alert alongside its specific warning message.
+        if [ "$client_status" != "downloading" ] || [ "$tracked_state" != "downloading" ] \
+            || [ "$tracked_status" = "warning" ] || [ "$tracked_status" = "error" ]; then
             continue
         fi
 
@@ -233,7 +240,12 @@ check_zero_progress() {
 
         local age=$((now_epoch - first_seen))
         if [ "$age" -gt "$stuck_threshold" ]; then
-            alert "${service_name} stuck download (0% after $((age / 3600))h): ${title}"
+            # Static "2h" text, not the actual elapsed hours: main()'s
+            # top-level dedup hashes ALERT_MESSAGES to suppress repeat
+            # emails for an unchanged issue - an ever-growing hour count
+            # here would change the hash (and re-send) every single hour
+            # this same download stays stuck, defeating that dedup entirely.
+            alert "${service_name} stuck download (0% after 2h): ${title}"
         fi
     done
 
@@ -321,16 +333,25 @@ if [ "$ISSUES" -gt 0 ]; then
     fi
 
     if [ "$current_hash" != "$previous_hash" ]; then
-        send_email \
+        # Only mark this alert as delivered (STATE_FILE) if send_email
+        # actually succeeded - otherwise a transient SMTP failure would get
+        # silently recorded as sent and never retried until the issue text
+        # itself changes. `if send_email ...; then` is exempt from set -e
+        # regardless of send_email's exit status, since command conditions
+        # in an if statement are never subject to errexit.
+        if send_email \
             "[${SERVER_NAME:-Media Server}] Pipeline Alert: ${ISSUES} issue(s)" \
             "Pipeline health check found ${ISSUES} issue(s):
 
 ${ALERT_MESSAGES}
 Checked at: $(date '+%Y-%m-%d %H:%M:%S %Z')
 
-This is an automated alert from the media server pipeline monitor."
-        echo "$current_hash" > "$STATE_FILE"
-        log "Alert email sent"
+This is an automated alert from the media server pipeline monitor."; then
+            echo "$current_hash" > "$STATE_FILE"
+            log "Alert email sent"
+        else
+            log "Alert email NOT sent — will retry next run"
+        fi
     else
         log "Same issues as last run — skipping duplicate alert"
     fi
