@@ -414,8 +414,16 @@ handle_stalled() {
     # job. A 0%-for-2h item with a disk-space or client-side warning is an
     # infrastructure problem, not a dead release, and blocklisting it would
     # just repeat the same failure against a different torrent.
+    #
+    # Requires .status == "downloading" too, not just trackedDownloadState:
+    # a release still sitting in Transmission's own queue (client-side
+    # "queued" or "paused", e.g. behind a download-queue-size limit) also
+    # reports trackedDownloadState "downloading" while genuinely at 0%
+    # through no fault of its own - it just hasn't been handed to the
+    # client yet. Only a client-confirmed active "downloading" status that's
+    # still at 0% after 2h is actually a dead/unseeded torrent.
     local downloading_items
-    downloading_items=$(echo "$queue" | jq -c '[.records[] | select(.trackedDownloadState == "downloading" and .trackedDownloadStatus != "warning" and .trackedDownloadStatus != "error")]')
+    downloading_items=$(echo "$queue" | jq -c '[.records[] | select(.trackedDownloadState == "downloading" and .status == "downloading" and .trackedDownloadStatus != "warning" and .trackedDownloadStatus != "error")]')
     local downloading_records
     downloading_records=$(echo "$downloading_items" | jq -c '.[]')
     while IFS= read -r item; do
