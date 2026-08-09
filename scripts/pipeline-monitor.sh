@@ -54,12 +54,18 @@ send_email() {
 
     local to="${ADMIN_EMAIL:-${SMTP_FROM}}"
 
+    # `|| send_rc=1` on the curl itself, not a separate `$?` check after:
+    # under set -e, a bare failing command aborts the script immediately,
+    # so a transient SMTP failure would kill pipeline-monitor.sh right here
+    # before the if/else below ever ran - silently skipping both the WARN
+    # log and (for callers checking this) the STATE_FILE update.
+    local send_rc=0
     curl -sf --url "smtp://$SMTP_SERVER:${SMTP_PORT:-587}" \
         --login-options "AUTH=LOGIN" \
         --mail-from "$SMTP_FROM" \
         --mail-rcpt "$to" \
         --user "${SMTP_USER}:${SMTP_PASSWORD}" \
-        -T - <<EOF
+        -T - <<EOF || send_rc=1
 From: ${SERVER_NAME:-Media Server} <$SMTP_FROM>
 To: $to
 Subject: $subject
@@ -68,10 +74,11 @@ Content-Type: text/plain; charset=utf-8
 $body
 EOF
 
-    if [ $? -eq 0 ]; then
+    if [ "$send_rc" -eq 0 ]; then
         log "Email sent: $subject"
     else
         log "WARN: Failed to send email"
+        return 1
     fi
 }
 
@@ -126,41 +133,123 @@ check_stuck_queue() {
         return
     }
 
-    local now_epoch
-    now_epoch=$(date +%s)
-    local stuck_threshold=7200  # 2 hours
-
     local records
     records=$(echo "$queue" | jq '.records // []')
     local count
     count=$(echo "$records" | jq 'length')
 
     for i in $(seq 0 $((count - 1))); do
-        local title status added
+        local title status
         title=$(echo "$records" | jq -r ".[$i].title")
         status=$(echo "$records" | jq -r ".[$i].trackedDownloadStatus")
-        added=$(echo "$records" | jq -r ".[$i].added")
 
         if [ "$status" = "warning" ] || [ "$status" = "error" ]; then
             local msgs
             msgs=$(echo "$records" | jq -r ".[$i].statusMessages[]?.messages[]? // empty" 2>/dev/null)
             alert "${service_name} queue issue: ${title} (${status}) ${msgs}"
+        fi
+    done
+
+    check_zero_progress "$service_name" "$records" "$count"
+}
+
+# --- Zero-progress detection, debounced against our own observations ---
+#
+# Sonarr/Radarr's `.added` (when the release was grabbed) is not the same
+# as when the download client actually started transferring it - a release
+# that spent 2+ hours queued behind other downloads (e.g. Transmission's
+# download-queue-size limit) would otherwise get flagged "stuck" the
+# instant its grab time crosses the threshold, even if it just started a
+# second ago. Also requires the download client's own `.status` to be
+# "downloading" (not "queued"/"paused") in addition to Sonarr/Radarr's
+# `.trackedDownloadState` - matches queue-cleanup.sh's identical fix for
+# the same underlying signal (see its "Downloads sitting at literally 0%"
+# comment for the full reasoning).
+#
+# Age is tracked per-service in a state file keyed by downloadId (the
+# torrent hash), recording when WE first observed the item at 0% with a
+# confirmed active download state - only alerts once that's held true for
+# 2+ hours of our own 30-min-interval observations, regardless of how long
+# it sat queued before that.
+check_zero_progress() {
+    local service_name="$1"
+    local records="$2"
+    local count="$3"
+
+    local state_suffix
+    state_suffix=$(echo "$service_name" | tr -c '[:alnum:]' '_')
+    local state_file="/var/tmp/pipeline-monitor-zero-progress-${state_suffix}.state"
+    # chmod 666 (not just touch): this script and queue-cleanup.sh both run
+    # from the same cron container, and a manual test invocation (e.g.
+    # `docker exec` defaults to root) must not leave a root-owned file that
+    # blocks the real cron job (running as the unprivileged `cronjob` user)
+    # from writing to it later under set -e.
+    touch "$state_file" 2>/dev/null || true
+    chmod 666 "$state_file" 2>/dev/null || true
+
+    local now_epoch
+    now_epoch=$(date +%s)
+    local stuck_threshold=7200  # 2 hours
+
+    local new_state=""
+    for i in $(seq 0 $((count - 1))); do
+        local client_status tracked_state tracked_status
+        client_status=$(echo "$records" | jq -r ".[$i].status")
+        tracked_state=$(echo "$records" | jq -r ".[$i].trackedDownloadState")
+        tracked_status=$(echo "$records" | jq -r ".[$i].trackedDownloadStatus")
+
+        # Items already alerted above (warning/error) are excluded here too -
+        # a disk-space or client-side warning item that also happens to be
+        # at 0% would otherwise get a second, misleading "stuck download"
+        # alert alongside its specific warning message.
+        if [ "$client_status" != "downloading" ] || [ "$tracked_state" != "downloading" ] \
+            || [ "$tracked_status" = "warning" ] || [ "$tracked_status" = "error" ]; then
             continue
         fi
 
-        # Check if downloading for too long with no progress
-        local added_epoch
-        added_epoch=$(date -d "$added" +%s 2>/dev/null) || continue
-        local age=$((now_epoch - added_epoch))
-        local sizeleft
+        local sizeleft size
         sizeleft=$(echo "$records" | jq -r ".[$i].sizeleft")
-        local size
         size=$(echo "$records" | jq -r ".[$i].size")
 
-        if [ "$age" -gt "$stuck_threshold" ] && [ "$sizeleft" = "$size" ]; then
+        if [ "$sizeleft" != "$size" ]; then
+            continue
+        fi
+
+        local title download_id
+        title=$(echo "$records" | jq -r ".[$i].title")
+        download_id=$(echo "$records" | jq -r ".[$i].downloadId // empty")
+
+        if [ -z "$download_id" ]; then
+            continue
+        fi
+
+        # `|| first_seen=""`: a bare failed command substitution aborts the
+        # script under set -e - guards a missing/unreadable state file the
+        # same way queue-cleanup.sh's identical lookup does.
+        local first_seen
+        first_seen=$(awk -v id="$download_id" '$1 == id { print $2 }' "$state_file" 2>/dev/null) || first_seen=""
+
+        if [ -z "$first_seen" ]; then
+            new_state="${new_state}${download_id} ${now_epoch}
+"
+            continue
+        fi
+
+        new_state="${new_state}${download_id} ${first_seen}
+"
+
+        local age=$((now_epoch - first_seen))
+        if [ "$age" -gt "$stuck_threshold" ]; then
+            # Static "2h" text, not the actual elapsed hours: main()'s
+            # top-level dedup hashes ALERT_MESSAGES to suppress repeat
+            # emails for an unchanged issue - an ever-growing hour count
+            # here would change the hash (and re-send) every single hour
+            # this same download stays stuck, defeating that dedup entirely.
             alert "${service_name} stuck download (0% after 2h): ${title}"
         fi
     done
+
+    printf '%s' "$new_state" > "$state_file"
 }
 
 # --- Check 3: NFS mount health ---
@@ -244,16 +333,25 @@ if [ "$ISSUES" -gt 0 ]; then
     fi
 
     if [ "$current_hash" != "$previous_hash" ]; then
-        send_email \
+        # Only mark this alert as delivered (STATE_FILE) if send_email
+        # actually succeeded - otherwise a transient SMTP failure would get
+        # silently recorded as sent and never retried until the issue text
+        # itself changes. `if send_email ...; then` is exempt from set -e
+        # regardless of send_email's exit status, since command conditions
+        # in an if statement are never subject to errexit.
+        if send_email \
             "[${SERVER_NAME:-Media Server}] Pipeline Alert: ${ISSUES} issue(s)" \
             "Pipeline health check found ${ISSUES} issue(s):
 
 ${ALERT_MESSAGES}
 Checked at: $(date '+%Y-%m-%d %H:%M:%S %Z')
 
-This is an automated alert from the media server pipeline monitor."
-        echo "$current_hash" > "$STATE_FILE"
-        log "Alert email sent"
+This is an automated alert from the media server pipeline monitor."; then
+            echo "$current_hash" > "$STATE_FILE"
+            log "Alert email sent"
+        else
+            log "Alert email NOT sent — will retry next run"
+        fi
     else
         log "Same issues as last run — skipping duplicate alert"
     fi
