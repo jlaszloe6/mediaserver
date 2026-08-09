@@ -88,10 +88,23 @@ disable_ongrab() {
     echo "DONE: $name — onGrab disabled"
 }
 
-# `|| echo ...` on each call (not two bare statements): keeps Sonarr's
-# outcome from preventing Radarr's attempt. disable_ongrab now returns 1
-# explicitly on any internal failure (see its own comment above), so this
-# WARN only fires on a real, deliberately-reported failure - not on a
-# silently-ignored one.
-disable_ongrab "Sonarr" "http://sonarr:8989" "$SONARR_KEY" || echo "WARN: Sonarr — onGrab disable hit an error, see above"
-disable_ongrab "Radarr" "http://radarr:7878" "$RADARR_KEY" || echo "WARN: Radarr — onGrab disable hit an error, see above"
+# `|| { ...; FAILURES=...; }` on each call (not two bare statements):
+# keeps Sonarr's outcome from preventing Radarr's attempt. disable_ongrab
+# now returns 1 explicitly on any internal failure (see its own comment
+# above), so this WARN only fires on a real, deliberately-reported
+# failure - not on a silently-ignored one.
+#
+# FAILURES is accumulated and used as the script's own exit code below -
+# without it, the last line executed would always be a successful `echo`,
+# so the script would report exit 0 even if both services failed.
+FAILURES=0
+disable_ongrab "Sonarr" "http://sonarr:8989" "$SONARR_KEY" || {
+    echo "WARN: Sonarr — onGrab disable hit an error, see above"
+    FAILURES=$((FAILURES + 1))
+}
+disable_ongrab "Radarr" "http://radarr:7878" "$RADARR_KEY" || {
+    echo "WARN: Radarr — onGrab disable hit an error, see above"
+    FAILURES=$((FAILURES + 1))
+}
+
+exit "$FAILURES"
