@@ -527,9 +527,23 @@ handle_stalled() {
         else
             media_id_for_search=$(echo "$item" | jq -r '.seriesId // empty')
             if [ -n "$media_id_for_search" ]; then
-                curl -sf -X POST -H "X-Api-Key: $api_key" -H "Content-Type: application/json" \
-                    "$base_url/api/v3/command" \
-                    -d "{\"name\":\"SeriesSearch\",\"seriesId\":$media_id_for_search}" > /dev/null 2>&1 && search_ok=true
+                # Scope to the specific episode(s) this queue item actually
+                # was, not the whole series - a blanket SeriesSearch would
+                # also re-search every other monitored-but-missing episode
+                # in the series, not just replace the one that died. Only
+                # fall back to SeriesSearch when the item has no episode
+                # ID at all (e.g. a season-pack release).
+                local episode_ids
+                episode_ids=$(echo "$item" | jq -c '(.episodeIds // empty) as $ids | if ($ids | type) == "array" and ($ids | length) > 0 then $ids elif .episodeId then [.episodeId] else empty end')
+                if [ -n "$episode_ids" ] && [ "$episode_ids" != "null" ]; then
+                    curl -sf -X POST -H "X-Api-Key: $api_key" -H "Content-Type: application/json" \
+                        "$base_url/api/v3/command" \
+                        -d "{\"name\":\"EpisodeSearch\",\"episodeIds\":${episode_ids}}" > /dev/null 2>&1 && search_ok=true
+                else
+                    curl -sf -X POST -H "X-Api-Key: $api_key" -H "Content-Type: application/json" \
+                        "$base_url/api/v3/command" \
+                        -d "{\"name\":\"SeriesSearch\",\"seriesId\":$media_id_for_search}" > /dev/null 2>&1 && search_ok=true
+                fi
             fi
         fi
 
@@ -542,7 +556,13 @@ handle_stalled() {
         fi
     done <<< "$downloading_records"
 
-    printf '%s' "$new_state" > "$state_file"
+    # Dry runs must not persist anything - writing here would let a
+    # preview run silently seed/advance the real state file, making a
+    # later real run act sooner (or immediately) based on observations
+    # that never happened for real.
+    if ! $DRY_RUN; then
+        printf '%s' "$new_state" > "$state_file"
+    fi
 }
 
 # --- Main ---
