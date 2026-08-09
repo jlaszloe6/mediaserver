@@ -13,8 +13,16 @@ if [[ -z "$JELLYFIN_KEY" ]]; then
 fi
 
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] Triggering Jellyfin library scan..."
-curl -sf -X POST "${JELLYFIN_URL}/Library/Refresh" \
+# `if curl ...; then` (not a bare statement): under set -e, a bare failing
+# curl would abort the script right here, silently skipping both the
+# success log line below and any error reporting - this runs every
+# minute, so a Jellyfin restart (e.g. mid-deploy) would otherwise produce
+# a string of unexplained early exits in the cron log.
+if curl -sf -X POST "${JELLYFIN_URL}/Library/Refresh" \
     -H "X-Emby-Token: ${JELLYFIN_KEY}" \
-    --max-time 10
-
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] Library scan triggered."
+    --max-time 10; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Library scan triggered."
+else
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: Failed to trigger Jellyfin library scan" >&2
+    exit 1
+fi

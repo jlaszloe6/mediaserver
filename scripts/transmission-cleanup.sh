@@ -59,7 +59,12 @@ HNR_DEFAULT_HOURS=72
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 
 transmission_rpc() {
-    curl -sf "$TRANSMISSION_URL" \
+    # --max-time bounds every caller of this helper (session-get,
+    # torrent-get, torrent-remove) - without it, a stalled (not just
+    # refused/errored) connection to Transmission would hang this cron
+    # job indefinitely instead of ever reaching any of the `||` error
+    # handling built around these calls.
+    curl -sf --max-time 30 "$TRANSMISSION_URL" \
         -H "X-Transmission-Session-Id: $1" \
         -H "Content-Type: application/json" \
         -d "$2" 2>/dev/null
@@ -97,16 +102,23 @@ get_hnr_hours() {
 log "=== Transmission orphan cleanup ==="
 
 # --- Connect to Transmission ---
-SID=$(curl -si "$TRANSMISSION_URL" 2>/dev/null \
+SID=$(curl -si --max-time 15 "$TRANSMISSION_URL" 2>/dev/null \
     | grep -oP '(?<=X-Transmission-Session-Id: )\S+' | head -1) || true
 if [ -z "$SID" ]; then
     log "ERROR: Cannot connect to Transmission"
     exit 1
 fi
 
-SEED_RATIO_LIMIT=$(transmission_rpc "$SID" \
-    '{"method":"session-get","arguments":{"fields":["seedRatioLimit"]}}' \
-    | jq -r '.arguments.seedRatioLimit // 2.0')
+# Session info is essential (feeds the ratio-based removal check below) -
+# fail the whole run rather than silently fall back to jq's `// 2.0` on
+# empty input from a failed request, which would apply the wrong ratio
+# limit to every private-tracker torrent without any indication why.
+SESSION_INFO=$(transmission_rpc "$SID" \
+    '{"method":"session-get","arguments":{"fields":["seedRatioLimit"]}}') || {
+    log "ERROR: Failed to query Transmission session info"
+    exit 1
+}
+SEED_RATIO_LIMIT=$(echo "$SESSION_INFO" | jq -r '.arguments.seedRatioLimit // 2.0')
 log "Session seed ratio limit: $SEED_RATIO_LIMIT"
 
 # --- Build orphan detection data (from ALL instances) ---
@@ -114,29 +126,51 @@ QUEUE_HASHES=$(mktemp)
 RADARR_IDS=$(mktemp)
 SONARR_IDS=$(mktemp)
 HISTORY_MAP=$(mktemp)
+TMPFILE=$(mktemp)
+trap 'rm -f "$QUEUE_HASHES" "$RADARR_IDS" "$SONARR_IDS" "$HISTORY_MAP" "$TMPFILE"' EXIT
+
+# Every fetch below feeds orphan detection further down (a torrent is
+# "orphaned" if it's NOT found in these lists) - a transient fetch failure
+# must NOT be silently treated as "confirmed empty", or a Radarr/Sonarr
+# blip during this run would make every one of its torrents look orphaned
+# and get deleted along with their downloaded data. FETCH_ERRORS tracks
+# that distinction; the old bare `|| true` only prevented a set -e abort
+# and made no such distinction at all.
+FETCH_ERRORS=0
 
 while IFS= read -r inst; do
     [ -z "$inst" ] && continue
     IFS='|' read -r s_url s_key r_url r_key <<< "$inst"
 
     # Queue hashes
-    curl -sf -H "X-Api-Key: $s_key" "$s_url/api/v3/queue?pageSize=200" 2>/dev/null \
-        | jq -r '.records[].downloadId // empty' 2>/dev/null >> "$QUEUE_HASHES" || true
-    curl -sf -H "X-Api-Key: $r_key" "$r_url/api/v3/queue?pageSize=200" 2>/dev/null \
-        | jq -r '.records[].downloadId // empty' 2>/dev/null >> "$QUEUE_HASHES" || true
+    curl -sf --max-time 15 -H "X-Api-Key: $s_key" "$s_url/api/v3/queue?pageSize=200" 2>/dev/null \
+        | jq -r '.records[].downloadId // empty' 2>/dev/null >> "$QUEUE_HASHES" \
+        || { log "ERROR: Failed to fetch Sonarr queue ($s_url)"; FETCH_ERRORS=$((FETCH_ERRORS + 1)); }
+    curl -sf --max-time 15 -H "X-Api-Key: $r_key" "$r_url/api/v3/queue?pageSize=200" 2>/dev/null \
+        | jq -r '.records[].downloadId // empty' 2>/dev/null >> "$QUEUE_HASHES" \
+        || { log "ERROR: Failed to fetch Radarr queue ($r_url)"; FETCH_ERRORS=$((FETCH_ERRORS + 1)); }
 
     # Library IDs
-    curl -sf -H "X-Api-Key: $r_key" "$r_url/api/v3/movie" 2>/dev/null \
-        | jq -r '.[].id' >> "$RADARR_IDS" || true
-    curl -sf -H "X-Api-Key: $s_key" "$s_url/api/v3/series" 2>/dev/null \
-        | jq -r '.[].id' >> "$SONARR_IDS" || true
+    curl -sf --max-time 15 -H "X-Api-Key: $r_key" "$r_url/api/v3/movie" 2>/dev/null \
+        | jq -r '.[].id' >> "$RADARR_IDS" \
+        || { log "ERROR: Failed to fetch Radarr movie library ($r_url)"; FETCH_ERRORS=$((FETCH_ERRORS + 1)); }
+    curl -sf --max-time 15 -H "X-Api-Key: $s_key" "$s_url/api/v3/series" 2>/dev/null \
+        | jq -r '.[].id' >> "$SONARR_IDS" \
+        || { log "ERROR: Failed to fetch Sonarr series library ($s_url)"; FETCH_ERRORS=$((FETCH_ERRORS + 1)); }
 
     # History mapping
-    curl -sf -H "X-Api-Key: $r_key" "$r_url/api/v3/history?pageSize=500" 2>/dev/null \
-        | jq -r '.records[] | select(.downloadId != null) | "R:" + (.downloadId | ascii_downcase) + ":" + (.movieId | tostring)' 2>/dev/null >> "$HISTORY_MAP" || true
-    curl -sf -H "X-Api-Key: $s_key" "$s_url/api/v3/history?pageSize=500" 2>/dev/null \
-        | jq -r '.records[] | select(.downloadId != null) | "S:" + (.downloadId | ascii_downcase) + ":" + (.seriesId | tostring)' 2>/dev/null >> "$HISTORY_MAP" || true
+    curl -sf --max-time 15 -H "X-Api-Key: $r_key" "$r_url/api/v3/history?pageSize=500" 2>/dev/null \
+        | jq -r '.records[] | select(.downloadId != null) | "R:" + (.downloadId | ascii_downcase) + ":" + (.movieId | tostring)' 2>/dev/null >> "$HISTORY_MAP" \
+        || { log "ERROR: Failed to fetch Radarr history ($r_url)"; FETCH_ERRORS=$((FETCH_ERRORS + 1)); }
+    curl -sf --max-time 15 -H "X-Api-Key: $s_key" "$s_url/api/v3/history?pageSize=500" 2>/dev/null \
+        | jq -r '.records[] | select(.downloadId != null) | "S:" + (.downloadId | ascii_downcase) + ":" + (.seriesId | tostring)' 2>/dev/null >> "$HISTORY_MAP" \
+        || { log "ERROR: Failed to fetch Sonarr history ($s_url)"; FETCH_ERRORS=$((FETCH_ERRORS + 1)); }
 done <<< "$INSTANCE_CONFIGS"
+
+if [ "$FETCH_ERRORS" -gt 0 ]; then
+    log "ERROR: $FETCH_ERRORS data fetch(es) failed - skipping this run rather than risk removing torrents based on incomplete orphan-detection data"
+    exit 1
+fi
 
 # Deduplicate and normalize
 sort -u -o "$QUEUE_HASHES" "$QUEUE_HASHES"
@@ -146,9 +180,8 @@ sort -u -o "$SONARR_IDS" "$SONARR_IDS"
 sort -u -o "$HISTORY_MAP" "$HISTORY_MAP"
 
 # --- Get torrents (with tracker info) ---
-TMPFILE=$(mktemp)
-trap 'rm -f "$QUEUE_HASHES" "$RADARR_IDS" "$SONARR_IDS" "$HISTORY_MAP" "$TMPFILE"' EXIT
-
+# Also essential - without it there's nothing to iterate below, so fail
+# loudly rather than let set -e abort mid-pipeline with no explanation.
 transmission_rpc "$SID" '{
     "method": "torrent-get",
     "arguments": {
@@ -156,11 +189,15 @@ transmission_rpc "$SID" '{
                     "seedRatioLimit","seedRatioMode","isFinished","doneDate","activityDate",
                     "trackers","isPrivate"]
     }
-}' | jq -c '.arguments.torrents[]' > "$TMPFILE"
+}' | jq -c '.arguments.torrents[]' > "$TMPFILE" || {
+    log "ERROR: Failed to fetch torrent list from Transmission"
+    exit 1
+}
 
 REMOVED=0
 SKIPPED=0
 KEPT=0
+FAILED=0
 NOW=$(date +%s)
 
 while IFS= read -r torrent; do
@@ -212,9 +249,21 @@ while IFS= read -r torrent; do
         DLDIR=$(echo "$torrent" | jq -r '.downloadDir // empty' 2>/dev/null || true)
         if [ -n "$DLDIR" ]; then
             HOST_DIR="${DLDIR/#\/downloads//mnt/mediaserver/torrents}"
+            # `|| MAIN_FILE=""`: this per-torrent RPC call is now bounded by
+            # transmission_rpc's --max-time, so a stalled/failed lookup for
+            # ONE old torrent actually returns a failure rather than
+            # hanging - without this guard, that failure would abort the
+            # whole script under set -e/pipefail, stopping processing of
+            # every other torrent in the loop over a single item's lookup.
+            # An empty MAIN_FILE just means "can't confirm via hardlink
+            # check", which correctly leaves ORPHANED unset for this
+            # torrent rather than wrongly asserting either outcome.
             MAIN_FILE=$(transmission_rpc "$SID" \
                 "{\"method\":\"torrent-get\",\"arguments\":{\"ids\":[$ID],\"fields\":[\"files\"]}}" \
-                | jq -r '[.arguments.torrents[0].files[] | {name, length}] | sort_by(-.length) | .[0].name // empty')
+                | jq -r '[.arguments.torrents[0].files[] | {name, length}] | sort_by(-.length) | .[0].name // empty') || {
+                log "  WARN: Could not query files for '$NAME' (RPC failed) - skipping hardlink check"
+                MAIN_FILE=""
+            }
             # File names come from the torrent's own metadata (attacker-
             # influenced) - reject anything containing ".." before joining
             # it into a filesystem path, even though this only feeds a
@@ -292,16 +341,29 @@ while IFS= read -r torrent; do
     # --- Remove the orphaned torrent ---
     if $DRY_RUN; then
         log "  [DRY RUN] Would remove orphan: $NAME ($REASON)"
+        REMOVED=$((REMOVED + 1))
     else
+        # `|| RESULT=""` guards the transport-level failure case (e.g.
+        # Transmission mid-restart) so it falls through to the same
+        # "not success" branch as an RPC-level failure, instead of
+        # aborting the whole script under set -e. REMOVED only increments
+        # on a *confirmed* "success" result - previously it incremented
+        # unconditionally, so a failed removal (network error or RPC
+        # rejection) was still counted and reported as if the torrent
+        # and its data had actually been deleted.
         RESULT=$(transmission_rpc "$SID" \
-            "{\"method\":\"torrent-remove\",\"arguments\":{\"ids\":[$ID],\"delete-local-data\":true}}")
-        if [ "$(echo "$RESULT" | jq -r '.result // "error"')" = "success" ]; then
+            "{\"method\":\"torrent-remove\",\"arguments\":{\"ids\":[$ID],\"delete-local-data\":true}}") || RESULT=""
+        if [ "$(echo "$RESULT" | jq -r '.result // "error"' 2>/dev/null)" = "success" ]; then
             log "  Removed orphan + data: $NAME ($REASON)"
+            REMOVED=$((REMOVED + 1))
         else
             log "  ERROR: Failed to remove '$NAME'"
+            FAILED=$((FAILED + 1))
         fi
     fi
-    REMOVED=$((REMOVED + 1))
 done < "$TMPFILE"
 
-log "Done: removed=$REMOVED skipped=$SKIPPED kept=$KEPT"
+log "Done: removed=$REMOVED skipped=$SKIPPED kept=$KEPT failed=$FAILED"
+if [ "$FAILED" -gt 0 ]; then
+    exit 1
+fi

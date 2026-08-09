@@ -44,6 +44,12 @@ mkdir -p "$STATE_DIR"
 
 ERRORS=0
 
+# See process_movies/process_series: they run in a subshell (command
+# substitution) and can't mutate ERRORS directly, so they append their own
+# error counts here instead.
+ERRORS_FILE=$(mktemp)
+trap 'rm -f "$ERRORS_FILE"' EXIT
+
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >&2
 }
@@ -94,21 +100,35 @@ trigger_rescan() {
 }
 
 # Process movies: detect deleted files and cleanup
+#
+# Called via command substitution (new_movies=$(process_movies ...)), which
+# runs this entire function in a subshell - any `ERRORS=$((ERRORS + 1))`
+# here would be invisible to the caller once the subshell exits. `errors_file`
+# is how a failure inside this function reaches the top-level ERRORS count;
+# writing to a file crosses the subshell boundary, mutating a variable does
+# not.
 process_movies() {
     local base_url="$1"
     local api_key="$2"
     local prev_state="$3"
+    local errors_file="$4"
+
+    local errors=0
 
     local movies
-    movies=$(curl -sf -H "X-Api-Key: $api_key" "$base_url/api/v3/movie") || {
+    movies=$(curl -sf --max-time 15 -H "X-Api-Key: $api_key" "$base_url/api/v3/movie") || {
         log "  ERROR: Failed to fetch movies from Radarr"
-        ERRORS=$((ERRORS + 1))
-        echo "{}"
+        errors=$((errors + 1))
+        echo "$errors" >> "$errors_file"
+        # Return the PREVIOUS state unchanged, not {} - the caller saves
+        # whatever this function outputs as the new baseline. Saving {}
+        # here would wipe out every movie's true baseline on one transient
+        # fetch failure, and the next run's true->false transition check
+        # (which needs prev[id] == true) could then never fire for
+        # whatever was already deleted from Jellyfin before this failure.
+        echo "$prev_state"
         return
     }
-
-    local current_state
-    current_state=$(echo "$movies" | jq '[.[] | {key: (.id | tostring), value: .hasFile}] | from_entries')
 
     local deleted
     deleted=$(echo "$movies" | jq -c --argjson prev "$prev_state" '
@@ -118,6 +138,15 @@ process_movies() {
             ($prev[(.id | tostring)] // null) == true
         ) | {id, title}
     ')
+
+    # IDs whose deletion attempt failed - their hasFile in the state we save
+    # below must NOT be updated to the real (false) value. If it were, the
+    # true->false transition detected this run would already look "seen"
+    # next run (prev[id] would already be false), so a transient delete
+    # failure would silently cancel the retry forever even though the
+    # movie is still sitting in Radarr, monitored, and not excluded from
+    # re-import.
+    local failed_ids="[]"
 
     if [ -n "$deleted" ]; then
         local count=0
@@ -133,16 +162,23 @@ process_movies() {
                 continue
             fi
 
-            del_code=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE \
+            # `|| del_code="000"`: without it, a transport-level curl
+            # failure (Radarr mid-restart, network blip) would abort the
+            # whole script right here under set -e, before the existing
+            # HTTP-status check below ever ran - "000" correctly falls
+            # into that check's else branch instead, so a delete that
+            # never actually happened can't be silently treated as done.
+            del_code=$(curl -s --max-time 15 -o /dev/null -w '%{http_code}' -X DELETE \
                 -H "X-Api-Key: $api_key" \
-                "$base_url/api/v3/movie/$id?deleteFiles=true&addImportExclusion=true")
+                "$base_url/api/v3/movie/$id?deleteFiles=true&addImportExclusion=true") || del_code="000"
 
             if [ "$del_code" = "200" ]; then
                 log "  Removed movie '$title' (deleted from library, excluded from re-import)"
                 count=$((count + 1))
             else
                 log "  ERROR: Failed to remove movie '$title' (HTTP $del_code)"
-                ERRORS=$((ERRORS + 1))
+                errors=$((errors + 1))
+                failed_ids=$(echo "$failed_ids" | jq -c --argjson id "$id" '. + [$id]')
             fi
         done <<< "$deleted"
         log "  Cleaned up $count movie(s) deleted from library"
@@ -150,25 +186,33 @@ process_movies() {
         log "  No movies deleted since last check"
     fi
 
-    echo "$movies" | jq '[.[] | {key: (.id | tostring), value: .hasFile}] | from_entries'
+    echo "$errors" >> "$errors_file"
+    echo "$movies" | jq --argjson prev "$prev_state" --argjson failed "$failed_ids" '
+        [.[] | {key: (.id | tostring), value: (if (.id | IN($failed[])) then ($prev[(.id | tostring)] // .hasFile) else .hasFile end)}] | from_entries
+    '
 }
 
 # Process series: detect deleted files and cleanup
+# See process_movies' comment above re: errors_file and the subshell boundary.
 process_series() {
     local base_url="$1"
     local api_key="$2"
     local prev_state="$3"
+    local errors_file="$4"
+
+    local errors=0
 
     local series
-    series=$(curl -sf -H "X-Api-Key: $api_key" "$base_url/api/v3/series") || {
+    series=$(curl -sf --max-time 15 -H "X-Api-Key: $api_key" "$base_url/api/v3/series") || {
         log "  ERROR: Failed to fetch series from Sonarr"
-        ERRORS=$((ERRORS + 1))
-        echo "{}"
+        errors=$((errors + 1))
+        echo "$errors" >> "$errors_file"
+        # See process_movies' matching comment above - return the previous
+        # state, not {}, so a transient fetch failure can't wipe the
+        # baseline needed to detect an already-deleted series next run.
+        echo "$prev_state"
         return
     }
-
-    local current_state
-    current_state=$(echo "$series" | jq '[.[] | {key: (.id | tostring), value: (.statistics.sizeOnDisk // 0)}] | from_entries')
 
     local deleted
     deleted=$(echo "$series" | jq -c --argjson prev "$prev_state" '
@@ -178,6 +222,10 @@ process_series() {
             ($prev[(.id | tostring)] // 0) > 0
         ) | {id, title}
     ')
+
+    # See process_movies' matching comment above re: failed_ids and why
+    # a failed deletion must not advance the saved state for that item.
+    local failed_ids="[]"
 
     if [ -n "$deleted" ]; then
         local count=0
@@ -193,16 +241,18 @@ process_series() {
                 continue
             fi
 
-            del_code=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE \
+            # Same set -e guard as the movie DELETE above.
+            del_code=$(curl -s --max-time 15 -o /dev/null -w '%{http_code}' -X DELETE \
                 -H "X-Api-Key: $api_key" \
-                "$base_url/api/v3/series/$id?deleteFiles=true&addImportListExclusion=true")
+                "$base_url/api/v3/series/$id?deleteFiles=true&addImportListExclusion=true") || del_code="000"
 
             if [ "$del_code" = "200" ]; then
                 log "  Removed series '$title' (deleted from library, excluded from re-import)"
                 count=$((count + 1))
             else
                 log "  ERROR: Failed to remove series '$title' (HTTP $del_code)"
-                ERRORS=$((ERRORS + 1))
+                errors=$((errors + 1))
+                failed_ids=$(echo "$failed_ids" | jq -c --argjson id "$id" '. + [$id]')
             fi
         done <<< "$deleted"
         log "  Cleaned up $count series deleted from library"
@@ -210,7 +260,10 @@ process_series() {
         log "  No series deleted since last check"
     fi
 
-    echo "$current_state"
+    echo "$errors" >> "$errors_file"
+    echo "$series" | jq --argjson prev "$prev_state" --argjson failed "$failed_ids" '
+        [.[] | {key: (.id | tostring), value: (if (.id | IN($failed[])) then ($prev[(.id | tostring)] // (.statistics.sizeOnDisk // 0)) else (.statistics.sizeOnDisk // 0) end)}] | from_entries
+    '
 }
 
 # --- Process ---
@@ -234,10 +287,16 @@ else
 fi
 
 log "Checking Radarr movies..."
-new_movies=$(process_movies "$RADARR_URL" "$RADARR_KEY" "$prev_movies")
+new_movies=$(process_movies "$RADARR_URL" "$RADARR_KEY" "$prev_movies" "$ERRORS_FILE")
 
 log "Checking Sonarr series..."
-new_series=$(process_series "$SONARR_URL" "$SONARR_KEY" "$prev_series")
+new_series=$(process_series "$SONARR_URL" "$SONARR_KEY" "$prev_series" "$ERRORS_FILE")
+
+# Sum up whatever process_movies/process_series recorded - see their
+# shared comment above for why this can't just be a variable increment.
+while IFS= read -r n; do
+    ERRORS=$((ERRORS + n))
+done < "$ERRORS_FILE"
 
 jq -n \
     --argjson movies "$new_movies" \
