@@ -373,9 +373,12 @@ handle_stalled() {
     local queue
     queue=$(curl -sf -H "X-Api-Key: $api_key" "$base_url/api/v3/queue?page=1&pageSize=100") || return 1
 
-    # Find items that are "downloading" but have statusMessages with warnings
+    # Find items that are "downloading" but flagged warning/error - same pair
+    # of statuses pipeline-monitor.sh's own alert checks for, so nothing
+    # falls into the gap between "excluded from auto-fix below" and "never
+    # alerted at all".
     local warning_items
-    warning_items=$(echo "$queue" | jq -c '[.records[] | select(.trackedDownloadState == "downloading" and .trackedDownloadStatus == "warning")]')
+    warning_items=$(echo "$queue" | jq -c '[.records[] | select(.trackedDownloadState == "downloading" and (.trackedDownloadStatus == "warning" or .trackedDownloadStatus == "error"))]')
     local warning_count
     warning_count=$(echo "$warning_items" | jq 'length')
 
@@ -455,29 +458,36 @@ handle_stalled() {
             continue
         fi
 
-        # `|| true` on both search calls below: the removal+blocklist above
-        # already succeeded, so a failed search request here is non-critical
-        # (Radarr/Sonarr's normal periodic search will pick it up regardless)
-        # and must not be allowed to abort the rest of the script via set -e.
-        local media_id_for_search
+        # Removal+blocklist above already succeeded and the item is gone
+        # from the queue, so a failed search request here can't be retried
+        # on the next run - capture success/failure explicitly (rather than
+        # a blind `|| true`) so the alert below can say so, instead of
+        # silently claiming a search that didn't actually go out.
+        local media_id_for_search search_ok
+        search_ok=true
         if [ "$media_type" = "movie" ]; then
             media_id_for_search=$(echo "$item" | jq -r '.movieId // empty')
             if [ -n "$media_id_for_search" ]; then
                 curl -sf -X POST -H "X-Api-Key: $api_key" -H "Content-Type: application/json" \
                     "$base_url/api/v3/command" \
-                    -d "{\"name\":\"MoviesSearch\",\"movieIds\":[$media_id_for_search]}" > /dev/null 2>&1 || true
+                    -d "{\"name\":\"MoviesSearch\",\"movieIds\":[$media_id_for_search]}" > /dev/null 2>&1 || search_ok=false
             fi
         else
             media_id_for_search=$(echo "$item" | jq -r '.seriesId // empty')
             if [ -n "$media_id_for_search" ]; then
                 curl -sf -X POST -H "X-Api-Key: $api_key" -H "Content-Type: application/json" \
                     "$base_url/api/v3/command" \
-                    -d "{\"name\":\"SeriesSearch\",\"seriesId\":$media_id_for_search}" > /dev/null 2>&1 || true
+                    -d "{\"name\":\"SeriesSearch\",\"seriesId\":$media_id_for_search}" > /dev/null 2>&1 || search_ok=false
             fi
         fi
 
         log "  Removed and blocklisted '$title'"
-        queue_alert "[AUTO-FIXED] $service_name: Removed zero-progress download '$title' (0% after $((age / 3600))h), blocklisted, searching for new release"
+        if $search_ok; then
+            queue_alert "[AUTO-FIXED] $service_name: Removed zero-progress download '$title' (0% after $((age / 3600))h), blocklisted, searching for new release"
+        else
+            log "  WARN: Search request failed for '$title' — may need a manual search"
+            queue_alert "[AUTO-FIXED, SEARCH FAILED] $service_name: Removed and blocklisted zero-progress download '$title' (0% after $((age / 3600))h), but the follow-up search request failed — search manually"
+        fi
     done <<< "$downloading_records"
 }
 
