@@ -1399,6 +1399,80 @@ extract_reboot_test_backups_tail() {
     sed -n '/^# --- 9. Backups ---$/,$p' "$REPO_ROOT/scripts/reboot-test.sh"
 }
 
+extract_reboot_test_cron_section() {
+    sed -n '/^# --- 7\. Cron ---$/,/^# --- 8\. Caddy TLS ---$/{/^# --- 8\. Caddy TLS ---$/!p}' "$REPO_ROOT/scripts/reboot-test.sh"
+}
+
+test_reboot_test_job_count_zero_jobs_reports_cleanly() {
+    local snippet output
+    snippet=$(extract_reboot_test_cron_section)
+
+    # `docker` is stubbed directly as a shell function rather than mocked
+    # via PATH, matching the transmission_rpc()-stubbing technique used
+    # for ebook-pipeline.sh's tests - both real call sites in this section
+    # run the identical `docker exec cron crontab -l` command, so one
+    # consistent stub covers both.
+    output=$(
+        set -euo pipefail
+        PASSED=0 FAILED=0 WARNED=0
+        GREEN='' RED='' YELLOW='' NC=''
+        pass() { echo "PASS: $*"; PASSED=$((PASSED + 1)); }
+        fail() { echo "FAIL: $*"; FAILED=$((FAILED + 1)); }
+        warn_check() { echo "WARN: $*"; WARNED=$((WARNED + 1)); }
+        docker() {
+            if [ "$1" = "exec" ] && [ "$2" = "cron" ] && [ "$3" = "crontab" ] && [ "$4" = "-l" ]; then
+                printf '# only a comment, no real jobs\n'
+                return 0
+            fi
+            return 1
+        }
+        eval "$snippet"
+        echo "reached the end of the cron section"
+    )
+
+    # The old `|| echo 0` shape produced a literal "0\n0" job_count value
+    # here, which broke the `-gt 0` comparison with a stray "integer
+    # expression expected" stderr message - checking for the CLEAN
+    # "Cron has no scheduled jobs" line (not the "integer expression"
+    # noise) is what actually distinguishes the fix from the old bug,
+    # since both "happen" to reach the same fail() call either way.
+    if echo "$output" | grep -q "FAIL: Cron has no scheduled jobs" \
+        && ! echo "$output" | grep -qi "integer expression expected" \
+        && echo "$output" | grep -q "reached the end of the cron section"; then
+        pass "reboot-test.sh's job_count reports cleanly (no stray error) when the crontab has zero real jobs"
+    else
+        fail "reboot-test.sh's job_count reports cleanly (no stray error) when the crontab has zero real jobs (output='$output')"
+    fi
+}
+
+test_reboot_test_job_count_nonzero_jobs_reports_correct_count() {
+    local snippet output
+    snippet=$(extract_reboot_test_cron_section)
+
+    output=$(
+        set -euo pipefail
+        PASSED=0 FAILED=0 WARNED=0
+        GREEN='' RED='' YELLOW='' NC=''
+        pass() { echo "PASS: $*"; PASSED=$((PASSED + 1)); }
+        fail() { echo "FAIL: $*"; FAILED=$((FAILED + 1)); }
+        warn_check() { echo "WARN: $*"; WARNED=$((WARNED + 1)); }
+        docker() {
+            if [ "$1" = "exec" ] && [ "$2" = "cron" ] && [ "$3" = "crontab" ] && [ "$4" = "-l" ]; then
+                printf '# a comment\n*/30 * * * * /scripts/a.sh\n0 3 * * * /scripts/b.sh\n'
+                return 0
+            fi
+            return 1
+        }
+        eval "$snippet"
+    )
+
+    if echo "$output" | grep -q "PASS: Cron has 2 scheduled job(s)"; then
+        pass "reboot-test.sh's job_count still reports the correct count when real jobs are present"
+    else
+        fail "reboot-test.sh's job_count still reports the correct count when real jobs are present (output='$output')"
+    fi
+}
+
 test_count_encrypted_backups_empty_dir_returns_zero() {
     local func_src empty_dir result
     func_src=$(extract_bash_function "count_encrypted_backups" "$REPO_ROOT/scripts/reboot-test.sh")
@@ -1443,6 +1517,58 @@ test_count_encrypted_backups_counts_existing_files() {
         fail "count_encrypted_backups counts existing matching files correctly (result='$result')"
     fi
     rm -rf "$full_dir"
+}
+
+test_latest_encrypted_backup_selects_newest_by_mtime() {
+    local func_src full_dir result
+    func_src=$(extract_bash_function "latest_encrypted_backup" "$REPO_ROOT/scripts/reboot-test.sh")
+    full_dir=$(mktemp -d)
+    # Deliberately distinct, out-of-alphabetical-order mtimes so a
+    # regression to alphabetical/glob-order selection (instead of genuine
+    # mtime comparison) would be caught - "backup-a" is alphabetically
+    # first but is the actual newest file here.
+    touch -d "2026-01-01 00:00:00" "$full_dir/backup-b-older.tar.gz.enc"
+    touch -d "2026-01-03 00:00:00" "$full_dir/backup-a-newest.tar.gz.enc"
+    touch -d "2026-01-02 00:00:00" "$full_dir/backup-c-middle.tar.gz.enc"
+
+    result=$(
+        set -euo pipefail
+        eval "$func_src"
+        latest_encrypted_backup "$full_dir"
+    )
+
+    if [ "$(basename "$result")" = "backup-a-newest.tar.gz.enc" ]; then
+        pass "latest_encrypted_backup selects the actual newest file by mtime, not glob/alphabetical order"
+    else
+        fail "latest_encrypted_backup selects the actual newest file by mtime, not glob/alphabetical order (result='$result')"
+    fi
+    rm -rf "$full_dir"
+}
+
+test_latest_encrypted_backup_empty_dir_returns_empty_without_aborting() {
+    local func_src empty_dir result
+    func_src=$(extract_bash_function "latest_encrypted_backup" "$REPO_ROOT/scripts/reboot-test.sh")
+    empty_dir=$(mktemp -d)
+
+    # The real call site only reaches this function when backup_count > 0,
+    # but the function itself should still degrade gracefully (empty
+    # result, not an aborted script) on a non-matching glob given the
+    # same nullglob approach as count_encrypted_backups() - this is what
+    # actually closes the TOCTOU gap the old `ls -t | head -1` had if
+    # every matching file were removed between the count and this call.
+    result=$(
+        set -euo pipefail
+        eval "$func_src"
+        latest_encrypted_backup "$empty_dir"
+        echo "REACHED_END"
+    )
+
+    if [ "$(echo "$result" | tail -1)" = "REACHED_END" ] && [ -z "$(echo "$result" | head -1)" ]; then
+        pass "latest_encrypted_backup returns an empty result without aborting on a non-matching glob"
+    else
+        fail "latest_encrypted_backup returns an empty result without aborting on a non-matching glob (result='$result')"
+    fi
+    rm -rf "$empty_dir"
 }
 
 test_reboot_test_empty_backup_dir_does_not_abort_and_prints_summary() {
@@ -1549,8 +1675,12 @@ test_fetch_completed_torrents_scratch_file_shares_out_file_directory
 test_fetch_completed_torrents_mktemp_failure_is_reported_not_silently_successful
 test_fetch_completed_torrents_mv_failure_is_reported_not_silently_successful
 test_fetch_completed_torrents_failure_does_not_abort_caller
+test_reboot_test_job_count_zero_jobs_reports_cleanly
+test_reboot_test_job_count_nonzero_jobs_reports_correct_count
 test_count_encrypted_backups_empty_dir_returns_zero
 test_count_encrypted_backups_counts_existing_files
+test_latest_encrypted_backup_selects_newest_by_mtime
+test_latest_encrypted_backup_empty_dir_returns_empty_without_aborting
 test_reboot_test_empty_backup_dir_does_not_abort_and_prints_summary
 test_reboot_test_backup_dir_with_backups_still_reports_correct_count
 

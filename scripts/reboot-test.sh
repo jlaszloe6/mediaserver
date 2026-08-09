@@ -280,12 +280,39 @@ count_encrypted_backups() {
     echo "${#matches[@]}"
 }
 
+# Re-globbing separately for the "latest" lookup (the original `ls -t
+# "$BACKUP_DIR"/backup-*.tar.gz.enc | head -1`) reopens the exact same
+# non-matching-glob failure mode this whole fix is about, just on a
+# narrower trigger (files removed between the count above and this call,
+# rather than the directory simply starting empty) - `ls` on zero matches
+# still fails the same way regardless of why there are zero matches now.
+# Reuses the same nullglob + array approach as count_encrypted_backups()
+# so a non-matching glob here degrades to an empty result instead of a
+# failure, and finds the newest file by mtime directly rather than
+# piping `ls -t` into `head -1`.
+latest_encrypted_backup() {
+    local dir="$1"
+    local -a matches
+    local f latest="" latest_mtime=-1 mtime
+    shopt -s nullglob
+    matches=("$dir"/backup-*.tar.gz.enc)
+    shopt -u nullglob
+    for f in "${matches[@]}"; do
+        mtime=$(stat -c %Y "$f" 2>/dev/null) || continue
+        if [ "$mtime" -gt "$latest_mtime" ]; then
+            latest_mtime="$mtime"
+            latest="$f"
+        fi
+    done
+    echo "$latest"
+}
+
 echo "[Backups]"
 BACKUP_DIR="${BACKUP_DIR:-${MEDIA_ROOT}/backups}"
 if [ -d "$BACKUP_DIR" ]; then
     backup_count=$(count_encrypted_backups "$BACKUP_DIR")
     if [ "$backup_count" -gt 0 ]; then
-        latest=$(ls -t "$BACKUP_DIR"/backup-*.tar.gz.enc | head -1)
+        latest=$(latest_encrypted_backup "$BACKUP_DIR")
         latest_name=$(basename "$latest")
         pass "$backup_count backup(s) on NAS (latest: $latest_name)"
     else
