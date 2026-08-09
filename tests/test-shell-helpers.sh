@@ -297,25 +297,26 @@ MOCKEOF
 }
 
 test_wait_for_service_still_detects_transmission_409() {
-    local mockdir counter func_src result
+    local mockdir func_src result
     mockdir=$(mktemp -d)
     mkdir -p "$mockdir/bin"
-    counter="$mockdir/count"
-    echo 0 > "$counter"
 
-    # Invocation 1 = the main -sf check: fails, as -f does for any non-2xx
-    # response (Transmission's real HTTP 409). Invocation 2 = the
-    # Transmission-specific check: succeeds and prints "409", the exact
-    # signal this function treats as "ready" despite the non-2xx status -
-    # pre-existing, unchanged-by-this-fix behavior that must still work.
+    # Simulates a server that always answers HTTP 409, based on the actual
+    # curl flags received rather than call order: real curl with -f fails
+    # (exit 22, no body) on any non-2xx status, while without -f it
+    # succeeds and delivers the raw status via -w. This is what actually
+    # protects the transport-failure-vs-HTTP-409 distinction - a
+    # call-order-based mock would stay green even if `-f` were accidentally
+    # added to the Transmission-specific probe, even though real curl
+    # would then exit 22 there too and the service would never be marked
+    # ready.
     cat > "$mockdir/bin/curl" <<'MOCKEOF'
 #!/usr/bin/env bash
-n=$(cat "$COUNTER_FILE")
-n=$((n + 1))
-echo "$n" > "$COUNTER_FILE"
-if [ "$n" -eq 1 ]; then
-    exit 22
-fi
+for arg in "$@"; do
+    case "$arg" in
+        -*f*) exit 22 ;;
+    esac
+done
 echo -n "409"
 exit 0
 MOCKEOF
@@ -325,7 +326,6 @@ MOCKEOF
 
     (
         set -euo pipefail
-        export COUNTER_FILE="$counter"
         export PATH="$mockdir/bin:$ORIGINAL_PATH"
         log_info() { :; }
         log_ok() { :; }
