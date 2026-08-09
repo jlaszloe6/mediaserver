@@ -407,8 +407,12 @@ handle_stalled() {
     now_epoch=$(date +%s)
     local stuck_threshold=7200  # 2 hours
 
+    # Excludes warning/error status explicitly - those are the branch above's
+    # job. A 0%-for-2h item with a disk-space or client-side warning is an
+    # infrastructure problem, not a dead release, and blocklisting it would
+    # just repeat the same failure against a different torrent.
     local downloading_items
-    downloading_items=$(echo "$queue" | jq -c '[.records[] | select(.trackedDownloadState == "downloading")]')
+    downloading_items=$(echo "$queue" | jq -c '[.records[] | select(.trackedDownloadState == "downloading" and .trackedDownloadStatus != "warning" and .trackedDownloadStatus != "error")]')
     local downloading_records
     downloading_records=$(echo "$downloading_items" | jq -c '.[]')
     while IFS= read -r item; do
@@ -435,10 +439,14 @@ handle_stalled() {
             continue
         fi
 
+        # Script runs under `set -e` - without the `|| del_code="000"` a
+        # transport-level curl failure (e.g. Radarr/Sonarr mid-restart, as
+        # happened during today's deploys) would abort the whole script
+        # right here instead of falling through to the error handling below.
         local del_code
         del_code=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE \
             -H "X-Api-Key: $api_key" \
-            "$base_url/api/v3/queue/$id?removeFromClient=true&blocklist=true&skipReprocess=false")
+            "$base_url/api/v3/queue/$id?removeFromClient=true&blocklist=true&skipReprocess=false") || del_code="000"
 
         if [ "$del_code" != "200" ]; then
             log "  ERROR: Failed to remove '$title' (HTTP $del_code)"
@@ -447,20 +455,24 @@ handle_stalled() {
             continue
         fi
 
+        # `|| true` on both search calls below: the removal+blocklist above
+        # already succeeded, so a failed search request here is non-critical
+        # (Radarr/Sonarr's normal periodic search will pick it up regardless)
+        # and must not be allowed to abort the rest of the script via set -e.
         local media_id_for_search
         if [ "$media_type" = "movie" ]; then
             media_id_for_search=$(echo "$item" | jq -r '.movieId // empty')
             if [ -n "$media_id_for_search" ]; then
                 curl -sf -X POST -H "X-Api-Key: $api_key" -H "Content-Type: application/json" \
                     "$base_url/api/v3/command" \
-                    -d "{\"name\":\"MoviesSearch\",\"movieIds\":[$media_id_for_search]}" > /dev/null 2>&1
+                    -d "{\"name\":\"MoviesSearch\",\"movieIds\":[$media_id_for_search]}" > /dev/null 2>&1 || true
             fi
         else
             media_id_for_search=$(echo "$item" | jq -r '.seriesId // empty')
             if [ -n "$media_id_for_search" ]; then
                 curl -sf -X POST -H "X-Api-Key: $api_key" -H "Content-Type: application/json" \
                     "$base_url/api/v3/command" \
-                    -d "{\"name\":\"SeriesSearch\",\"seriesId\":$media_id_for_search}" > /dev/null 2>&1
+                    -d "{\"name\":\"SeriesSearch\",\"seriesId\":$media_id_for_search}" > /dev/null 2>&1 || true
             fi
         fi
 
