@@ -1384,6 +1384,344 @@ test_fetch_completed_torrents_failure_does_not_abort_caller() {
     rm -f "$out_file"
 }
 
+# --- scripts/reboot-test.sh tests -------------------------------------------
+#
+# count_encrypted_backups() is extracted and eval'd the same way as the
+# helpers above. The "does the script still reach its own summary" tests
+# below extract the whole Backups-section-through-EOF tail instead (this
+# script has no sourcing guard and runs many live docker/network checks
+# before this point, so running it end-to-end isn't practical) - this
+# still exercises the actual shipped code for the exact part that changed,
+# with pass/fail/warn_check and the PASSED/FAILED/WARNED counters stubbed
+# the same way the real script defines them.
+
+extract_reboot_test_backups_tail() {
+    sed -n '/^# --- 9. Backups ---$/,$p' "$REPO_ROOT/scripts/reboot-test.sh"
+}
+
+extract_reboot_test_cron_section() {
+    sed -n '/^# --- 7\. Cron ---$/,/^# --- 8\. Caddy TLS ---$/{/^# --- 8\. Caddy TLS ---$/!p}' "$REPO_ROOT/scripts/reboot-test.sh"
+}
+
+test_reboot_test_job_count_zero_jobs_reports_cleanly() {
+    local snippet output
+    snippet=$(extract_reboot_test_cron_section)
+
+    # `docker` is stubbed directly as a shell function rather than mocked
+    # via PATH, matching the transmission_rpc()-stubbing technique used
+    # for ebook-pipeline.sh's tests - both real call sites in this section
+    # run the identical `docker exec cron crontab -l` command, so one
+    # consistent stub covers both.
+    #
+    # The { ...; } 2>&1 group is required, not a trailing `2>&1` line (a
+    # bare redirect on its own line doesn't retroactively apply to
+    # earlier commands - learned this exact lesson earlier in this same
+    # audit series) - the old bug's own diagnostic ("integer expression
+    # expected") is a bash `[` builtin error, which goes to stderr, not
+    # stdout; without merging streams here this test would pass even
+    # against the genuinely broken pre-fix code, since fail() and the
+    # trailing echo both still reach stdout regardless. Verified directly
+    # against a scratch copy of the real pre-fix code that this specific
+    # assertion only starts working once stderr is actually captured.
+    output=$(
+        {
+            set -euo pipefail
+            PASSED=0 FAILED=0 WARNED=0
+            GREEN='' RED='' YELLOW='' NC=''
+            pass() { echo "PASS: $*"; PASSED=$((PASSED + 1)); }
+            fail() { echo "FAIL: $*"; FAILED=$((FAILED + 1)); }
+            warn_check() { echo "WARN: $*"; WARNED=$((WARNED + 1)); }
+            docker() {
+                if [ "$1" = "exec" ] && [ "$2" = "cron" ] && [ "$3" = "crontab" ] && [ "$4" = "-l" ]; then
+                    printf '# only a comment, no real jobs\n'
+                    return 0
+                fi
+                return 1
+            }
+            eval "$snippet"
+            echo "reached the end of the cron section"
+        } 2>&1
+    )
+
+    # The old `|| echo 0` shape produced a literal "0\n0" job_count value
+    # here, which broke the `-gt 0` comparison with a stray "integer
+    # expression expected" stderr message - checking for the CLEAN
+    # "Cron has no scheduled jobs" line (not the "integer expression"
+    # noise) is what actually distinguishes the fix from the old bug,
+    # since both "happen" to reach the same fail() call either way.
+    if echo "$output" | grep -q "FAIL: Cron has no scheduled jobs" \
+        && ! echo "$output" | grep -qi "integer expression expected" \
+        && echo "$output" | grep -q "reached the end of the cron section"; then
+        pass "reboot-test.sh's job_count reports cleanly (no stray error) when the crontab has zero real jobs"
+    else
+        fail "reboot-test.sh's job_count reports cleanly (no stray error) when the crontab has zero real jobs (output='$output')"
+    fi
+}
+
+test_reboot_test_job_count_nonzero_jobs_reports_correct_count() {
+    local snippet output
+    snippet=$(extract_reboot_test_cron_section)
+
+    output=$(
+        set -euo pipefail
+        PASSED=0 FAILED=0 WARNED=0
+        GREEN='' RED='' YELLOW='' NC=''
+        pass() { echo "PASS: $*"; PASSED=$((PASSED + 1)); }
+        fail() { echo "FAIL: $*"; FAILED=$((FAILED + 1)); }
+        warn_check() { echo "WARN: $*"; WARNED=$((WARNED + 1)); }
+        docker() {
+            if [ "$1" = "exec" ] && [ "$2" = "cron" ] && [ "$3" = "crontab" ] && [ "$4" = "-l" ]; then
+                printf '# a comment\n*/30 * * * * /scripts/a.sh\n0 3 * * * /scripts/b.sh\n'
+                return 0
+            fi
+            return 1
+        }
+        eval "$snippet"
+    )
+
+    if echo "$output" | grep -q "PASS: Cron has 2 scheduled job(s)"; then
+        pass "reboot-test.sh's job_count still reports the correct count when real jobs are present"
+    else
+        fail "reboot-test.sh's job_count still reports the correct count when real jobs are present (output='$output')"
+    fi
+}
+
+test_reboot_test_cron_unreadable_reports_cannot_read() {
+    local snippet output
+    snippet=$(extract_reboot_test_cron_section)
+
+    # Previously untested: the original code called `docker exec cron
+    # crontab -l` twice - once discarded (just to check reachability),
+    # once captured for the count - which meant a transient failure on
+    # specifically the *second* call could get silently misreported as
+    # "no scheduled jobs" instead of "Cannot read cron jobs" (a real
+    # finding from this PR's own review). The fix reads the crontab
+    # exactly once, so there's now only a single failure mode to verify:
+    # `docker exec` itself failing outright must still report clearly as
+    # unreadable, not as zero jobs.
+    output=$(
+        set -euo pipefail
+        PASSED=0 FAILED=0 WARNED=0
+        GREEN='' RED='' YELLOW='' NC=''
+        pass() { echo "PASS: $*"; PASSED=$((PASSED + 1)); }
+        fail() { echo "FAIL: $*"; FAILED=$((FAILED + 1)); }
+        warn_check() { echo "WARN: $*"; WARNED=$((WARNED + 1)); }
+        docker() { return 1; }
+        eval "$snippet"
+    )
+
+    if echo "$output" | grep -q "FAIL: Cannot read cron jobs" \
+        && ! echo "$output" | grep -qi "no scheduled jobs"; then
+        pass "reboot-test.sh reports 'Cannot read cron jobs' distinctly when docker exec itself fails, not as zero jobs"
+    else
+        fail "reboot-test.sh reports 'Cannot read cron jobs' distinctly when docker exec itself fails, not as zero jobs (output='$output')"
+    fi
+}
+
+test_reboot_test_cron_reads_crontab_exactly_once() {
+    local snippet counter output
+    snippet=$(extract_reboot_test_cron_section)
+    counter=$(mktemp)
+    echo 0 > "$counter"
+
+    # Reproduces the specific race this PR's own review flagged: the old
+    # code called `docker exec cron crontab -l` TWICE (once discarded,
+    # just to check reachability; once captured, for the count) - if the
+    # first call succeeded but a second, separate call transiently
+    # failed, the old `|| true` fallback on that second call's pipe would
+    # have silently reported "no scheduled jobs" instead of the more
+    # accurate "Cannot read cron jobs". This mock succeeds on the first
+    # invocation and fails on any subsequent one, matching that exact
+    # worst case - the fixed code reads the crontab exactly once, so
+    # there's no second call left to ever hit this mock's failure branch.
+    output=$(
+        set -euo pipefail
+        PASSED=0 FAILED=0 WARNED=0
+        GREEN='' RED='' YELLOW='' NC=''
+        pass() { echo "PASS: $*"; PASSED=$((PASSED + 1)); }
+        fail() { echo "FAIL: $*"; FAILED=$((FAILED + 1)); }
+        warn_check() { echo "WARN: $*"; WARNED=$((WARNED + 1)); }
+        COUNTER_FILE="$counter"
+        docker() {
+            local n
+            n=$(cat "$COUNTER_FILE")
+            n=$((n + 1))
+            echo "$n" > "$COUNTER_FILE"
+            if [ "$n" -eq 1 ]; then
+                printf '*/30 * * * * /scripts/a.sh\n'
+                return 0
+            fi
+            return 1
+        }
+        eval "$snippet"
+    )
+
+    if echo "$output" | grep -q "PASS: Cron has 1 scheduled job(s)" \
+        && [ "$(cat "$counter")" -eq 1 ]; then
+        pass "reboot-test.sh reads the crontab exactly once, so a hypothetical second-read failure can no longer mask itself as zero jobs"
+    else
+        fail "reboot-test.sh reads the crontab exactly once, so a hypothetical second-read failure can no longer mask itself as zero jobs (output='$output', invocations=$(cat "$counter"))"
+    fi
+    rm -f "$counter"
+}
+
+test_count_encrypted_backups_empty_dir_returns_zero() {
+    local func_src empty_dir result
+    func_src=$(extract_bash_function "count_encrypted_backups" "$REPO_ROOT/scripts/reboot-test.sh")
+    empty_dir=$(mktemp -d)
+
+    result=$(
+        set -euo pipefail
+        eval "$func_src"
+        count_encrypted_backups "$empty_dir"
+    )
+
+    # A single clean "0" line matters, not just a non-empty result: the
+    # old `ls ... | wc -l || echo 0` shape (matching job_count's original
+    # pattern) produced "0\n0" here - wc's own correct "0" plus a second
+    # "0" from a fallback that fires anyway, since the pipe's overall exit
+    # status still reflects `ls`'s failure under pipefail even though
+    # `wc -l` itself succeeded. That multi-line value would break the
+    # real code's `-gt 0` numeric comparison.
+    if [ "$result" = "0" ]; then
+        pass "count_encrypted_backups returns a single clean '0' on an empty directory"
+    else
+        fail "count_encrypted_backups returns a single clean '0' on an empty directory (result='$result')"
+    fi
+    rm -rf "$empty_dir"
+}
+
+test_count_encrypted_backups_counts_existing_files() {
+    local func_src full_dir result
+    func_src=$(extract_bash_function "count_encrypted_backups" "$REPO_ROOT/scripts/reboot-test.sh")
+    full_dir=$(mktemp -d)
+    touch "$full_dir/backup-2026-01-01.tar.gz.enc" "$full_dir/backup-2026-01-02.tar.gz.enc"
+
+    result=$(
+        set -euo pipefail
+        eval "$func_src"
+        count_encrypted_backups "$full_dir"
+    )
+
+    if [ "$result" = "2" ]; then
+        pass "count_encrypted_backups counts existing matching files correctly"
+    else
+        fail "count_encrypted_backups counts existing matching files correctly (result='$result')"
+    fi
+    rm -rf "$full_dir"
+}
+
+test_latest_encrypted_backup_selects_newest_by_mtime() {
+    local func_src full_dir result
+    func_src=$(extract_bash_function "latest_encrypted_backup" "$REPO_ROOT/scripts/reboot-test.sh")
+    full_dir=$(mktemp -d)
+    # Deliberately distinct, out-of-alphabetical-order mtimes so a
+    # regression to alphabetical/glob-order selection (instead of genuine
+    # mtime comparison) would be caught - "backup-a" is alphabetically
+    # first but is the actual newest file here.
+    touch -d "2026-01-01 00:00:00" "$full_dir/backup-b-older.tar.gz.enc"
+    touch -d "2026-01-03 00:00:00" "$full_dir/backup-a-newest.tar.gz.enc"
+    touch -d "2026-01-02 00:00:00" "$full_dir/backup-c-middle.tar.gz.enc"
+
+    result=$(
+        set -euo pipefail
+        eval "$func_src"
+        latest_encrypted_backup "$full_dir"
+    )
+
+    if [ "$(basename "$result")" = "backup-a-newest.tar.gz.enc" ]; then
+        pass "latest_encrypted_backup selects the actual newest file by mtime, not glob/alphabetical order"
+    else
+        fail "latest_encrypted_backup selects the actual newest file by mtime, not glob/alphabetical order (result='$result')"
+    fi
+    rm -rf "$full_dir"
+}
+
+test_latest_encrypted_backup_empty_dir_returns_empty_without_aborting() {
+    local func_src empty_dir result
+    func_src=$(extract_bash_function "latest_encrypted_backup" "$REPO_ROOT/scripts/reboot-test.sh")
+    empty_dir=$(mktemp -d)
+
+    # The real call site only reaches this function when backup_count > 0,
+    # but the function itself should still degrade gracefully (empty
+    # result, not an aborted script) on a non-matching glob given the
+    # same nullglob approach as count_encrypted_backups() - this is what
+    # actually closes the TOCTOU gap the old `ls -t | head -1` had if
+    # every matching file were removed between the count and this call.
+    result=$(
+        set -euo pipefail
+        eval "$func_src"
+        latest_encrypted_backup "$empty_dir"
+        echo "REACHED_END"
+    )
+
+    if [ "$(echo "$result" | tail -1)" = "REACHED_END" ] && [ -z "$(echo "$result" | head -1)" ]; then
+        pass "latest_encrypted_backup returns an empty result without aborting on a non-matching glob"
+    else
+        fail "latest_encrypted_backup returns an empty result without aborting on a non-matching glob (result='$result')"
+    fi
+    rm -rf "$empty_dir"
+}
+
+test_reboot_test_empty_backup_dir_does_not_abort_and_prints_summary() {
+    local snippet empty_dir output result
+    snippet=$(extract_reboot_test_backups_tail)
+    empty_dir=$(mktemp -d)
+
+    # Reproduces the real bug's exact user-visible symptom: the old code
+    # died silently right after printing "[Backups]" on a legitimately
+    # empty (but existing) backup directory - "=== Summary ===" and the
+    # final pass/fail/warning counts never printed at all.
+    output=$(
+        set -euo pipefail
+        PASSED=0 FAILED=0 WARNED=0
+        GREEN='' RED='' YELLOW='' NC=''
+        pass() { echo "PASS: $*"; PASSED=$((PASSED + 1)); }
+        fail() { echo "FAIL: $*"; FAILED=$((FAILED + 1)); }
+        warn_check() { echo "WARN: $*"; WARNED=$((WARNED + 1)); }
+        BACKUP_DIR="$empty_dir"
+        eval "$snippet"
+    )
+    result=$?
+
+    if [ "$result" -eq 0 ] \
+        && echo "$output" | grep -q "=== Summary ===" \
+        && echo "$output" | grep -q "WARN: Backup directory exists but no backups found"; then
+        pass "reboot-test.sh's Backups check survives a legitimately empty backup directory and still reaches its own Summary"
+    else
+        fail "reboot-test.sh's Backups check survives a legitimately empty backup directory and still reaches its own Summary (exit=$result, output='$output')"
+    fi
+    rm -rf "$empty_dir"
+}
+
+test_reboot_test_backup_dir_with_backups_still_reports_correct_count() {
+    local snippet full_dir output result
+    snippet=$(extract_reboot_test_backups_tail)
+    full_dir=$(mktemp -d)
+    touch "$full_dir/backup-2026-01-01.tar.gz.enc" "$full_dir/backup-2026-01-02.tar.gz.enc" "$full_dir/backup-2026-01-03.tar.gz.enc"
+
+    output=$(
+        set -euo pipefail
+        PASSED=0 FAILED=0 WARNED=0
+        GREEN='' RED='' YELLOW='' NC=''
+        pass() { echo "PASS: $*"; PASSED=$((PASSED + 1)); }
+        fail() { echo "FAIL: $*"; FAILED=$((FAILED + 1)); }
+        warn_check() { echo "WARN: $*"; WARNED=$((WARNED + 1)); }
+        BACKUP_DIR="$full_dir"
+        eval "$snippet"
+    )
+    result=$?
+
+    if [ "$result" -eq 0 ] \
+        && echo "$output" | grep -q "=== Summary ===" \
+        && echo "$output" | grep -q "PASS: 3 backup(s) on NAS"; then
+        pass "reboot-test.sh's Backups check still reports the correct count when backups are present"
+    else
+        fail "reboot-test.sh's Backups check still reports the correct count when backups are present (exit=$result, output='$output')"
+    fi
+    rm -rf "$full_dir"
+}
+
 # --- run everything -------------------------------------------------------
 
 test_env_set_preserves_inode
@@ -1429,6 +1767,16 @@ test_fetch_completed_torrents_scratch_file_shares_out_file_directory
 test_fetch_completed_torrents_mktemp_failure_is_reported_not_silently_successful
 test_fetch_completed_torrents_mv_failure_is_reported_not_silently_successful
 test_fetch_completed_torrents_failure_does_not_abort_caller
+test_reboot_test_job_count_zero_jobs_reports_cleanly
+test_reboot_test_job_count_nonzero_jobs_reports_correct_count
+test_reboot_test_cron_unreadable_reports_cannot_read
+test_reboot_test_cron_reads_crontab_exactly_once
+test_count_encrypted_backups_empty_dir_returns_zero
+test_count_encrypted_backups_counts_existing_files
+test_latest_encrypted_backup_selects_newest_by_mtime
+test_latest_encrypted_backup_empty_dir_returns_empty_without_aborting
+test_reboot_test_empty_backup_dir_does_not_abort_and_prints_summary
+test_reboot_test_backup_dir_with_backups_still_reports_correct_count
 
 echo
 echo "$PASS_COUNT passed, $FAIL_COUNT failed"

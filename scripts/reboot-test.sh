@@ -213,8 +213,27 @@ echo ""
 # --- 7. Cron ---
 
 echo "[Cron Jobs]"
-if docker exec cron crontab -l >/dev/null 2>&1; then
-    job_count=$(docker exec cron crontab -l 2>/dev/null | grep -c '^[^#]' || echo 0)
+# Read the crontab exactly once and reuse that same content for both the
+# reachability check and the count - the original two-call version
+# (`docker exec ... >/dev/null` to check, then a second separate
+# `docker exec ...` to capture) could see the first call succeed and the
+# second transiently fail, which `|| true` would then silently report as
+# "no scheduled jobs" instead of the more accurate "Cannot read cron
+# jobs". Using the capture itself as the if-condition is exempt from
+# set -e (an if-condition, one of the standard exemptions) and preserves
+# the exact same branching as before with no redundant second read.
+if crontab_content=$(docker exec cron crontab -l 2>/dev/null); then
+    # `grep -c` prints the count correctly even on zero matches, but still
+    # exits 1 in that case (its normal "no match" status, not a real
+    # failure) - `|| echo 0` looked like a safe fallback but actually
+    # fires *in addition to* that already-correct "0" output, since
+    # set -e only cares about the pipe's own exit status, not whether
+    # grep already wrote valid output. Verified directly: that produced
+    # job_count="0\n0" (two lines) on an empty crontab, which then broke
+    # the numeric `-gt` comparison below with a stray "integer expression
+    # expected" error. `|| true` neutralizes the same exit status without
+    # adding any extra output, since grep's own count is already correct.
+    job_count=$(printf '%s\n' "$crontab_content" | grep -c '^[^#]' || true)
     if [ "$job_count" -gt 0 ]; then
         pass "Cron has $job_count scheduled job(s)"
     else
@@ -243,12 +262,66 @@ echo ""
 
 # --- 9. Backups ---
 
+# A non-matching glob makes `ls` exit non-zero (its own error goes to the
+# now-suppressed stderr) - under pipefail that propagates through the
+# pipe despite `wc -l` itself succeeding, and since this was previously a
+# bare top-level assignment (not an if-condition), set -e would otherwise
+# kill the whole script right here on a legitimately empty backup dir
+# (e.g. before the first daily backup.sh run has ever completed).
+#
+# Not `ls ... | wc -l || echo 0`: verified directly that shape has the
+# same latent bug as job_count's original `grep -c ... || echo 0` above -
+# `wc -l` still prints a correct "0" even though the pipe's overall exit
+# status is non-zero (from `ls`, under pipefail), so `|| echo 0` fires
+# *in addition to* that already-correct output, producing "0\n0" and
+# breaking the numeric comparison below. `nullglob` + an array sidesteps
+# the whole class of pipe/exit-status ambiguity: a non-matching glob just
+# expands to zero array elements, no external command or pipe involved,
+# so there's nothing to fail. Pulled into its own function so it can be
+# extracted and tested in isolation, same technique used elsewhere in
+# this repo for scripts with no sourcing guard.
+count_encrypted_backups() {
+    local dir="$1"
+    local -a matches
+    shopt -s nullglob
+    matches=("$dir"/backup-*.tar.gz.enc)
+    shopt -u nullglob
+    echo "${#matches[@]}"
+}
+
+# Re-globbing separately for the "latest" lookup (the original `ls -t
+# "$BACKUP_DIR"/backup-*.tar.gz.enc | head -1`) reopens the exact same
+# non-matching-glob failure mode this whole fix is about, just on a
+# narrower trigger (files removed between the count above and this call,
+# rather than the directory simply starting empty) - `ls` on zero matches
+# still fails the same way regardless of why there are zero matches now.
+# Reuses the same nullglob + array approach as count_encrypted_backups()
+# so a non-matching glob here degrades to an empty result instead of a
+# failure, and finds the newest file by mtime directly rather than
+# piping `ls -t` into `head -1`.
+latest_encrypted_backup() {
+    local dir="$1"
+    local -a matches
+    local f latest="" latest_mtime=-1 mtime
+    shopt -s nullglob
+    matches=("$dir"/backup-*.tar.gz.enc)
+    shopt -u nullglob
+    for f in "${matches[@]}"; do
+        mtime=$(stat -c %Y "$f" 2>/dev/null) || continue
+        if [ "$mtime" -gt "$latest_mtime" ]; then
+            latest_mtime="$mtime"
+            latest="$f"
+        fi
+    done
+    echo "$latest"
+}
+
 echo "[Backups]"
 BACKUP_DIR="${BACKUP_DIR:-${MEDIA_ROOT}/backups}"
 if [ -d "$BACKUP_DIR" ]; then
-    backup_count=$(ls "$BACKUP_DIR"/backup-*.tar.gz.enc 2>/dev/null | wc -l)
+    backup_count=$(count_encrypted_backups "$BACKUP_DIR")
     if [ "$backup_count" -gt 0 ]; then
-        latest=$(ls -t "$BACKUP_DIR"/backup-*.tar.gz.enc | head -1)
+        latest=$(latest_encrypted_backup "$BACKUP_DIR")
         latest_name=$(basename "$latest")
         pass "$backup_count backup(s) on NAS (latest: $latest_name)"
     else
