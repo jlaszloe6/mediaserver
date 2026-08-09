@@ -376,6 +376,135 @@ test_api_call_has_timeouts_and_preserves_existing_flags() {
     mock_curl_teardown
 }
 
+# fetch_existing() depends on parse_response() and api_call(), so all three
+# get extracted and eval'd together.
+extract_init_setup_get_helpers() {
+    printf '%s\n%s\n%s\n' \
+        "$(extract_bash_function "parse_response" "$REPO_ROOT/scripts/init-setup.sh")" \
+        "$(extract_bash_function "api_call" "$REPO_ROOT/scripts/init-setup.sh")" \
+        "$(extract_bash_function "fetch_existing" "$REPO_ROOT/scripts/init-setup.sh")"
+}
+
+test_fetch_existing_returns_body_on_success() {
+    local mockdir func_src output result
+    mockdir=$(mktemp -d)
+    mkdir -p "$mockdir/bin"
+    # Simulates a real 2xx response with a body, in the exact combined
+    # shape curl's own -w '\n%{http_code}' produces: body, then a newline,
+    # then the status code. An empty-array body here would be just as
+    # valid a "success" - this specifically uses a non-empty one to also
+    # confirm the body round-trips correctly, not just that 2xx is accepted.
+    cat > "$mockdir/bin/curl" <<'MOCKEOF'
+#!/usr/bin/env bash
+printf '%s\n200' '{"records":[]}'
+MOCKEOF
+    chmod +x "$mockdir/bin/curl"
+
+    func_src=$(extract_init_setup_get_helpers)
+
+    output=$(
+        export PATH="$mockdir/bin:$ORIGINAL_PATH"
+        log_err() { :; }
+        eval "$func_src"
+        fetch_existing "http://example.invalid/api" "test-key" "test resource"
+    )
+    result=$?
+
+    if [ "$result" -eq 0 ] && [ "$output" = '{"records":[]}' ]; then
+        pass "fetch_existing returns the response body on a 2xx status"
+    else
+        fail "fetch_existing returns the response body on a 2xx status (result=$result output='$output')"
+    fi
+    rm -rf "$mockdir"
+}
+
+test_fetch_existing_reports_http_error_distinctly() {
+    local mockdir func_src logfile result log_content
+    mockdir=$(mktemp -d)
+    mkdir -p "$mockdir/bin"
+    logfile="$mockdir/log"
+    : > "$logfile"
+    cat > "$mockdir/bin/curl" <<'MOCKEOF'
+#!/usr/bin/env bash
+printf '%s\n401' '{"error":"Unauthorized"}'
+MOCKEOF
+    chmod +x "$mockdir/bin/curl"
+
+    func_src=$(extract_init_setup_get_helpers)
+
+    (
+        export PATH="$mockdir/bin:$ORIGINAL_PATH"
+        export LOGFILE="$logfile"
+        log_err() { echo "$*" >> "$LOGFILE"; }
+        eval "$func_src"
+        fetch_existing "http://example.invalid/api" "test-key" "test resource" > /dev/null
+    )
+    result=$?
+    log_content=$(cat "$logfile" 2>/dev/null)
+
+    if [ "$result" -eq 1 ] && echo "$log_content" | grep -q "HTTP 401" \
+        && ! echo "$log_content" | grep -qi "transport"; then
+        pass "fetch_existing reports a real HTTP error distinctly, not as a transport failure"
+    else
+        fail "fetch_existing reports a real HTTP error distinctly (result=$result, log='$log_content')"
+    fi
+    rm -rf "$mockdir"
+}
+
+test_fetch_existing_distinguishes_transport_failure() {
+    local mockdir func_src logfile result log_content
+    mockdir=$(mktemp -d)
+    mkdir -p "$mockdir/bin"
+    logfile="$mockdir/log"
+    : > "$logfile"
+    # curl itself fails outright (no HTTP transaction at all) - api_call's
+    # curl has no -f, so this is the only way RESP_CODE ends up "000"
+    # rather than a real status.
+    cat > "$mockdir/bin/curl" <<'MOCKEOF'
+#!/usr/bin/env bash
+exit 7
+MOCKEOF
+    chmod +x "$mockdir/bin/curl"
+
+    func_src=$(extract_init_setup_get_helpers)
+
+    (
+        export PATH="$mockdir/bin:$ORIGINAL_PATH"
+        export LOGFILE="$logfile"
+        log_err() { echo "$*" >> "$LOGFILE"; }
+        eval "$func_src"
+        fetch_existing "http://example.invalid/api" "test-key" "test resource" > /dev/null
+    )
+    result=$?
+    log_content=$(cat "$logfile" 2>/dev/null)
+
+    if [ "$result" -eq 1 ] && echo "$log_content" | grep -qi "connection/transport error or timeout"; then
+        pass "fetch_existing reports a transport/timeout failure distinctly, not as an HTTP response"
+    else
+        fail "fetch_existing reports a transport/timeout failure distinctly (result=$result, log='$log_content')"
+    fi
+    rm -rf "$mockdir"
+}
+
+test_init_setup_no_unguarded_curl_sf() {
+    local file="$REPO_ROOT/scripts/init-setup.sh"
+    local bad_lines
+    # Every remaining `curl -sf` in the file must be either: the
+    # wait_for_service main readiness check (used as an if-condition, so
+    # set -e doesn't apply to its own failure), a comment, or already
+    # guarded with `||`. Anything else is a leftover unguarded fetch that
+    # should have been migrated to fetch_existing() - this is a static
+    # tripwire against silently missing one during a future edit, not a
+    # substitute for the functional tests above.
+    bad_lines=$(grep -n 'curl -sf' "$file" | grep -vE '^[0-9]+: *if curl -sf' | grep -v '^[0-9]*:#' | grep -v '||')
+
+    if [ -z "$bad_lines" ]; then
+        pass "init-setup.sh has no unguarded 'curl -sf' assignments left"
+    else
+        fail "init-setup.sh has no unguarded 'curl -sf' assignments left - found: $bad_lines"
+    fi
+}
+
 # --- run everything -------------------------------------------------------
 
 test_env_set_preserves_inode
@@ -393,6 +522,10 @@ test_newline_in_header_rejected
 test_wait_for_service_survives_transport_failure
 test_wait_for_service_still_detects_transmission_409
 test_api_call_has_timeouts_and_preserves_existing_flags
+test_fetch_existing_returns_body_on_success
+test_fetch_existing_reports_http_error_distinctly
+test_fetch_existing_distinguishes_transport_failure
+test_init_setup_no_unguarded_curl_sf
 
 echo
 echo "$PASS_COUNT passed, $FAIL_COUNT failed"
