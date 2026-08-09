@@ -1412,22 +1412,35 @@ test_reboot_test_job_count_zero_jobs_reports_cleanly() {
     # for ebook-pipeline.sh's tests - both real call sites in this section
     # run the identical `docker exec cron crontab -l` command, so one
     # consistent stub covers both.
+    #
+    # The { ...; } 2>&1 group is required, not a trailing `2>&1` line (a
+    # bare redirect on its own line doesn't retroactively apply to
+    # earlier commands - learned this exact lesson earlier in this same
+    # audit series) - the old bug's own diagnostic ("integer expression
+    # expected") is a bash `[` builtin error, which goes to stderr, not
+    # stdout; without merging streams here this test would pass even
+    # against the genuinely broken pre-fix code, since fail() and the
+    # trailing echo both still reach stdout regardless. Verified directly
+    # against a scratch copy of the real pre-fix code that this specific
+    # assertion only starts working once stderr is actually captured.
     output=$(
-        set -euo pipefail
-        PASSED=0 FAILED=0 WARNED=0
-        GREEN='' RED='' YELLOW='' NC=''
-        pass() { echo "PASS: $*"; PASSED=$((PASSED + 1)); }
-        fail() { echo "FAIL: $*"; FAILED=$((FAILED + 1)); }
-        warn_check() { echo "WARN: $*"; WARNED=$((WARNED + 1)); }
-        docker() {
-            if [ "$1" = "exec" ] && [ "$2" = "cron" ] && [ "$3" = "crontab" ] && [ "$4" = "-l" ]; then
-                printf '# only a comment, no real jobs\n'
-                return 0
-            fi
-            return 1
-        }
-        eval "$snippet"
-        echo "reached the end of the cron section"
+        {
+            set -euo pipefail
+            PASSED=0 FAILED=0 WARNED=0
+            GREEN='' RED='' YELLOW='' NC=''
+            pass() { echo "PASS: $*"; PASSED=$((PASSED + 1)); }
+            fail() { echo "FAIL: $*"; FAILED=$((FAILED + 1)); }
+            warn_check() { echo "WARN: $*"; WARNED=$((WARNED + 1)); }
+            docker() {
+                if [ "$1" = "exec" ] && [ "$2" = "cron" ] && [ "$3" = "crontab" ] && [ "$4" = "-l" ]; then
+                    printf '# only a comment, no real jobs\n'
+                    return 0
+                fi
+                return 1
+            }
+            eval "$snippet"
+            echo "reached the end of the cron section"
+        } 2>&1
     )
 
     # The old `|| echo 0` shape produced a literal "0\n0" job_count value
