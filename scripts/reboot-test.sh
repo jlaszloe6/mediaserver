@@ -214,7 +214,17 @@ echo ""
 
 echo "[Cron Jobs]"
 if docker exec cron crontab -l >/dev/null 2>&1; then
-    job_count=$(docker exec cron crontab -l 2>/dev/null | grep -c '^[^#]' || echo 0)
+    # `grep -c` prints the count correctly even on zero matches, but still
+    # exits 1 in that case (its normal "no match" status, not a real
+    # failure) - `|| echo 0` looked like a safe fallback but actually
+    # fires *in addition to* that already-correct "0" output, since
+    # set -e only cares about the pipe's own exit status, not whether
+    # grep already wrote valid output. Verified directly: that produced
+    # job_count="0\n0" (two lines) on an empty crontab, which then broke
+    # the numeric `-gt` comparison below with a stray "integer expression
+    # expected" error. `|| true` neutralizes the same exit status without
+    # adding any extra output, since grep's own count is already correct.
+    job_count=$(docker exec cron crontab -l 2>/dev/null | grep -c '^[^#]' || true)
     if [ "$job_count" -gt 0 ]; then
         pass "Cron has $job_count scheduled job(s)"
     else
@@ -243,10 +253,37 @@ echo ""
 
 # --- 9. Backups ---
 
+# A non-matching glob makes `ls` exit non-zero (its own error goes to the
+# now-suppressed stderr) - under pipefail that propagates through the
+# pipe despite `wc -l` itself succeeding, and since this was previously a
+# bare top-level assignment (not an if-condition), set -e would otherwise
+# kill the whole script right here on a legitimately empty backup dir
+# (e.g. before the first daily backup.sh run has ever completed).
+#
+# Not `ls ... | wc -l || echo 0`: verified directly that shape has the
+# same latent bug as job_count's original `grep -c ... || echo 0` above -
+# `wc -l` still prints a correct "0" even though the pipe's overall exit
+# status is non-zero (from `ls`, under pipefail), so `|| echo 0` fires
+# *in addition to* that already-correct output, producing "0\n0" and
+# breaking the numeric comparison below. `nullglob` + an array sidesteps
+# the whole class of pipe/exit-status ambiguity: a non-matching glob just
+# expands to zero array elements, no external command or pipe involved,
+# so there's nothing to fail. Pulled into its own function so it can be
+# extracted and tested in isolation, same technique used elsewhere in
+# this repo for scripts with no sourcing guard.
+count_encrypted_backups() {
+    local dir="$1"
+    local -a matches
+    shopt -s nullglob
+    matches=("$dir"/backup-*.tar.gz.enc)
+    shopt -u nullglob
+    echo "${#matches[@]}"
+}
+
 echo "[Backups]"
 BACKUP_DIR="${BACKUP_DIR:-${MEDIA_ROOT}/backups}"
 if [ -d "$BACKUP_DIR" ]; then
-    backup_count=$(ls "$BACKUP_DIR"/backup-*.tar.gz.enc 2>/dev/null | wc -l)
+    backup_count=$(count_encrypted_backups "$BACKUP_DIR")
     if [ "$backup_count" -gt 0 ]; then
         latest=$(ls -t "$BACKUP_DIR"/backup-*.tar.gz.enc | head -1)
         latest_name=$(basename "$latest")

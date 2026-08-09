@@ -1384,6 +1384,126 @@ test_fetch_completed_torrents_failure_does_not_abort_caller() {
     rm -f "$out_file"
 }
 
+# --- scripts/reboot-test.sh tests -------------------------------------------
+#
+# count_encrypted_backups() is extracted and eval'd the same way as the
+# helpers above. The "does the script still reach its own summary" tests
+# below extract the whole Backups-section-through-EOF tail instead (this
+# script has no sourcing guard and runs many live docker/network checks
+# before this point, so running it end-to-end isn't practical) - this
+# still exercises the actual shipped code for the exact part that changed,
+# with pass/fail/warn_check and the PASSED/FAILED/WARNED counters stubbed
+# the same way the real script defines them.
+
+extract_reboot_test_backups_tail() {
+    sed -n '/^# --- 9. Backups ---$/,$p' "$REPO_ROOT/scripts/reboot-test.sh"
+}
+
+test_count_encrypted_backups_empty_dir_returns_zero() {
+    local func_src empty_dir result
+    func_src=$(extract_bash_function "count_encrypted_backups" "$REPO_ROOT/scripts/reboot-test.sh")
+    empty_dir=$(mktemp -d)
+
+    result=$(
+        set -euo pipefail
+        eval "$func_src"
+        count_encrypted_backups "$empty_dir"
+    )
+
+    # A single clean "0" line matters, not just a non-empty result: the
+    # old `ls ... | wc -l || echo 0` shape (matching job_count's original
+    # pattern) produced "0\n0" here - wc's own correct "0" plus a second
+    # "0" from a fallback that fires anyway, since the pipe's overall exit
+    # status still reflects `ls`'s failure under pipefail even though
+    # `wc -l` itself succeeded. That multi-line value would break the
+    # real code's `-gt 0` numeric comparison.
+    if [ "$result" = "0" ]; then
+        pass "count_encrypted_backups returns a single clean '0' on an empty directory"
+    else
+        fail "count_encrypted_backups returns a single clean '0' on an empty directory (result='$result')"
+    fi
+    rm -rf "$empty_dir"
+}
+
+test_count_encrypted_backups_counts_existing_files() {
+    local func_src full_dir result
+    func_src=$(extract_bash_function "count_encrypted_backups" "$REPO_ROOT/scripts/reboot-test.sh")
+    full_dir=$(mktemp -d)
+    touch "$full_dir/backup-2026-01-01.tar.gz.enc" "$full_dir/backup-2026-01-02.tar.gz.enc"
+
+    result=$(
+        set -euo pipefail
+        eval "$func_src"
+        count_encrypted_backups "$full_dir"
+    )
+
+    if [ "$result" = "2" ]; then
+        pass "count_encrypted_backups counts existing matching files correctly"
+    else
+        fail "count_encrypted_backups counts existing matching files correctly (result='$result')"
+    fi
+    rm -rf "$full_dir"
+}
+
+test_reboot_test_empty_backup_dir_does_not_abort_and_prints_summary() {
+    local snippet empty_dir output result
+    snippet=$(extract_reboot_test_backups_tail)
+    empty_dir=$(mktemp -d)
+
+    # Reproduces the real bug's exact user-visible symptom: the old code
+    # died silently right after printing "[Backups]" on a legitimately
+    # empty (but existing) backup directory - "=== Summary ===" and the
+    # final pass/fail/warning counts never printed at all.
+    output=$(
+        set -euo pipefail
+        PASSED=0 FAILED=0 WARNED=0
+        GREEN='' RED='' YELLOW='' NC=''
+        pass() { echo "PASS: $*"; PASSED=$((PASSED + 1)); }
+        fail() { echo "FAIL: $*"; FAILED=$((FAILED + 1)); }
+        warn_check() { echo "WARN: $*"; WARNED=$((WARNED + 1)); }
+        BACKUP_DIR="$empty_dir"
+        eval "$snippet"
+    )
+    result=$?
+
+    if [ "$result" -eq 0 ] \
+        && echo "$output" | grep -q "=== Summary ===" \
+        && echo "$output" | grep -q "WARN: Backup directory exists but no backups found"; then
+        pass "reboot-test.sh's Backups check survives a legitimately empty backup directory and still reaches its own Summary"
+    else
+        fail "reboot-test.sh's Backups check survives a legitimately empty backup directory and still reaches its own Summary (exit=$result, output='$output')"
+    fi
+    rm -rf "$empty_dir"
+}
+
+test_reboot_test_backup_dir_with_backups_still_reports_correct_count() {
+    local snippet full_dir output result
+    snippet=$(extract_reboot_test_backups_tail)
+    full_dir=$(mktemp -d)
+    touch "$full_dir/backup-2026-01-01.tar.gz.enc" "$full_dir/backup-2026-01-02.tar.gz.enc" "$full_dir/backup-2026-01-03.tar.gz.enc"
+
+    output=$(
+        set -euo pipefail
+        PASSED=0 FAILED=0 WARNED=0
+        GREEN='' RED='' YELLOW='' NC=''
+        pass() { echo "PASS: $*"; PASSED=$((PASSED + 1)); }
+        fail() { echo "FAIL: $*"; FAILED=$((FAILED + 1)); }
+        warn_check() { echo "WARN: $*"; WARNED=$((WARNED + 1)); }
+        BACKUP_DIR="$full_dir"
+        eval "$snippet"
+    )
+    result=$?
+
+    if [ "$result" -eq 0 ] \
+        && echo "$output" | grep -q "=== Summary ===" \
+        && echo "$output" | grep -q "PASS: 3 backup(s) on NAS"; then
+        pass "reboot-test.sh's Backups check still reports the correct count when backups are present"
+    else
+        fail "reboot-test.sh's Backups check still reports the correct count when backups are present (exit=$result, output='$output')"
+    fi
+    rm -rf "$full_dir"
+}
+
 # --- run everything -------------------------------------------------------
 
 test_env_set_preserves_inode
@@ -1429,6 +1549,10 @@ test_fetch_completed_torrents_scratch_file_shares_out_file_directory
 test_fetch_completed_torrents_mktemp_failure_is_reported_not_silently_successful
 test_fetch_completed_torrents_mv_failure_is_reported_not_silently_successful
 test_fetch_completed_torrents_failure_does_not_abort_caller
+test_count_encrypted_backups_empty_dir_returns_zero
+test_count_encrypted_backups_counts_existing_files
+test_reboot_test_empty_backup_dir_does_not_abort_and_prints_summary
+test_reboot_test_backup_dir_with_backups_still_reports_correct_count
 
 echo
 echo "$PASS_COUNT passed, $FAIL_COUNT failed"
