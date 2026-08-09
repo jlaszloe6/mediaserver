@@ -989,6 +989,61 @@ test_ebook_pipeline_libraries_fetch_has_timeouts() {
     fi
 }
 
+test_resolve_ebooks_library_id_returns_id_on_success() {
+    local func_src output
+    func_src=$(extract_bash_function "resolve_ebooks_library_id" "$REPO_ROOT/scripts/ebook-pipeline.sh")
+
+    output=$(
+        set -euo pipefail
+        log() { echo "$*"; }
+        eval "$func_src"
+        resolve_ebooks_library_id '{"libraries":[{"id":"lib-1","name":"Movies"},{"id":"lib-2","name":"Ebooks"}]}'
+    )
+
+    if [ "$output" = "lib-2" ]; then
+        pass "resolve_ebooks_library_id returns the matching library's ID on a well-formed response"
+    else
+        fail "resolve_ebooks_library_id returns the matching library's ID on a well-formed response (output='$output')"
+    fi
+}
+
+test_resolve_ebooks_library_id_reports_parse_failure_without_aborting_caller() {
+    local func_src output
+    func_src=$(extract_bash_function "resolve_ebooks_library_id" "$REPO_ROOT/scripts/ebook-pipeline.sh")
+
+    # Reproduces the real call site exactly: `library_id=$(resolve_ebooks_
+    # library_id "$libraries")` under set -e, followed by more work. A
+    # genuinely non-JSON 2xx body (as opposed to well-formed JSON missing
+    # the "libraries" key, which `.libraries[]?` already tolerates without
+    # error) makes jq itself exit non-zero on the parse - verified
+    # directly. The old unguarded version of this assignment would have
+    # aborted the whole script right here, under set -e, since this is a
+    # bare top-level assignment (not inside a function called via `||`).
+    # The { ...; } 2>&1 group is required, not a trailing `2>&1` line -
+    # the real function deliberately sends its own log line to stderr
+    # (see its comment - its stdout IS the return value), so this capture
+    # must merge both streams for the whole block to observe it, same as
+    # real cron's own `2>&1` redirect into the log file would.
+    output=$(
+        {
+            set -euo pipefail
+            log() { echo "$*"; }
+            eval "$func_src"
+            library_id=$(resolve_ebooks_library_id 'not valid json {{{')
+            echo "library_id=[$library_id]"
+            echo "reached the rest of the pipeline"
+        } 2>&1
+    )
+
+    if echo "$output" | grep -q "Failed to parse Audiobookshelf libraries response" \
+        && echo "$output" | grep -q "library_id=\[\]" \
+        && echo "$output" | grep -q "reached the rest of the pipeline"; then
+        pass "resolve_ebooks_library_id reports a parse failure without aborting the rest of the pipeline"
+    else
+        fail "resolve_ebooks_library_id reports a parse failure without aborting the rest of the pipeline (output='$output')"
+    fi
+}
+
 test_trigger_audiobookshelf_scan_has_timeouts() {
     local func_src
     func_src=$(extract_bash_function "trigger_audiobookshelf_scan" "$REPO_ROOT/scripts/ebook-pipeline.sh")
@@ -1207,6 +1262,60 @@ test_fetch_completed_torrents_success_replaces_file() {
     rm -f "$out_file"
 }
 
+test_fetch_completed_torrents_scratch_file_shares_out_file_directory() {
+    local func_src
+    func_src=$(extract_bash_function "fetch_completed_torrents" "$REPO_ROOT/scripts/ebook-pipeline.sh")
+
+    # Static rather than behavioral: a scratch file created via plain
+    # `mktemp` (defaulting to /tmp) would still pass every behavioral test
+    # above whenever $out_file also happens to live in /tmp (exactly what
+    # every other test here does) - only checking the actual source
+    # guards against a regression back to a default-tmpdir mktemp that
+    # would silently stop guaranteeing a same-filesystem mv once $out_file
+    # is ever placed somewhere else.
+    if echo "$func_src" | grep -qF 'mktemp "$(dirname "$out_file")'; then
+        pass "fetch_completed_torrents creates its scratch file via mktemp in the same directory as out_file"
+    else
+        fail "fetch_completed_torrents creates its scratch file via mktemp in the same directory as out_file"
+    fi
+}
+
+test_fetch_completed_torrents_mktemp_failure_is_reported_not_silently_successful() {
+    local func_src out_file output
+    func_src=$(extract_bash_function "fetch_completed_torrents" "$REPO_ROOT/scripts/ebook-pipeline.sh")
+    out_file=$(mktemp)
+    printf 'PREVIOUS-GOOD-CONTENT\n' > "$out_file"
+
+    output=$(
+        set -euo pipefail
+        ERRORS=0
+        log() { echo "$*"; }
+        transmission_rpc() {
+            echo '{"arguments":{"torrents":[]}}'
+            return 0
+        }
+        # Same technique as the mv-failure test above: mocking the command
+        # name as a shell function is deterministic and portable, unlike
+        # trying to force a real mktemp failure via filesystem permissions
+        # (which would also be indistinguishable from breaking the
+        # directory the function needs to read via dirname).
+        mktemp() { return 1; }
+        eval "$func_src"
+        fetch_completed_torrents "fake-sid" "/downloads/complete/ebooks-incoming" "$out_file" \
+            && echo "RETURNED_0" || echo "RETURNED_1"
+        echo "ERRORS=$ERRORS"
+    )
+
+    if echo "$output" | grep -q "RETURNED_1" && echo "$output" | grep -q "ERRORS=1" \
+        && echo "$output" | grep -qi "Failed to create scratch file" \
+        && [ "$(cat "$out_file")" = "PREVIOUS-GOOD-CONTENT" ]; then
+        pass "fetch_completed_torrents: a mktemp failure is reported as an error, not silently treated as success"
+    else
+        fail "fetch_completed_torrents: a mktemp failure is reported as an error, not silently treated as success (output='$output', file='$(cat "$out_file")')"
+    fi
+    rm -f "$out_file"
+}
+
 test_fetch_completed_torrents_mv_failure_is_reported_not_silently_successful() {
     local func_src out_file output
     func_src=$(extract_bash_function "fetch_completed_torrents" "$REPO_ROOT/scripts/ebook-pipeline.sh")
@@ -1307,6 +1416,8 @@ test_caddy_entrypoint_redownloads_when_existing_db_file_is_invalid
 test_caddy_entrypoint_starts_caddy_when_geodb_succeeds
 test_caddy_entrypoint_refuses_caddy_if_geodb_reports_success_but_file_missing
 test_ebook_pipeline_libraries_fetch_has_timeouts
+test_resolve_ebooks_library_id_returns_id_on_success
+test_resolve_ebooks_library_id_reports_parse_failure_without_aborting_caller
 test_trigger_audiobookshelf_scan_has_timeouts
 test_trigger_audiobookshelf_scan_success
 test_trigger_audiobookshelf_scan_http_error
@@ -1314,6 +1425,8 @@ test_trigger_audiobookshelf_scan_transport_failure_does_not_abort_caller
 test_fetch_completed_torrents_rpc_failure_preserves_existing_file
 test_fetch_completed_torrents_malformed_json_preserves_existing_file
 test_fetch_completed_torrents_success_replaces_file
+test_fetch_completed_torrents_scratch_file_shares_out_file_directory
+test_fetch_completed_torrents_mktemp_failure_is_reported_not_silently_successful
 test_fetch_completed_torrents_mv_failure_is_reported_not_silently_successful
 test_fetch_completed_torrents_failure_does_not_abort_caller
 

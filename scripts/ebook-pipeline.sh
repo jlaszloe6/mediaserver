@@ -197,7 +197,17 @@ fetch_completed_torrents() {
     # Created alongside $out_file (not the default tmpdir) so the `mv`
     # below is guaranteed to be a same-filesystem rename, not a
     # cross-filesystem fallback copy that could itself fail partway.
-    filtered_tmp=$(mktemp "$(dirname "$out_file")/.fetch-completed-XXXXXX")
+    # Checked explicitly rather than relying on set -e: this function is
+    # called via `||` at its call site, which exempts its whole body from
+    # set -e for that invocation - a bare mktemp failure here would
+    # otherwise fall through into the jq redirect below with an empty
+    # target path instead of being reported for what it actually is.
+    if ! filtered_tmp=$(mktemp "$(dirname "$out_file")/.fetch-completed-XXXXXX"); then
+        log "  ERROR: Failed to create scratch file for Transmission torrent-get result"
+        ERRORS=$((ERRORS + 1))
+        return 1
+    fi
+
     if ! echo "$raw_response" | jq -c --arg dir "$dest_dir" \
             '.arguments.torrents[]? | select(.downloadDir == $dir and .percentDone == 1)' \
             > "$filtered_tmp" 2>/dev/null; then
@@ -368,6 +378,38 @@ fi
 
 # --- Phase 3: trigger Audiobookshelf scan + send email ---
 
+# Resolves the "Ebooks" library's ID from a raw Audiobookshelf
+# /api/libraries response. Always returns 0 and communicates failure via
+# an empty stdout result instead - the call site's own `-z "$library_id"`
+# check already treats an empty result as "library not found" (ERRORS++
+# and a clear log line), so this never needs a `||`-exemption at its call
+# site to stay set -e-safe, unlike the two functions above. A 2xx response
+# with an unexpected body shape (`{}`, a schema change, any
+# malformed-but-200 response) would otherwise make a bare `jq -r
+# '.libraries[]'` exit non-zero under set -e - verified directly that this
+# raises "Cannot iterate over null" - and abort the whole script right
+# here, before the report email further below ever runs.
+resolve_ebooks_library_id() {
+    local libraries_json="$1"
+    local library_id
+
+    # `.libraries[]?` tolerates a missing/null key; the explicit `if`
+    # still catches a genuine JSON parse failure (a non-JSON body) that
+    # `?` alone doesn't.
+    if ! library_id=$(echo "$libraries_json" | jq -r '.libraries[]? | select(.name == "Ebooks") | .id' 2>/dev/null); then
+        # This function's own stdout IS its return value (the call site
+        # uses `library_id=$(resolve_ebooks_library_id ...)`) - log()
+        # writes to stdout too, so a bare `log` call here would get
+        # captured into $library_id instead of reaching the real log
+        # output. Redirected to stderr explicitly; cron's own `2>&1`
+        # redirect still lands it in the same log file either way.
+        log "ERROR: Failed to parse Audiobookshelf libraries response" >&2
+        return 0
+    fi
+
+    echo "$library_id"
+}
+
 # Triggers a scan of the given library ID. No -f: a transport failure and
 # a real HTTP error need to be told apart below, and %{http_code} must be
 # captured either way - `-f` would make curl exit nonzero on a real HTTP
@@ -411,7 +453,10 @@ if [ "$IMPORTED" -gt 0 ] && ! $DRY_RUN; then
         libraries=""
     }
 
-    library_id=$(echo "$libraries" | jq -r '.libraries[] | select(.name == "Ebooks") | .id' 2>/dev/null)
+    # Always exits 0 regardless of internal success/failure (see the
+    # function's own comment) - failure is communicated by an empty
+    # result, which the check below already treats as "library not found".
+    library_id=$(resolve_ebooks_library_id "$libraries")
 
     if [ -z "$library_id" ]; then
         log "ERROR: Could not find 'Ebooks' library in Audiobookshelf"
