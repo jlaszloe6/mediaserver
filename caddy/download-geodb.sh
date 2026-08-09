@@ -22,16 +22,22 @@ mkdir -p "$DB_DIR"
 URL="https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-Country&license_key=${LICENSE_KEY}&suffix=tar.gz"
 
 TMP_ARCHIVE=$(mktemp)
-# Created inside $DB_DIR itself (not /tmp) specifically so the final `mv`
-# below is guaranteed to be a same-filesystem rename - atomic - rather
-# than a cross-filesystem fallback copy that could itself be interrupted
-# partway through.
-TMP_EXTRACT_DIR=$(mktemp -d "${DB_DIR}/.download-XXXXXX")
+# Trap installed right after the first tempfile exists, before attempting
+# to create the second one below - if that second mktemp fails, set -e
+# would otherwise exit before any trap was registered, leaking
+# $TMP_ARCHIVE. $TMP_EXTRACT_DIR is safely empty/unset at that point;
+# `rm -rf ""` is a harmless no-op (verified directly), not an error.
 cleanup() {
     rm -f "$TMP_ARCHIVE"
     rm -rf "$TMP_EXTRACT_DIR"
 }
 trap cleanup EXIT
+
+# Created inside $DB_DIR itself (not /tmp) specifically so the final `mv`
+# below is guaranteed to be a same-filesystem rename - atomic - rather
+# than a cross-filesystem fallback copy that could itself be interrupted
+# partway through.
+TMP_EXTRACT_DIR=$(mktemp -d "${DB_DIR}/.download-XXXXXX")
 
 echo "Downloading GeoLite2-Country database..."
 # POSIX sh has no <(...) process substitution. A heredoc redirected onto a

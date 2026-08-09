@@ -739,10 +739,11 @@ MOCKEOF
 }
 
 test_caddy_entrypoint_starts_caddy_when_geodb_succeeds() {
-    local mockdir entrypoint_copy caddy_marker result
+    local mockdir entrypoint_copy caddy_marker result db_file
     mockdir=$(mktemp -d)
     mkdir -p "$mockdir/bin"
     caddy_marker="$mockdir/caddy-was-started"
+    db_file="$mockdir/GeoLite2-Country.mmdb"
 
     cat > "$mockdir/bin/caddy" <<MOCKEOF
 #!/bin/sh
@@ -751,9 +752,15 @@ exit 0
 MOCKEOF
     chmod +x "$mockdir/bin/caddy"
 
-    cat > "$mockdir/bin/download-geodb.sh" <<'MOCKEOF'
+    # Realistic success: actually creates the database file, matching what
+    # the real download-geodb.sh guarantees whenever it exits 0. A mock
+    # that only exits 0 without creating the file (the previous version of
+    # this test) would also pass entrypoint.sh's fail-open gap - see the
+    # dedicated test for that below.
+    cat > "$mockdir/bin/download-geodb.sh" <<MOCKEOF
 #!/bin/sh
 echo "mock: simulating a successful GeoDB download"
+echo "fake-mmdb-content" > "$db_file"
 exit 0
 MOCKEOF
     chmod +x "$mockdir/bin/download-geodb.sh"
@@ -761,7 +768,7 @@ MOCKEOF
     entrypoint_copy="$mockdir/entrypoint.sh"
     cp "$REPO_ROOT/caddy/entrypoint.sh" "$entrypoint_copy"
     sed -i "s#/usr/local/bin/download-geodb.sh#$mockdir/bin/download-geodb.sh#" "$entrypoint_copy"
-    sed -i "s#DB_FILE=\"/data/geolite2/GeoLite2-Country.mmdb\"#DB_FILE=\"$mockdir/nonexistent.mmdb\"#" "$entrypoint_copy"
+    sed -i "s#DB_FILE=\"/data/geolite2/GeoLite2-Country.mmdb\"#DB_FILE=\"$db_file\"#" "$entrypoint_copy"
     chmod +x "$entrypoint_copy"
 
     (
@@ -771,9 +778,56 @@ MOCKEOF
     result=$?
 
     if [ "$result" -eq 0 ] && [ -e "$caddy_marker" ]; then
-        pass "entrypoint.sh starts Caddy once GeoDB acquisition succeeds"
+        pass "entrypoint.sh starts Caddy once GeoDB acquisition succeeds and the database actually exists"
     else
         fail "entrypoint.sh starts Caddy once GeoDB acquisition succeeds (exit=$result, caddy_started=$([ -e "$caddy_marker" ] && echo yes || echo no))"
+    fi
+    rm -rf "$mockdir"
+}
+
+test_caddy_entrypoint_refuses_caddy_if_geodb_reports_success_but_file_missing() {
+    local mockdir entrypoint_copy caddy_marker result db_file
+    mockdir=$(mktemp -d)
+    mkdir -p "$mockdir/bin"
+    caddy_marker="$mockdir/caddy-was-started"
+    db_file="$mockdir/GeoLite2-Country.mmdb"
+
+    cat > "$mockdir/bin/caddy" <<MOCKEOF
+#!/bin/sh
+touch "$caddy_marker"
+exit 0
+MOCKEOF
+    chmod +x "$mockdir/bin/caddy"
+
+    # A "lying" downloader: reports success (exit 0) without actually
+    # creating the database. This is exactly the fail-open gap
+    # entrypoint.sh's own post-download existence re-check exists to
+    # catch, independent of whether download-geodb.sh itself is correct
+    # today, buggy tomorrow, or ever replaced - the guarantee shouldn't
+    # rest solely on trusting its exit code.
+    cat > "$mockdir/bin/download-geodb.sh" <<'MOCKEOF'
+#!/bin/sh
+echo "mock: reporting success without actually creating the database"
+exit 0
+MOCKEOF
+    chmod +x "$mockdir/bin/download-geodb.sh"
+
+    entrypoint_copy="$mockdir/entrypoint.sh"
+    cp "$REPO_ROOT/caddy/entrypoint.sh" "$entrypoint_copy"
+    sed -i "s#/usr/local/bin/download-geodb.sh#$mockdir/bin/download-geodb.sh#" "$entrypoint_copy"
+    sed -i "s#DB_FILE=\"/data/geolite2/GeoLite2-Country.mmdb\"#DB_FILE=\"$db_file\"#" "$entrypoint_copy"
+    chmod +x "$entrypoint_copy"
+
+    (
+        export PATH="$mockdir/bin:$ORIGINAL_PATH"
+        sh "$entrypoint_copy"
+    )
+    result=$?
+
+    if [ "$result" -ne 0 ] && [ ! -e "$caddy_marker" ]; then
+        pass "entrypoint.sh refuses to start Caddy if the database is still missing even after a downloader reporting success"
+    else
+        fail "entrypoint.sh refuses to start Caddy if the database is still missing after a 'successful' download (exit=$result, caddy_started=$([ -e "$caddy_marker" ] && echo yes || echo no))"
     fi
     rm -rf "$mockdir"
 }
@@ -805,6 +859,7 @@ test_download_geodb_transport_error_leaves_no_db_file
 test_download_geodb_invalid_archive_leaves_no_db_file
 test_caddy_entrypoint_does_not_start_caddy_when_geodb_fails
 test_caddy_entrypoint_starts_caddy_when_geodb_succeeds
+test_caddy_entrypoint_refuses_caddy_if_geodb_reports_success_but_file_missing
 
 echo
 echo "$PASS_COUNT passed, $FAIL_COUNT failed"
