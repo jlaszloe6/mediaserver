@@ -154,8 +154,8 @@ services:
 
 
   lidarr:
-    # lidarr v3.1.0.4875-ls33 — music acquisition/management (Sonarr/Radarr equivalent for music)
-    image: lscr.io/linuxserver/lidarr@sha256:ba7d43fd5d7de790c38c2dc8f2b2b54c1ac00a452784891c37385a43a039907a
+    # lidarr v3.1.0.4875-ls38 — music acquisition/management (Sonarr/Radarr equivalent for music)
+    image: lscr.io/linuxserver/lidarr@sha256:bfec0ec2dc351fa5928379d785b08be395886f109393b9040ed7973bd1008060
     container_name: lidarr
     networks:
       - mediaserver
@@ -326,8 +326,8 @@ services:
 
 
   duckdns:
-    # duckdns latest
-    image: lscr.io/linuxserver/duckdns@sha256:afe50a2ef043a63e33ffe6e6e119a7a82db999eab966aef2a33611fd89f81117
+    # duckdns latest (rebuilt 2026-08-03, was pinned from 2026-03-09)
+    image: lscr.io/linuxserver/duckdns@sha256:ac65c0d1d2cdfd380ab7b450d97b8c80b2a30f2e086bd79b4cce2fc7190d33a6
     container_name: duckdns
     networks:
       - mediaserver
