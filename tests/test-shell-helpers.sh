@@ -970,6 +970,274 @@ MOCKEOF
     rm -rf "$mockdir"
 }
 
+# --- scripts/ebook-pipeline.sh tests ---------------------------------------
+#
+# fetch_completed_torrents() and trigger_audiobookshelf_scan() are extracted
+# and eval'd the same way as the init-setup.sh helpers above (this script
+# also has no sourcing guard - it runs its whole flow unconditionally when
+# executed). transmission_rpc() is stubbed directly as a shell function
+# rather than mocking curl, since fetch_completed_torrents() calls it as a
+# plain function, not `command transmission_rpc`.
+
+test_ebook_pipeline_libraries_fetch_has_timeouts() {
+    local snippet
+    snippet=$(grep -A2 'libraries=\$(curl' "$REPO_ROOT/scripts/ebook-pipeline.sh")
+    if echo "$snippet" | grep -q -- '--connect-timeout' && echo "$snippet" | grep -q -- '--max-time'; then
+        pass "ebook-pipeline.sh's Audiobookshelf libraries fetch has --connect-timeout/--max-time"
+    else
+        fail "ebook-pipeline.sh's Audiobookshelf libraries fetch has --connect-timeout/--max-time (snippet: $snippet)"
+    fi
+}
+
+test_trigger_audiobookshelf_scan_has_timeouts() {
+    local func_src
+    func_src=$(extract_bash_function "trigger_audiobookshelf_scan" "$REPO_ROOT/scripts/ebook-pipeline.sh")
+
+    mock_curl_setup
+    (
+        AUDIOBOOKSHELF_KEY="test-key"
+        AUDIOBOOKSHELF_URL="http://example.invalid:13378"
+        log() { :; }
+        eval "$func_src"
+        trigger_audiobookshelf_scan "42" >/dev/null 2>&1 || true
+    )
+
+    if grep -qxF -- '--connect-timeout' "$MOCK_ARGV" && grep -qxF -- '--max-time' "$MOCK_ARGV"; then
+        pass "trigger_audiobookshelf_scan includes --connect-timeout and --max-time"
+    else
+        fail "trigger_audiobookshelf_scan includes --connect-timeout and --max-time"
+    fi
+    mock_curl_teardown
+}
+
+write_mock_curl_for_ab_scan() {
+    local mockdir="$1"
+    mkdir -p "$mockdir/bin"
+    # No -f in the real invocation, so real curl exits 0 with the actual
+    # status code on an HTTP error, and only exits non-zero (with no code
+    # on stdout) on a genuine transport failure - mirrors the verified
+    # real-curl behavior used throughout this suite.
+    cat > "$mockdir/bin/curl" <<'MOCKEOF'
+#!/bin/sh
+case "$MOCK_MODE" in
+    success) printf '200'; exit 0 ;;
+    http_error) printf '500'; exit 0 ;;
+    transport_error) exit 7 ;;
+    *) echo "mock curl: unknown MOCK_MODE '$MOCK_MODE'" >&2; exit 99 ;;
+esac
+MOCKEOF
+    chmod +x "$mockdir/bin/curl"
+}
+
+test_trigger_audiobookshelf_scan_success() {
+    local mockdir func_src output
+    mockdir=$(mktemp -d)
+    write_mock_curl_for_ab_scan "$mockdir"
+    func_src=$(extract_bash_function "trigger_audiobookshelf_scan" "$REPO_ROOT/scripts/ebook-pipeline.sh")
+
+    output=$(
+        set -euo pipefail
+        export PATH="$mockdir/bin:$ORIGINAL_PATH"
+        export MOCK_MODE=success
+        AUDIOBOOKSHELF_KEY="test-key"
+        AUDIOBOOKSHELF_URL="http://example.invalid:13378"
+        log() { echo "$*"; }
+        eval "$func_src"
+        trigger_audiobookshelf_scan "42" && echo "RETURNED_0" || echo "RETURNED_1"
+    )
+
+    if echo "$output" | grep -q "RETURNED_0" && echo "$output" | grep -q "Scan triggered"; then
+        pass "trigger_audiobookshelf_scan succeeds and logs on a real HTTP 200"
+    else
+        fail "trigger_audiobookshelf_scan succeeds and logs on a real HTTP 200 (output='$output')"
+    fi
+    rm -rf "$mockdir"
+}
+
+test_trigger_audiobookshelf_scan_http_error() {
+    local mockdir func_src output
+    mockdir=$(mktemp -d)
+    write_mock_curl_for_ab_scan "$mockdir"
+    func_src=$(extract_bash_function "trigger_audiobookshelf_scan" "$REPO_ROOT/scripts/ebook-pipeline.sh")
+
+    output=$(
+        set -euo pipefail
+        export PATH="$mockdir/bin:$ORIGINAL_PATH"
+        export MOCK_MODE=http_error
+        AUDIOBOOKSHELF_KEY="test-key"
+        AUDIOBOOKSHELF_URL="http://example.invalid:13378"
+        log() { echo "$*"; }
+        eval "$func_src"
+        trigger_audiobookshelf_scan "42" && echo "RETURNED_0" || echo "RETURNED_1"
+    )
+
+    # Must say "HTTP 500" specifically, not "connection/transport error or
+    # timeout" - a real HTTP error is not the same failure mode as a
+    # transport failure, and the message must not conflate them.
+    if echo "$output" | grep -q "RETURNED_1" && echo "$output" | grep -q "HTTP 500" \
+        && ! echo "$output" | grep -qi "transport"; then
+        pass "trigger_audiobookshelf_scan reports a real HTTP error distinctly, not as a transport failure"
+    else
+        fail "trigger_audiobookshelf_scan reports a real HTTP error distinctly, not as a transport failure (output='$output')"
+    fi
+    rm -rf "$mockdir"
+}
+
+test_trigger_audiobookshelf_scan_transport_failure_does_not_abort_caller() {
+    local mockdir func_src output
+    mockdir=$(mktemp -d)
+    write_mock_curl_for_ab_scan "$mockdir"
+    func_src=$(extract_bash_function "trigger_audiobookshelf_scan" "$REPO_ROOT/scripts/ebook-pipeline.sh")
+
+    # Reproduces the real call site exactly: `trigger_audiobookshelf_scan
+    # ... || ERRORS=$((ERRORS + 1))` under set -e, followed by more work -
+    # standing in for the report-email step that follows it for real. The
+    # old code's bare `scan_code=$(curl ...)` (no -f, no `|| ...` fallback)
+    # would abort the whole script right here on a transport failure,
+    # never reaching the "would send report email now" marker below.
+    output=$(
+        set -euo pipefail
+        export PATH="$mockdir/bin:$ORIGINAL_PATH"
+        export MOCK_MODE=transport_error
+        AUDIOBOOKSHELF_KEY="test-key"
+        AUDIOBOOKSHELF_URL="http://example.invalid:13378"
+        ERRORS=0
+        log() { echo "$*"; }
+        eval "$func_src"
+        trigger_audiobookshelf_scan "42" || ERRORS=$((ERRORS + 1))
+        echo "ERRORS=$ERRORS"
+        echo "would send report email now"
+    )
+
+    if echo "$output" | grep -q "connection/transport error or timeout" \
+        && echo "$output" | grep -q "ERRORS=1" \
+        && echo "$output" | grep -q "would send report email now"; then
+        pass "a transport failure in trigger_audiobookshelf_scan is logged/counted and does not abort the rest of the pipeline (report email still reachable)"
+    else
+        fail "a transport failure in trigger_audiobookshelf_scan is logged/counted and does not abort the rest of the pipeline (output='$output')"
+    fi
+    rm -rf "$mockdir"
+}
+
+test_fetch_completed_torrents_rpc_failure_preserves_existing_file() {
+    local func_src out_file output
+    func_src=$(extract_bash_function "fetch_completed_torrents" "$REPO_ROOT/scripts/ebook-pipeline.sh")
+    out_file=$(mktemp)
+    printf 'PREVIOUS-GOOD-CONTENT\n' > "$out_file"
+
+    output=$(
+        set -euo pipefail
+        ERRORS=0
+        log() { echo "$*"; }
+        transmission_rpc() { return 1; }
+        eval "$func_src"
+        fetch_completed_torrents "fake-sid" "/downloads/complete/ebooks-incoming" "$out_file" \
+            && echo "RETURNED_0" || echo "RETURNED_1"
+        echo "ERRORS=$ERRORS"
+    )
+
+    if echo "$output" | grep -q "RETURNED_1" && echo "$output" | grep -qi "RPC failed" \
+        && echo "$output" | grep -q "ERRORS=1" \
+        && [ "$(cat "$out_file")" = "PREVIOUS-GOOD-CONTENT" ]; then
+        pass "fetch_completed_torrents: an RPC failure is logged and counted, and leaves an existing out_file untouched"
+    else
+        fail "fetch_completed_torrents: an RPC failure is logged and counted, and leaves an existing out_file untouched (output='$output', file='$(cat "$out_file")')"
+    fi
+    rm -f "$out_file"
+}
+
+test_fetch_completed_torrents_malformed_json_preserves_existing_file() {
+    local func_src out_file output
+    func_src=$(extract_bash_function "fetch_completed_torrents" "$REPO_ROOT/scripts/ebook-pipeline.sh")
+    out_file=$(mktemp)
+    printf 'PREVIOUS-GOOD-CONTENT\n' > "$out_file"
+
+    output=$(
+        set -euo pipefail
+        ERRORS=0
+        log() { echo "$*"; }
+        # RPC itself "succeeds" (real curl -sf would too, for a 2xx
+        # response with a garbage body) but the body isn't valid JSON -
+        # this must be reported as a distinct failure mode from an RPC
+        # failure, not conflated with it.
+        transmission_rpc() { echo "not valid json {{{"; return 0; }
+        eval "$func_src"
+        fetch_completed_torrents "fake-sid" "/downloads/complete/ebooks-incoming" "$out_file" \
+            && echo "RETURNED_0" || echo "RETURNED_1"
+        echo "ERRORS=$ERRORS"
+    )
+
+    if echo "$output" | grep -q "RETURNED_1" && echo "$output" | grep -qi "parse" \
+        && ! echo "$output" | grep -qi "RPC failed" \
+        && echo "$output" | grep -q "ERRORS=1" \
+        && [ "$(cat "$out_file")" = "PREVIOUS-GOOD-CONTENT" ]; then
+        pass "fetch_completed_torrents: a malformed response is logged distinctly from an RPC failure, and leaves an existing out_file untouched"
+    else
+        fail "fetch_completed_torrents: a malformed response is logged distinctly from an RPC failure, and leaves an existing out_file untouched (output='$output', file='$(cat "$out_file")')"
+    fi
+    rm -f "$out_file"
+}
+
+test_fetch_completed_torrents_success_replaces_file() {
+    local func_src out_file output
+    func_src=$(extract_bash_function "fetch_completed_torrents" "$REPO_ROOT/scripts/ebook-pipeline.sh")
+    out_file=$(mktemp)
+    printf 'STALE-CONTENT-FROM-A-PRIOR-RUN\n' > "$out_file"
+
+    output=$(
+        set -euo pipefail
+        ERRORS=0
+        log() { echo "$*"; }
+        transmission_rpc() {
+            echo '{"arguments":{"torrents":[{"id":1,"name":"Some Book","hashString":"abc123","downloadDir":"/downloads/complete/ebooks-incoming","percentDone":1}]}}'
+            return 0
+        }
+        eval "$func_src"
+        fetch_completed_torrents "fake-sid" "/downloads/complete/ebooks-incoming" "$out_file" \
+            && echo "RETURNED_0" || echo "RETURNED_1"
+        echo "ERRORS=$ERRORS"
+    )
+
+    if echo "$output" | grep -q "RETURNED_0" && echo "$output" | grep -q "ERRORS=0" \
+        && grep -q "abc123" "$out_file" && ! grep -q "STALE-CONTENT" "$out_file"; then
+        pass "fetch_completed_torrents: a successful fetch replaces out_file with the freshly filtered result"
+    else
+        fail "fetch_completed_torrents: a successful fetch replaces out_file with the freshly filtered result (output='$output', file='$(cat "$out_file")')"
+    fi
+    rm -f "$out_file"
+}
+
+test_fetch_completed_torrents_failure_does_not_abort_caller() {
+    local func_src out_file output
+    func_src=$(extract_bash_function "fetch_completed_torrents" "$REPO_ROOT/scripts/ebook-pipeline.sh")
+    out_file=$(mktemp)
+
+    # Reproduces the real call site exactly: `fetch_completed_torrents ...
+    # || true` under set -e, followed by more work - standing in for the
+    # rest of Phase 2/3 that follows it for real. The old code's blanket
+    # `| jq ... > file || true` swallowed this same failure silently but
+    # via a different, riskier mechanism (truncating the target file as a
+    # side effect of `>` before the failure was even known) - this test
+    # instead exercises the new explicit function + call-site pattern.
+    output=$(
+        set -euo pipefail
+        ERRORS=0
+        log() { echo "$*"; }
+        transmission_rpc() { return 1; }
+        eval "$func_src"
+        fetch_completed_torrents "fake-sid" "/downloads/complete/ebooks-incoming" "$out_file" || true
+        echo "ERRORS=$ERRORS"
+        echo "reached the rest of the pipeline"
+    )
+
+    if echo "$output" | grep -q "ERRORS=1" && echo "$output" | grep -q "reached the rest of the pipeline"; then
+        pass "a fetch_completed_torrents failure at the real call site does not abort the rest of the pipeline"
+    else
+        fail "a fetch_completed_torrents failure at the real call site does not abort the rest of the pipeline (output='$output')"
+    fi
+    rm -f "$out_file"
+}
+
 # --- run everything -------------------------------------------------------
 
 test_env_set_preserves_inode
@@ -1001,6 +1269,15 @@ test_caddy_entrypoint_does_not_start_caddy_when_geodb_fails
 test_caddy_entrypoint_redownloads_when_existing_db_file_is_invalid
 test_caddy_entrypoint_starts_caddy_when_geodb_succeeds
 test_caddy_entrypoint_refuses_caddy_if_geodb_reports_success_but_file_missing
+test_ebook_pipeline_libraries_fetch_has_timeouts
+test_trigger_audiobookshelf_scan_has_timeouts
+test_trigger_audiobookshelf_scan_success
+test_trigger_audiobookshelf_scan_http_error
+test_trigger_audiobookshelf_scan_transport_failure_does_not_abort_caller
+test_fetch_completed_torrents_rpc_failure_preserves_existing_file
+test_fetch_completed_torrents_malformed_json_preserves_existing_file
+test_fetch_completed_torrents_success_replaces_file
+test_fetch_completed_torrents_failure_does_not_abort_caller
 
 echo
 echo "$PASS_COUNT passed, $FAIL_COUNT failed"

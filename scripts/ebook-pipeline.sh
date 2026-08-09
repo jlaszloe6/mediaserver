@@ -170,6 +170,44 @@ if [ -n "$SID" ]; then
 fi
 
 # --- Phase 2: completion poll -> convert -> organize ---
+
+# Fetches Transmission's torrent-get response and filters it down to
+# completed torrents in $dest_dir, writing the result to $out_file.
+# Fetch failure (transmission_rpc/curl) and parse failure (jq) are checked
+# and logged separately - a blanket `| jq ... > file || true` would
+# truncate $out_file to empty regardless of *why* the pipeline failed,
+# making a transient RPC/parse failure indistinguishable from "genuinely
+# no completed torrents this run": silently skipped, nothing logged,
+# nothing to alert on even if it kept happening every run. $out_file is
+# only ever written via `mv` from a same-tmpdir scratch file, so a failed
+# attempt leaves it exactly as it was (untouched), never partially
+# overwritten. Pulled into its own function (also so it can be extracted
+# and tested in isolation via the sed-based technique used elsewhere in
+# this repo for scripts with no sourcing guard).
+fetch_completed_torrents() {
+    local sid="$1" dest_dir="$2" out_file="$3"
+    local raw_response filtered_tmp
+
+    if ! raw_response=$(transmission_rpc "$sid" '{"method":"torrent-get","arguments":{"fields":["id","name","hashString","downloadDir","percentDone"]}}'); then
+        log "  ERROR: Transmission torrent-get RPC failed - skipping completion check this run"
+        ERRORS=$((ERRORS + 1))
+        return 1
+    fi
+
+    filtered_tmp=$(mktemp)
+    if echo "$raw_response" | jq -c --arg dir "$dest_dir" \
+            '.arguments.torrents[]? | select(.downloadDir == $dir and .percentDone == 1)' \
+            > "$filtered_tmp" 2>/dev/null; then
+        mv "$filtered_tmp" "$out_file"
+        return 0
+    else
+        log "  ERROR: Failed to parse Transmission torrent-get response - skipping completion check this run"
+        ERRORS=$((ERRORS + 1))
+        rm -f "$filtered_tmp"
+        return 1
+    fi
+}
+
 sanitize() {
     local s
     s=$(echo "$1" | tr -s ' \t' ' ' | tr '/\\:*?"<>|' '_' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
@@ -192,10 +230,14 @@ if [ -n "$SID" ]; then
     # complete - a private-tracker torrent held for H&R seeding can sit at
     # percentDone==1 with isFinished==false for days. percentDone==1 is the
     # correct "download complete" signal.
-    transmission_rpc "$SID" '{"method":"torrent-get","arguments":{"fields":["id","name","hashString","downloadDir","percentDone"]}}' \
-        | jq -c --arg dir "$TRANSMISSION_DOWNLOAD_DIR" \
-            '.arguments.torrents[]? | select(.downloadDir == $dir and .percentDone == 1)' \
-        > "$TORRENTS_FILE" || true
+    #
+    # Called via `||`, exempting the function's body from set -e for this
+    # invocation - safe here because every command inside
+    # fetch_completed_torrents() that can fail is already explicitly
+    # checked and handled (return 1), so nothing inside it is relying on
+    # set -e to catch a failure. This just prevents that already-handled,
+    # already-logged failure from also aborting the rest of this script.
+    fetch_completed_torrents "$SID" "$TRANSMISSION_DOWNLOAD_DIR" "$TORRENTS_FILE" || true
 
     while IFS= read -r torrent; do
         [ -z "$torrent" ] && continue
@@ -312,11 +354,46 @@ if [ -n "$SID" ]; then
 fi
 
 # --- Phase 3: trigger Audiobookshelf scan + send email ---
+
+# Triggers a scan of the given library ID. No -f: a transport failure and
+# a real HTTP error need to be told apart below, and %{http_code} must be
+# captured either way - `-f` would make curl exit nonzero on a real HTTP
+# error too, indistinguishable from a transport failure. `|| scan_code=
+# "000"` catches only genuine transport/timeout failures without letting
+# set -e kill the rest of this script - by this point books have already
+# been imported to disk, and the report email (below, outside this
+# function) still has to run regardless of whether the scan trigger
+# itself succeeds. No automatic retry: this is a POST, and nothing here
+# has verified firing it twice against a real library-scan endpoint is
+# safe. Pulled into its own function so it can be extracted and tested in
+# isolation, same reasoning as fetch_completed_torrents() above.
+trigger_audiobookshelf_scan() {
+    local library_id="$1"
+    local scan_code
+
+    scan_code=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+        --connect-timeout 5 --max-time 15 \
+        -H "Authorization: Bearer $AUDIOBOOKSHELF_KEY" \
+        "$AUDIOBOOKSHELF_URL/api/libraries/$library_id/scan") || scan_code="000"
+
+    if [ "$scan_code" = "200" ]; then
+        log "  Scan triggered"
+        return 0
+    elif [ "$scan_code" = "000" ]; then
+        log "  ERROR: Failed to trigger scan (connection/transport error or timeout)"
+        return 1
+    else
+        log "  ERROR: Failed to trigger scan (HTTP $scan_code)"
+        return 1
+    fi
+}
+
 if [ "$IMPORTED" -gt 0 ] && ! $DRY_RUN; then
     log "--- Triggering Audiobookshelf Ebooks library scan ---"
 
-    libraries=$(curl -sf -H "Authorization: Bearer $AUDIOBOOKSHELF_KEY" "$AUDIOBOOKSHELF_URL/api/libraries") || {
-        log "ERROR: Failed to fetch Audiobookshelf libraries"
+    libraries=$(curl -sf --connect-timeout 5 --max-time 15 \
+        -H "Authorization: Bearer $AUDIOBOOKSHELF_KEY" "$AUDIOBOOKSHELF_URL/api/libraries") || {
+        log "ERROR: Failed to fetch Audiobookshelf libraries (connection/timeout or HTTP error)"
         ERRORS=$((ERRORS + 1))
         libraries=""
     }
@@ -327,16 +404,13 @@ if [ "$IMPORTED" -gt 0 ] && ! $DRY_RUN; then
         log "ERROR: Could not find 'Ebooks' library in Audiobookshelf"
         ERRORS=$((ERRORS + 1))
     else
-        scan_code=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
-            -H "Authorization: Bearer $AUDIOBOOKSHELF_KEY" \
-            "$AUDIOBOOKSHELF_URL/api/libraries/$library_id/scan")
-
-        if [ "$scan_code" = "200" ]; then
-            log "  Scan triggered"
-        else
-            log "  ERROR: Failed to trigger scan (HTTP $scan_code)"
-            ERRORS=$((ERRORS + 1))
-        fi
+        # Called via `||`, exempting the function's body from set -e for
+        # this invocation - safe here for the same reason as
+        # fetch_completed_torrents() above: the one command inside that
+        # can fail already has its own explicit `|| scan_code="000"`
+        # fallback, so nothing inside relies on the outer set -e to catch
+        # anything.
+        trigger_audiobookshelf_scan "$library_id" || ERRORS=$((ERRORS + 1))
     fi
 fi
 
