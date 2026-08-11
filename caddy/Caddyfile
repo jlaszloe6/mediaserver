@@ -23,7 +23,13 @@
 		# worker-src falls back to script-src (also no blob:), and hls.js
 		# silently degrades to main-thread demuxing (non-fatal, but worse
 		# performance, especially on lower-power clients like Android TV boxes).
-		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' blob:; worker-src 'self' blob:; frame-src https://challenges.cloudflare.com; connect-src 'self'; font-src 'self'"
+		# img-src needs blob: too - Navidrome's web UI fetches cover art via JS
+		# and renders it through URL.createObjectURL() rather than a plain
+		# same-origin <img src> URL, so it needs a blob: URL to be permitted.
+		# Without it, cover art silently fails to render (no server-side error;
+		# only visible as a CSP violation in the browser console) - same failure
+		# shape as the original media-src/worker-src gap.
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; worker-src 'self' blob:; frame-src https://challenges.cloudflare.com; connect-src 'self'; font-src 'self'"
 	}
 }
 
