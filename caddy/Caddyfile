@@ -119,10 +119,26 @@
 	# account). Verified against a real generated feed: every URL it
 	# contains (feed, enclosure audio, artwork) lives under this prefix,
 	# none of it redirects elsewhere, and Range requests on the audio work
-	# (200/206, no 3xx). This is the only path exempted from geoip_hungary -
-	# everything else on this vhost (UI, API, login) keeps the existing
-	# HU/LAN-only restriction unchanged.
-	handle /feed/* {
+	# (200/206, no 3xx).
+	#
+	# Also exempting /audiobookshelf/feed/* - Audiobookshelf's RouterBasePath
+	# rewrite (ROUTER_BASE_PATH, defaults to /audiobookshelf) happens inside
+	# its own Express middleware, downstream of Caddy, so it's Audiobookshelf
+	# itself - not Caddy - that decides which prefix a request's *generated*
+	# absolute URLs carry: request the bare /feed/* form and you get
+	# unprefixed URLs back, but Audiobookshelf's own UI (and thus what a
+	# real user copies into a podcast app) requests the feed via
+	# /audiobookshelf/feed/*, so the canonical URLs it emits carry that
+	# prefix too. Confirmed against a real re-fetch of the live feed - Caddy
+	# has no handle_path/strip_prefix/rewrite anywhere, so without this
+	# second branch those prefixed URLs would 403 for anyone outside HU/LAN
+	# while looking identical to the working ones.
+	#
+	# These two are the only paths exempted from geoip_hungary - everything
+	# else on this vhost (UI, API, login, /audiobookshelf/item/*, /share/*,
+	# /public/share/*) keeps the existing HU/LAN-only restriction unchanged.
+	@public_abs_feed path /feed/* /audiobookshelf/feed/*
+	handle @public_abs_feed {
 		import strict_csp
 		reverse_proxy audiobookshelf:13378 {
 			header_up X-Real-IP {remote_host}
