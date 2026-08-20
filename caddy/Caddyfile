@@ -112,9 +112,28 @@
 		dns duckdns {env.DUCKDNS_TOKEN}
 	}
 	import base_headers
-	import strict_csp
-	import geoip_hungary
-	reverse_proxy audiobookshelf:13378 {
-		header_up X-Real-IP {remote_host}
+
+	# Audiobookshelf's Open RSS Feed serves the feed XML, episode audio, and
+	# cover art entirely under /feed/* with no auth of its own (by design -
+	# that's what lets podcast apps subscribe without an Audiobookshelf
+	# account). Verified against a real generated feed: every URL it
+	# contains (feed, enclosure audio, artwork) lives under this prefix,
+	# none of it redirects elsewhere, and Range requests on the audio work
+	# (200/206, no 3xx). This is the only path exempted from geoip_hungary -
+	# everything else on this vhost (UI, API, login) keeps the existing
+	# HU/LAN-only restriction unchanged.
+	handle /feed/* {
+		import strict_csp
+		reverse_proxy audiobookshelf:13378 {
+			header_up X-Real-IP {remote_host}
+		}
+	}
+
+	handle {
+		import strict_csp
+		import geoip_hungary
+		reverse_proxy audiobookshelf:13378 {
+			header_up X-Real-IP {remote_host}
+		}
 	}
 }
