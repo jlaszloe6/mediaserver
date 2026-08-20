@@ -136,6 +136,12 @@ Services: Jellyfin, Transmission, Sonarr, Radarr, Prowlarr, Bazarr, Seerr, Caddy
 - Don't broaden the Caddy exception beyond `/feed/*` without inspecting a real Audiobookshelf feed first — its served paths come from Audiobookshelf's own route definitions, not a documented/stable API contract
 - Don't add a new DuckDNS record or a dedicated podcast domain unless explicitly requested — this deliberately reuses the existing Audiobookshelf host
 
+## Media Item Shares
+- Separate Audiobookshelf feature from the Podcasts `/feed/*` exception above — a "Media Item Share" makes one specific book or podcast episode (`/api/share/mediaitem`, `mediaItemType` = `book` or `podcastEpisode`) viewable at `/share/<slug>`, backed by unauthenticated routes at `/public/share/<slug>*` (data, cover, audio track, download)
+- **Intentionally left geo-restricted, unlike `/feed/*`** — no Caddy exception exists for `/share/*` or `/public/share/*`, so `geoip_hungary` still gates them on the Audiobookshelf vhost: reachable and fully login-free from HU/LAN, `403` from anywhere else
+- Verified live with a temporary real share: from HU/LAN, the flow works exactly as designed — visiting `/public/share/<slug>` sets an httpOnly `share_session_id` cookie (30-day), and that cookie is required for the track/cover/download routes (they 404 with "Share session not set" without it, by design, not a bug). Audio track requests honor Range and return `206 Partial Content`; from outside HU/LAN, the same share URL returns `403`
+- Don't add a Caddy exception for `/share/*` or `/public/share/*` unless explicitly requested — the current design is deliberate: Media Item Shares are for sharing with people already inside the allowed geo/LAN, not the general public
+
 ## Status Page
 - Flask + SQLite, bridge network (port 8080), magic link auth
 - Modular structure: `app.py` (init) → `config.py`, `db.py`, `auth.py`, `services/*`, `routes/*`
