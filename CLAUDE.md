@@ -38,7 +38,7 @@ Services: Jellyfin, Transmission, Sonarr, Radarr, Prowlarr, Bazarr, Seerr, Caddy
 - Caddyfile uses env vars: `$CADDY_DOMAIN_JELLYFIN`, `$CADDY_DOMAIN_SEERR`, `$CADDY_DOMAIN_STATUS`, `$CADDY_DOMAIN_NAVIDROME`, `$CADDY_DOMAIN_AUDIOBOOKSHELF`
 - Reverse proxies to Docker service names on bridge network (jellyfin:8096, seerr:5055, statuspage:8080, navidrome:4533, audiobookshelf:13378)
 - Lidarr/Sonarr/Radarr/Prowlarr are intentionally NOT proxied — admin UIs stay LAN-only (Lidarr in particular has no built-in auth enabled)
-- GeoIP country filter via MaxMind GeoLite2-Country (allowed countries configurable), LAN IPs pass through
+- GeoIP country filter via MaxMind GeoLite2-Country (allowed countries configurable), LAN IPs pass through — one deliberate exception: Audiobookshelf's `/feed/*` (public podcast RSS feed) bypasses this on that same vhost, see Podcasts below
 - TLS via Let's Encrypt DNS-01 challenge (auto-renewal)
 - Build requires `network: host` in compose (IPv6 unreachable in default bridge)
 - Only container with port 443 published
@@ -127,6 +127,15 @@ Services: Jellyfin, Transmission, Sonarr, Radarr, Prowlarr, Bazarr, Seerr, Caddy
 - `transmission-cleanup.sh` *does* clean these up correctly, via its generic fallback path rather than anything ebook-specific: ebook torrents have no Sonarr/Radarr history, so they fall to the filesystem hardlink check — since `ebook-pipeline.sh` copies (not hardlinks) into the library, the original always looks unlinked, which the fallback correctly treats as orphaned-but-still-subject-to-the-72h-H&R-wait for nCore. Verified live: completed ebook torrents show up as `Waiting (H&R 72h): ... (~71h remaining)` in `jellyfin-cleanup.sh`'s log, same as movies/TV
 - Real remaining risk: if a completed torrent has no recognizable ebook file, or every file in it fails conversion, nothing gets copied into the library — the torrent is marked processed anyway (to avoid retrying forever) and flagged for manual review by email. If that email goes unnoticed for 72h, `transmission-cleanup.sh` will delete the untouched original with no other copy existing anywhere. The email is the only safety net here; there's no automated rescue of unconverted originals before H&R cleanup
 
+## Podcasts
+- Separate Audiobookshelf library ("Podcasts") from Audiobooks/Ebooks, mounted at its own `${MEDIA_ROOT}/media/podcasts:/podcasts` volume — same nesting caution as the Ebook library (own top-level folder, not nested under another library's mount, or Audiobookshelf double-scans it into duplicate items)
+- Public hosting uses Audiobookshelf's native "Open RSS Feed" feature directly — no separate podcast app, container, or domain. A podcast created in that library with "Open RSS Feed" enabled is served, unauthenticated, at `https://freya-audiobookshelf.duckdns.org/feed/<slug>` — feed XML, cover art, and episode audio enclosures all live under `/feed/*`
+- Caddy: only `/feed/*` on the existing Audiobookshelf vhost bypasses `geoip_hungary`, via mutually-exclusive `handle` blocks — the UI, `/api/*`, `/login`, `/item/*`, and every other path on that host stay HU/LAN-only, exactly as before
+- Verified against a real generated feed (not assumed from docs): feed/cover/audio all return `200` with no redirects, and an HTTP Range request against the audio enclosure returns `206 Partial Content` (required for scrubbing/resuming in podcast apps) — confirmed live from a vantage point outside HU/LAN
+- The feed's `<link>` elements point to the authenticated `/item/:id` web page, which stays behind the geo-block — expected, since podcast apps use `<enclosure>` for playback, not `<link>`
+- Don't broaden the Caddy exception beyond `/feed/*` without inspecting a real Audiobookshelf feed first — its served paths come from Audiobookshelf's own route definitions, not a documented/stable API contract
+- Don't add a new DuckDNS record or a dedicated podcast domain unless explicitly requested — this deliberately reuses the existing Audiobookshelf host
+
 ## Status Page
 - Flask + SQLite, bridge network (port 8080), magic link auth
 - Modular structure: `app.py` (init) → `config.py`, `db.py`, `auth.py`, `services/*`, `routes/*`
@@ -182,7 +191,7 @@ Services: Jellyfin, Transmission, Sonarr, Radarr, Prowlarr, Bazarr, Seerr, Caddy
 - Jellyfin setup wizard and Seerr configuration require browser interaction (cannot be fully automated)
 
 ## Host Security
-- Only port 443 exposed to internet (via Caddy with GeoIP filter)
+- Only port 443 exposed to internet (via Caddy with GeoIP filter, except Audiobookshelf's `/feed/*` public podcast feed — see Podcasts)
 - UFW: SSH from LAN only, DNS from LAN only, 443/tcp, deny all else
 - No Docker socket mounted in any container
 - No host-networked containers
