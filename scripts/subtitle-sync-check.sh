@@ -97,6 +97,7 @@ sync_subtitle() {
     else
         log "  ERROR: Bazarr sync request failed for $label ($lang) - HTTP $code"
         ERRORS=$((ERRORS + 1))
+        HAD_FAILURE=1
     fi
 }
 
@@ -113,9 +114,14 @@ resync_media_subtitles() {
         endpoint="$BAZARR_URL/api/movies?radarrid[]=$media_id"
     fi
 
+    # -g/--globoff: without it curl's URL-globbing parser can choke on the
+    # literal "[]" in episodeid[]/radarrid[] (a bare pair with no range
+    # content between them isn't guaranteed to fall back to literal across
+    # curl versions/builds).
     local resp
-    resp=$(curl -sf -H "X-API-KEY: $BAZARR_KEY" "$endpoint") || {
+    resp=$(curl -sfg -H "X-API-KEY: $BAZARR_KEY" "$endpoint") || {
         log "  WARN: Could not fetch Bazarr metadata for $label (not indexed by Bazarr yet?)"
+        HAD_FAILURE=1
         return 0
     }
 
@@ -183,10 +189,23 @@ process_service() {
     local media_ids
     media_ids=$(echo "$new_events" | jq -r "[.[].${id_field}] | unique | .[]")
 
+    # Set by resync_media_subtitles/sync_subtitle on any failure for this
+    # batch. Re-processing an already-succeeded item is harmless (it's just
+    # another idempotent ffsubsync run), so on any failure the whole
+    # window's id is deliberately NOT advanced below - the entire batch,
+    # successes included, gets retried next run rather than silently
+    # abandoning whichever item actually failed.
+    HAD_FAILURE=0
+
     while IFS= read -r mid; do
         [ -z "$mid" ] && continue
         resync_media_subtitles "$media_type" "$mid" "$service_name #$mid"
     done <<< "$media_ids"
+
+    if [ "$HAD_FAILURE" -eq 1 ]; then
+        log "$service_name: failure(s) occurred - not advancing state, will retry this batch next run"
+        return 0
+    fi
 
     local max_id
     max_id=$(echo "$new_events" | jq '[.[].id] | max')
@@ -197,8 +216,13 @@ process_service() {
 
 log "=== Subtitle sync check ==="
 
-process_service "Sonarr" "$SONARR_URL" "${SONARR_API_KEY:-}" "episode" "episodeId" "/var/tmp/subtitle-sync-check-sonarr.id"
-process_service "Radarr" "$RADARR_URL" "${RADARR_API_KEY:-}" "movie" "movieId" "/var/tmp/subtitle-sync-check-radarr.id"
+# `|| true` on each call: process_service returns non-zero when it can't
+# even fetch history (already logged + counted in ERRORS above). Under
+# set -e, letting that propagate would abort the script right here -
+# skipping the other service entirely and, worse, skipping the final
+# error-summary/email block below despite ERRORS being non-zero.
+process_service "Sonarr" "$SONARR_URL" "${SONARR_API_KEY:-}" "episode" "episodeId" "/var/tmp/subtitle-sync-check-sonarr.id" || true
+process_service "Radarr" "$RADARR_URL" "${RADARR_API_KEY:-}" "movie" "movieId" "/var/tmp/subtitle-sync-check-radarr.id" || true
 
 DONE_MSG="=== Done: $SYNCED subtitle(s) queued for resync"
 EXIT_CODE=0
