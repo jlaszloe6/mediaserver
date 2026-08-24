@@ -1,3 +1,12 @@
+# Every service reuses this via `logging: *default-logging` - without it,
+# the default json-file driver never rotates and container logs grow
+# unbounded (one container was already at 36MB with no cap).
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 networks:
   mediaserver:
     name: mediaserver
@@ -28,6 +37,7 @@ services:
       - "992" # host's render group gid, grants access to /dev/dri/renderD128
     mem_limit: 4g
     restart: unless-stopped
+    logging: *default-logging
     security_opt:
       - no-new-privileges:true
     healthcheck:
@@ -62,6 +72,7 @@ services:
       - "51413:51413/udp"
     mem_limit: 2g
     restart: unless-stopped
+    logging: *default-logging
     security_opt:
       - no-new-privileges:true
     healthcheck:
@@ -89,6 +100,7 @@ services:
       - ${MEDIA_ROOT}:/data
     mem_limit: 1g
     restart: unless-stopped
+    logging: *default-logging
     security_opt:
       - no-new-privileges:true
     healthcheck:
@@ -116,6 +128,7 @@ services:
       - ${MEDIA_ROOT}:/data
     mem_limit: 1g
     restart: unless-stopped
+    logging: *default-logging
     security_opt:
       - no-new-privileges:true
     healthcheck:
@@ -144,6 +157,7 @@ services:
       - ${MEDIA_ROOT}:/data
     mem_limit: 512m
     restart: unless-stopped
+    logging: *default-logging
     security_opt:
       - no-new-privileges:true
     healthcheck:
@@ -174,6 +188,7 @@ services:
       - ${MEDIA_ROOT}:/data
     mem_limit: 1g
     restart: unless-stopped
+    logging: *default-logging
     security_opt:
       - no-new-privileges:true
     healthcheck:
@@ -200,6 +215,7 @@ services:
       - ./config/prowlarr:/config
     mem_limit: 512m
     restart: unless-stopped
+    logging: *default-logging
     security_opt:
       - no-new-privileges:true
     healthcheck:
@@ -223,6 +239,7 @@ services:
       - ./config/overseerr:/app/config
     mem_limit: 512m
     restart: unless-stopped
+    logging: *default-logging
     security_opt:
       - no-new-privileges:true
     healthcheck:
@@ -251,6 +268,7 @@ services:
       - ${MEDIA_ROOT}/media/music:/music:ro
     mem_limit: 1g
     restart: unless-stopped
+    logging: *default-logging
     security_opt:
       - no-new-privileges:true
     healthcheck:
@@ -284,6 +302,7 @@ services:
       - ${MEDIA_ROOT}/media/podcasts:/podcasts
     mem_limit: 1g
     restart: unless-stopped
+    logging: *default-logging
     security_opt:
       - no-new-privileges:true
     healthcheck:
@@ -317,6 +336,7 @@ services:
       - ./config/caddy/config:/config
     mem_limit: 512m
     restart: unless-stopped
+    logging: *default-logging
     security_opt:
       - no-new-privileges:true
     healthcheck:
@@ -344,6 +364,7 @@ services:
       - ./config/duckdns:/config
     mem_limit: 128m
     restart: unless-stopped
+    logging: *default-logging
     security_opt:
       - no-new-privileges:true
 
@@ -382,6 +403,7 @@ services:
       - ./config/statuspage:/app/data
     mem_limit: 256m
     restart: unless-stopped
+    logging: *default-logging
     security_opt:
       - no-new-privileges:true
     read_only: true
@@ -418,6 +440,7 @@ services:
       - cron-logs:/var/log/cron
     mem_limit: 256m
     restart: unless-stopped
+    logging: *default-logging
     security_opt:
       - no-new-privileges:true
 
@@ -464,6 +487,7 @@ services:
       - ebook-pipeline-logs:/var/log/cron
     mem_limit: 1g
     restart: unless-stopped
+    logging: *default-logging
     security_opt:
       - no-new-privileges:true
 
