@@ -70,10 +70,10 @@ log() {
 
 # Trigger a Bazarr sync for one external subtitle.
 sync_subtitle() {
-    local media_type="$1" media_id="$2" lang="$3" path="$4" label="$5"
+    local media_type="$1" media_id="$2" lang="$3" path="$4" label="$5" hi="$6"
 
     if $DRY_RUN; then
-        log "  [DRY RUN] Would trigger Bazarr sync: $label ($lang) - $path"
+        log "  [DRY RUN] Would trigger Bazarr sync: $label ($lang, hi=$hi) - $path"
         return 0
     fi
 
@@ -89,7 +89,7 @@ sync_subtitle() {
         --data-urlencode "type=$media_type" \
         --data-urlencode "id=$media_id" \
         --data-urlencode "forced=False" \
-        --data-urlencode "hi=False") || code="000"
+        --data-urlencode "hi=$hi") || code="000"
 
     if [ "$code" = "204" ]; then
         log "  Queued resync: $label ($lang)"
@@ -118,9 +118,17 @@ resync_media_subtitles() {
     # literal "[]" in episodeid[]/radarrid[] (a bare pair with no range
     # content between them isn't guaranteed to fall back to literal across
     # curl versions/builds).
+    #
+    # A genuinely unknown id (e.g. Bazarr hasn't synced this brand-new
+    # episode from Sonarr yet) is NOT a curl failure - Bazarr answers those
+    # with HTTP 200 and an empty "data" array, which the empty-$subs check
+    # below already handles as a no-op. So landing in this branch at all
+    # means a real problem (Bazarr down, bad API key, 5xx) - count it as an
+    # error so it surfaces in the alert email instead of failing silently.
     local resp
     resp=$(curl -sfg -H "X-API-KEY: $BAZARR_KEY" "$endpoint") || {
-        log "  WARN: Could not fetch Bazarr metadata for $label (not indexed by Bazarr yet?)"
+        log "  ERROR: Could not fetch Bazarr metadata for $label"
+        ERRORS=$((ERRORS + 1))
         HAD_FAILURE=1
         return 0
     }
@@ -132,10 +140,13 @@ resync_media_subtitles() {
 
     while IFS= read -r sub; do
         [ -z "$sub" ] && continue
-        local lang path
+        local lang path hi
         lang=$(echo "$sub" | jq -r '.code2')
         path=$(echo "$sub" | jq -r '.path')
-        sync_subtitle "$media_type" "$media_id" "$lang" "$path" "$label"
+        # Bazarr's API expects the capitalized string form ("True"/"False"),
+        # not jq's lowercase boolean printing.
+        hi=$(echo "$sub" | jq -r 'if .hi then "True" else "False" end')
+        sync_subtitle "$media_type" "$media_id" "$lang" "$path" "$label" "$hi"
     done <<< "$subs"
 }
 
