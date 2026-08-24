@@ -160,12 +160,21 @@ process_service() {
         return 0
     fi
 
+    # This failure is fully handled right here (logged + counted), so it
+    # returns 0, not 1: returning 1 would force every caller of
+    # process_service to wrap the call in `|| true` to avoid aborting the
+    # rest of the script under set -e - but that suppresses errexit for
+    # this ENTIRE function body (bash disables it for any command whose
+    # exit status feeds an && / || chain, not just the final check), which
+    # would then let a genuinely unexpected failure later in this function
+    # (an unwritable state file, a jq crash) pass by silently instead of
+    # aborting as intended.
     local history
     history=$(curl -sf -H "X-Api-Key: $api_key" \
         "$base_url/api/v3/history/since?date=${LOOKBACK_DATE}&eventType=downloadFolderImported") || {
         log "ERROR: Failed to fetch $service_name history"
         ERRORS=$((ERRORS + 1))
-        return 1
+        return 0
     }
 
     if [ ! -f "$state_file" ]; then
@@ -227,13 +236,16 @@ process_service() {
 
 log "=== Subtitle sync check ==="
 
-# `|| true` on each call: process_service returns non-zero when it can't
-# even fetch history (already logged + counted in ERRORS above). Under
-# set -e, letting that propagate would abort the script right here -
-# skipping the other service entirely and, worse, skipping the final
-# error-summary/email block below despite ERRORS being non-zero.
-process_service "Sonarr" "$SONARR_URL" "${SONARR_API_KEY:-}" "episode" "episodeId" "/var/tmp/subtitle-sync-check-sonarr.id" || true
-process_service "Radarr" "$RADARR_URL" "${RADARR_API_KEY:-}" "movie" "movieId" "/var/tmp/subtitle-sync-check-radarr.id" || true
+# Called as plain statements, deliberately NOT `process_service ... ||
+# true`: putting the whole call on the left of `||` would disable errexit
+# for the entire function body (bash's rule applies to every command that
+# runs while a function's exit status feeds an && / || chain, not just the
+# final check), silently swallowing a genuinely unexpected failure inside
+# it too (an unwritable state file, a jq crash). process_service already
+# returns 0 unconditionally, handling its own expected failure path
+# internally, so there's nothing here that needs the OR-list at all.
+process_service "Sonarr" "$SONARR_URL" "${SONARR_API_KEY:-}" "episode" "episodeId" "/var/tmp/subtitle-sync-check-sonarr.id"
+process_service "Radarr" "$RADARR_URL" "${RADARR_API_KEY:-}" "movie" "movieId" "/var/tmp/subtitle-sync-check-radarr.id"
 
 DONE_MSG="=== Done: $SYNCED subtitle(s) queued for resync"
 EXIT_CODE=0
