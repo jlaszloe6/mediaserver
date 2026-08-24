@@ -62,6 +62,7 @@ Services: Jellyfin, Transmission, Sonarr, Radarr, Prowlarr, Bazarr, Seerr, Caddy
 - Providers: free no-account ones enabled by default (OpenSubtitles.com optional, needs account)
 - Admin UI on port 6767 — reach via SSH tunnel: `ssh -L 6767:localhost:6767 freya-pc`
 - Many older releases lack English sub tracks (esp. French "MULTI" releases that embed only French subs) — Bazarr backfills these
+- Automatic audio-based sync (bundled ffsubsync, `subsync.use_subsync: true`) fires whenever Bazarr downloads a subtitle, but NOT when the underlying video file is later replaced (season-pack repack, quality upgrade, manual re-grab) — the existing subtitle stays on disk unchanged and can silently drift out of sync with the new file. `scripts/subtitle-sync-check.sh` (every 30 min) closes this gap: it watches Sonarr/Radarr history for `downloadFolderImported` events and re-triggers Bazarr's sync action (`PATCH /api/subtitles`, action=sync) on that episode/movie's existing external subtitles. State-tracked by history record id per service — first run seeds state without backfilling. Requires `BAZARR_API_KEY` in `.env` (from `config/bazarr/config/config.yaml` → `auth.apikey`)
 
 ## Quality & Language Preferences
 - Profile "HD-1080p Max" (id=1): prefers Bluray-1080p, 4K as fallback only
@@ -76,6 +77,7 @@ Services: Jellyfin, Transmission, Sonarr, Radarr, Prowlarr, Bazarr, Seerr, Caddy
 | `0 3 * * *` | `jellyfin-watched-cleanup.sh` | Remove media watched 30+ days ago |
 | `* * * * *` | `jellyfin-scan.sh` | Trigger Jellyfin library scan (covers manual additions) |
 | `*/30 * * * *` | `pipeline-monitor.sh` | Check pipeline health, email admin on issues |
+| `*/30 * * * *` | `subtitle-sync-check.sh` | Resync existing subtitles after Sonarr/Radarr imports a new/upgraded video file |
 | `30 2 * * *` | `backup.sh` | Config backup to NAS |
 | `0 2 * * 0` | `geodb-update.sh` | Weekly GeoIP DB refresh |
 | `0 4 * * *` | `log-rotate.sh` | Cap `/var/log/cron/*.log` files at 10MB (also runs in `ebook-pipeline`'s own crontab, for its own separate log volume) |
