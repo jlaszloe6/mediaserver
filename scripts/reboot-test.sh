@@ -100,7 +100,12 @@ echo "[Containers]"
 EXPECTED_CONTAINERS="jellyfin transmission sonarr radarr prowlarr bazarr lidarr navidrome audiobookshelf seerr caddy duckdns statuspage cron ebook-pipeline"
 
 for container in $EXPECTED_CONTAINERS; do
-    status=$(docker inspect --format='{{.State.Status}}' "$container" 2>/dev/null || echo "not found")
+    # `status=$(cmd) || status=fallback`, NOT `status=$(cmd || echo fallback)`:
+    # the latter merges stdout from BOTH commands into one capture, so any
+    # stray bytes docker inspect writes to stdout before failing (some
+    # versions emit a leading blank line ahead of a template-parsing error)
+    # get prepended to the fallback text instead of being discarded.
+    status=$(docker inspect --format='{{.State.Status}}' "$container" 2>/dev/null) || status="not found"
     if [ "$status" = "running" ]; then
         pass "$container"
     else
@@ -117,13 +122,22 @@ check_docker_health() {
     local name="$1"
     local container="$2"
     local health
-    health=$(docker inspect --format='{{.State.Health.Status}}' "$container" 2>/dev/null || echo "no healthcheck")
+    # See the container-status loop above for why the fallback must be
+    # outside the command substitution: `.State.Health.Status` on a
+    # container with no healthcheck is a nil-pointer template error, and
+    # some Docker versions write a stray leading blank line to stdout
+    # before that error - merged into a `$(cmd || echo x)` capture, that
+    # blank line makes $health become "\nno healthcheck" instead of the
+    # clean "no healthcheck" string, so it fails the elif's exact match
+    # below and this and ebook-pipeline's checks land in the `else fail`
+    # branch on every run.
+    health=$(docker inspect --format='{{.State.Health.Status}}' "$container" 2>/dev/null) || health="no healthcheck"
     if [ "$health" = "healthy" ]; then
         pass "$name ($container)"
     elif [ "$health" = "no healthcheck" ]; then
         # Container has no healthcheck defined — check if running
         local status
-        status=$(docker inspect --format='{{.State.Status}}' "$container" 2>/dev/null || echo "not found")
+        status=$(docker inspect --format='{{.State.Status}}' "$container" 2>/dev/null) || status="not found"
         if [ "$status" = "running" ]; then
             warn_check "$name ($container) — running but no healthcheck defined"
         else
