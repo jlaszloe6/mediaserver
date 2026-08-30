@@ -190,6 +190,14 @@ Services: Jellyfin, Transmission, Sonarr, Radarr, Prowlarr, Bazarr, Seerr, Caddy
 - Restore: `scripts/restore.sh` (runs on host) — `--list`, `--dry-run`, latest or specific backup
 - Restore stops containers, extracts configs, restores SQLite backups, cleans WAL/SHM journals, restarts
 
+## Network Resilience
+- Host connects via WiFi (`wlp1s0`), not wired ethernet — this is a real failure mode, not just a theoretical one
+- Incident 2026-08-27/30: an AP band-roam triggered a WPA handshake failure (`reason=WRONG_KEY`, likely a transient AP-side glitch, not an actual bad password). NetworkManager entered `need-auth`, which waits indefinitely for a secrets-agent (GUI) prompt that never comes on a headless box — autoconnect never retried. Result: total, silent network loss (LAN port forwards AND remote.it, since remote.it is outbound-initiated and needs host network too) for ~3 days until a manual power-cycle. The host itself never crashed — Docker/containers stayed healthy the whole time, journal logged continuously — this was purely a network-layer outage
+- `scripts/network-watchdog.sh` (host-level systemd timer, every 2 min, installed by `server-setup.sh` — runs as root, NOT in the Docker cron fleet, since it needs `nmcli`/`systemctl` access to the host's NetworkManager) pings 1.1.1.1/8.8.8.8; on failure, toggles `nmcli networking off/on` to force a fresh reconnect from stored secrets, escalating to `systemctl restart NetworkManager` if still down after 5 minutes
+- State tracked in `/var/lib/network-watchdog/` (down-since timestamp, one-restart-per-outage flag); logs to journal under the `network-watchdog` unit
+- Not yet installed via automated deploy on the existing live host (systemd units are host-level, outside the GitHub Actions/docker-compose pipeline) — installed manually via SSH, then codified in `server-setup.sh` for future fresh provisions
+- If this ever recurs despite the watchdog, the next escalation to consider is a full auto-reboot after a longer timeout — deliberately not implemented yet, since an unattended reboot is a bigger action than was agreed
+
 ## Reboot Resilience
 - All containers use `restart: unless-stopped` — auto-start after reboot
 - Docker waits for NFS via systemd `remote-fs.target` drop-in

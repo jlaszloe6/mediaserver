@@ -5,6 +5,7 @@
 # - mediaserver system user
 # - Docker prerequisites
 # - NFS mount
+# - Network watchdog (self-heals a stuck NetworkManager connection)
 # - Firewall (UFW)
 # - Systemd drop-ins (Docker waits for NFS)
 # - PAM SSH agent auth (passwordless sudo for key-based SSH)
@@ -78,11 +79,38 @@ Requires=remote-fs.target
 EOF
 systemctl daemon-reload
 
-# --- 4. UFW firewall ---
+# --- 4. Network watchdog ---
+
+echo "[4/9] Installing network watchdog..."
+cat > /etc/systemd/system/network-watchdog.service << EOF
+[Unit]
+Description=Network connectivity watchdog (self-heal stuck NetworkManager state)
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/mediaserver/scripts/network-watchdog.sh
+EOF
+cat > /etc/systemd/system/network-watchdog.timer << EOF
+[Unit]
+Description=Run network-watchdog every 2 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target
+EOF
+systemctl daemon-reload
+systemctl enable --now network-watchdog.timer
+
+# --- 5. UFW firewall ---
 
 LAN_SUBNET="${LAN_SUBNET:-192.168.1.0/24}"
 
-echo "[4/8] Configuring UFW firewall..."
+echo "[5/9] Configuring UFW firewall..."
 ufw --force enable
 ufw default deny incoming
 ufw allow from "$LAN_SUBNET" to any port 22 proto tcp comment "SSH (LAN only)"
@@ -93,9 +121,9 @@ ufw allow from "$LAN_SUBNET" to any port 53 comment "DNS (dnsmasq for LAN)"
 ufw deny 3389/tcp comment "Block RDP"
 echo "  UFW rules configured"
 
-# --- 5. PAM SSH agent auth (passwordless sudo for key-based SSH) ---
+# --- 6. PAM SSH agent auth (passwordless sudo for key-based SSH) ---
 
-echo "[5/8] Setting up PAM SSH agent auth..."
+echo "[6/9] Setting up PAM SSH agent auth..."
 apt-get install -y -qq libpam-ssh-agent-auth
 
 # Copy admin user's authorized keys for sudo verification
@@ -115,9 +143,9 @@ EOF
 chmod 440 /etc/sudoers.d/ssh-agent
 visudo -c -f /etc/sudoers.d/ssh-agent
 
-# --- 6. SSH server config ---
+# --- 7. SSH server config ---
 
-echo "[6/8] Configuring SSH server..."
+echo "[7/9] Configuring SSH server..."
 if ! grep -q '^AllowAgentForwarding yes' /etc/ssh/sshd_config; then
     echo 'AllowAgentForwarding yes' >> /etc/ssh/sshd_config
 fi
@@ -128,9 +156,9 @@ elif ! grep -q '^X11Forwarding no' /etc/ssh/sshd_config; then
 fi
 systemctl reload ssh
 
-# --- 7. fail2ban ---
+# --- 8. fail2ban ---
 
-echo "[7/8] Setting up fail2ban..."
+echo "[8/9] Setting up fail2ban..."
 apt-get install -y -qq fail2ban
 cat > /etc/fail2ban/jail.d/sshd.local << EOF
 [sshd]
@@ -139,9 +167,9 @@ EOF
 systemctl enable --now fail2ban
 systemctl reload fail2ban
 
-# --- 8. Git safe directory ---
+# --- 9. Git safe directory ---
 
-echo "[8/8] Setting git safe directory..."
+echo "[9/9] Setting git safe directory..."
 sudo -u mediaserver git config --global --add safe.directory /opt/mediaserver
 sudo -u "$ADMIN_USER" git config --global --add safe.directory /opt/mediaserver
 
