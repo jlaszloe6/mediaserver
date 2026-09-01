@@ -74,9 +74,12 @@ chmod 2775 /opt/mediaserver
 # event queue, with no ordering guarantee relative to the NFS mount unit —
 # on every future reboot, WiFi reaching network-online.target before the
 # wired NIC comes up would let the mount race ahead and bind its initial
-# connection to WiFi regardless. Ordering this service Before=remote-fs-pre
-# .target (which every network-filesystem mount unit is automatically
-# ordered After=) closes that race for good, not just for this run.
+# connection to WiFi regardless. A systemd drop-in on the NFS mount unit
+# itself (Requires=/After=nas-route.service, added in the NFS mount step
+# below) is what actually closes that race on every boot — merely ordering
+# this service Before=remote-fs-pre.target would NOT be enough, since that
+# target is a passive ordering point nothing pulls into the boot transaction
+# on its own.
 #
 # The dispatcher script still matters for anything AFTER boot: reapplying
 # the route if the cable is unplugged and replugged, and removing it if the
@@ -159,23 +162,20 @@ EOF
     cat > /etc/systemd/system/nas-route.service << EOF
 [Unit]
 Description=Pin NAS route to wired NIC before NFS mounts
-DefaultDependencies=no
-Before=remote-fs-pre.target
-Wants=network-online.target
-After=network-online.target
 
 [Service]
 Type=oneshot
 ExecStart=/usr/local/sbin/nas-route-setup.sh
 RemainAfterExit=yes
-
-[Install]
-WantedBy=remote-fs-pre.target
 EOF
     systemctl daemon-reload
-    # "start" (not just "enable") also runs it now, synchronously, so the
+    # "start" (not just enabling it) also runs it now, synchronously, so the
     # mount immediately below picks up the route on this very first boot too.
-    systemctl enable --now nas-route.service
+    # It isn't started via a [Install]/WantedBy= — remote-fs-pre.target is a
+    # passive ordering point that nothing pulls into the boot transaction on
+    # its own; the actual "run before this mount" guarantee below (a drop-in
+    # directly on the NFS mount unit) is what makes it start on every boot.
+    systemctl start nas-route.service
     echo "  nas-route.service installed and run (see 'systemctl status nas-route' for the result)"
 else
     echo "  WIRED_IFACE not set, skipping (no dedicated wired NIC for the NAS)"
@@ -193,6 +193,22 @@ if ! grep -q "$NAS_IP:$NAS_EXPORT" /etc/fstab; then
 else
     echo "  fstab entry already exists"
 fi
+
+if [ -n "$WIRED_IFACE" ]; then
+    # Tie nas-route.service directly into this mount unit's own dependency
+    # chain, rather than relying on remote-fs-pre.target to pull it in (it
+    # won't — see above). This is what actually guarantees the route exists
+    # before the mount is attempted on every future boot.
+    MOUNT_UNIT="$(systemd-escape --path --suffix=mount "$MOUNT_POINT")"
+    mkdir -p "/etc/systemd/system/${MOUNT_UNIT}.d"
+    cat > "/etc/systemd/system/${MOUNT_UNIT}.d/nas-route.conf" << 'EOF'
+[Unit]
+Requires=nas-route.service
+After=nas-route.service
+EOF
+    systemctl daemon-reload
+fi
+
 mount -a 2>/dev/null || true
 
 # --- 4. Docker waits for NFS ---
