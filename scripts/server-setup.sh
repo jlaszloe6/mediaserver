@@ -58,23 +58,9 @@ mkdir -p /opt/mediaserver
 chown mediaserver:mediaserver /opt/mediaserver
 chmod 2775 /opt/mediaserver
 
-# --- 2. NFS mount ---
-
-echo "[2/10] Setting up NFS mount..."
-apt-get install -y -qq nfs-common
-mkdir -p "$MOUNT_POINT"
-
-if ! grep -q "$NAS_IP:$NAS_EXPORT" /etc/fstab; then
-    echo "$NAS_IP:$NAS_EXPORT $MOUNT_POINT nfs defaults,_netdev,auto 0 0" >> /etc/fstab
-    echo "  Added fstab entry"
-else
-    echo "  fstab entry already exists"
-fi
-mount -a 2>/dev/null || true
-
-# --- 3. Pin NAS traffic to a dedicated wired NIC (optional) ---
+# --- 2. Pin NAS traffic to a dedicated wired NIC (optional) ---
 #
-# If the host's primary network path is WiFi (see network-watchdog above),
+# If the host's primary network path is WiFi (see network-watchdog below),
 # NFS reads compete with WiFi airtime used to stream to LAN clients — heavy
 # concurrent NFS I/O (e.g. several retried transcode reads of the same large
 # file) can starve unrelated requests on the same radio for minutes at a
@@ -82,8 +68,13 @@ mount -a 2>/dev/null || true
 # instead, leaving the WiFi radio free for client-facing streaming. Skipped
 # entirely when WIRED_IFACE isn't set (e.g. a wired-only or single-NIC host,
 # where this isn't needed).
+#
+# Must run BEFORE the NFS mount below: a route change doesn't move an
+# already-established connection, so if the mount happened first the initial
+# NFS session would still bind to whatever the default route was at mount
+# time (WiFi) and stay there until a later reboot or manual remount.
 
-echo "[3/10] Pinning NAS route to wired NIC..."
+echo "[2/10] Pinning NAS route to wired NIC..."
 if [ -n "$WIRED_IFACE" ]; then
     cat > /etc/NetworkManager/dispatcher.d/99-nas-via-wired.sh << EOF
 #!/bin/sh
@@ -105,6 +96,20 @@ EOF
 else
     echo "  WIRED_IFACE not set, skipping (no dedicated wired NIC for the NAS)"
 fi
+
+# --- 3. NFS mount ---
+
+echo "[3/10] Setting up NFS mount..."
+apt-get install -y -qq nfs-common
+mkdir -p "$MOUNT_POINT"
+
+if ! grep -q "$NAS_IP:$NAS_EXPORT" /etc/fstab; then
+    echo "$NAS_IP:$NAS_EXPORT $MOUNT_POINT nfs defaults,_netdev,auto 0 0" >> /etc/fstab
+    echo "  Added fstab entry"
+else
+    echo "  fstab entry already exists"
+fi
+mount -a 2>/dev/null || true
 
 # --- 4. Docker waits for NFS ---
 
