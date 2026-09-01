@@ -181,7 +181,13 @@ EOF
     # passive ordering point that nothing pulls into the boot transaction on
     # its own; the actual "run before this mount" guarantee below (a drop-in
     # directly on the NFS mount unit) is what makes it start on every boot.
-    systemctl start nas-route.service
+    #
+    # "|| true": the wired NIC not coming up in time makes the service exit
+    # non-zero by design (see nas-route-setup.sh), which "systemctl start"
+    # then also reports as failed — under this script's own set -e, an
+    # unguarded call here would abort the rest of provisioning entirely
+    # instead of just falling back to WiFi as intended.
+    systemctl start nas-route.service || true
     echo "  nas-route.service installed and run (see 'systemctl status nas-route' for the result)"
 else
     echo "  WIRED_IFACE not set, skipping (no dedicated wired NIC for the NAS)"
