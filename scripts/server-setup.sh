@@ -5,6 +5,8 @@
 # - mediaserver system user
 # - Docker prerequisites
 # - NFS mount
+# - NAS route pinned to a dedicated wired NIC, if present (keeps NFS off
+#   the WiFi radio so it can't contend with WiFi streaming bandwidth)
 # - Network watchdog (self-heals a stuck NetworkManager connection)
 # - Firewall (UFW)
 # - Systemd drop-ins (Docker waits for NFS)
@@ -16,6 +18,7 @@
 #   - Run as root or with sudo
 #
 # Usage: sudo ./scripts/server-setup.sh
+#   WIRED_IFACE=enp0s31f6 sudo ./scripts/server-setup.sh   # if a spare wired NIC exists
 
 set -euo pipefail
 
@@ -31,6 +34,7 @@ NAS_IP="${NAS_IP:?Set NAS_IP}"
 NAS_EXPORT="${NAS_EXPORT:?Set NAS_EXPORT}"
 MOUNT_POINT="${MOUNT_POINT:-/mnt/mediaserver}"
 ADMIN_USER="${ADMIN_USER:?Set ADMIN_USER}"
+WIRED_IFACE="${WIRED_IFACE:-}"
 
 echo "=== Media Server - Server Setup ==="
 echo "Server IP:  $SERVER_IP"
@@ -41,7 +45,7 @@ echo ""
 
 # --- 1. Create mediaserver system user ---
 
-echo "[1/8] Creating mediaserver user..."
+echo "[1/10] Creating mediaserver user..."
 if id mediaserver &>/dev/null; then
     echo "  User 'mediaserver' already exists"
 else
@@ -56,7 +60,7 @@ chmod 2775 /opt/mediaserver
 
 # --- 2. NFS mount ---
 
-echo "[2/8] Setting up NFS mount..."
+echo "[2/10] Setting up NFS mount..."
 apt-get install -y -qq nfs-common
 mkdir -p "$MOUNT_POINT"
 
@@ -68,9 +72,43 @@ else
 fi
 mount -a 2>/dev/null || true
 
-# --- 3. Docker waits for NFS ---
+# --- 3. Pin NAS traffic to a dedicated wired NIC (optional) ---
+#
+# If the host's primary network path is WiFi (see network-watchdog above),
+# NFS reads compete with WiFi airtime used to stream to LAN clients — heavy
+# concurrent NFS I/O (e.g. several retried transcode reads of the same large
+# file) can starve unrelated requests on the same radio for minutes at a
+# time. When a spare wired NIC exists, route NAS-bound traffic over it
+# instead, leaving the WiFi radio free for client-facing streaming. Skipped
+# entirely when WIRED_IFACE isn't set (e.g. a wired-only or single-NIC host,
+# where this isn't needed).
 
-echo "[3/8] Configuring Docker to wait for NFS..."
+echo "[3/10] Pinning NAS route to wired NIC..."
+if [ -n "$WIRED_IFACE" ]; then
+    cat > /etc/NetworkManager/dispatcher.d/99-nas-via-wired.sh << EOF
+#!/bin/sh
+# Route NAS traffic over the wired link so NFS reads never contend with
+# WiFi airtime used to stream to LAN clients. Installed by server-setup.sh.
+NAS_IP=$NAS_IP
+WIRED_IF=$WIRED_IFACE
+if ip link show "\$WIRED_IF" up >/dev/null 2>&1; then
+    ip route replace \${NAS_IP}/32 dev "\$WIRED_IF" 2>/dev/null || true
+fi
+EOF
+    chmod 755 /etc/NetworkManager/dispatcher.d/99-nas-via-wired.sh
+    if ip link show "$WIRED_IFACE" up &>/dev/null; then
+        ip route replace "$NAS_IP/32" dev "$WIRED_IFACE" || true
+        echo "  NAS route pinned to $WIRED_IFACE (persists via NM dispatcher script)"
+    else
+        echo "  WARNING: $WIRED_IFACE not up yet — dispatcher script installed, route will apply once it comes up"
+    fi
+else
+    echo "  WIRED_IFACE not set, skipping (no dedicated wired NIC for the NAS)"
+fi
+
+# --- 4. Docker waits for NFS ---
+
+echo "[4/10] Configuring Docker to wait for NFS..."
 mkdir -p /etc/systemd/system/docker.service.d
 cat > /etc/systemd/system/docker.service.d/wait-for-nfs.conf << EOF
 [Unit]
@@ -79,9 +117,9 @@ Requires=remote-fs.target
 EOF
 systemctl daemon-reload
 
-# --- 4. Network watchdog ---
+# --- 5. Network watchdog ---
 
-echo "[4/9] Installing network watchdog..."
+echo "[5/10] Installing network watchdog..."
 cat > /etc/systemd/system/network-watchdog.service << EOF
 [Unit]
 Description=Network connectivity watchdog (self-heal stuck NetworkManager state)
@@ -106,11 +144,11 @@ EOF
 systemctl daemon-reload
 systemctl enable --now network-watchdog.timer
 
-# --- 5. UFW firewall ---
+# --- 6. UFW firewall ---
 
 LAN_SUBNET="${LAN_SUBNET:-192.168.1.0/24}"
 
-echo "[5/9] Configuring UFW firewall..."
+echo "[6/10] Configuring UFW firewall..."
 ufw --force enable
 ufw default deny incoming
 ufw allow from "$LAN_SUBNET" to any port 22 proto tcp comment "SSH (LAN only)"
@@ -121,9 +159,9 @@ ufw allow from "$LAN_SUBNET" to any port 53 comment "DNS (dnsmasq for LAN)"
 ufw deny 3389/tcp comment "Block RDP"
 echo "  UFW rules configured"
 
-# --- 6. PAM SSH agent auth (passwordless sudo for key-based SSH) ---
+# --- 7. PAM SSH agent auth (passwordless sudo for key-based SSH) ---
 
-echo "[6/9] Setting up PAM SSH agent auth..."
+echo "[7/10] Setting up PAM SSH agent auth..."
 apt-get install -y -qq libpam-ssh-agent-auth
 
 # Copy admin user's authorized keys for sudo verification
@@ -143,9 +181,9 @@ EOF
 chmod 440 /etc/sudoers.d/ssh-agent
 visudo -c -f /etc/sudoers.d/ssh-agent
 
-# --- 7. SSH server config ---
+# --- 8. SSH server config ---
 
-echo "[7/9] Configuring SSH server..."
+echo "[8/10] Configuring SSH server..."
 if ! grep -q '^AllowAgentForwarding yes' /etc/ssh/sshd_config; then
     echo 'AllowAgentForwarding yes' >> /etc/ssh/sshd_config
 fi
@@ -156,9 +194,9 @@ elif ! grep -q '^X11Forwarding no' /etc/ssh/sshd_config; then
 fi
 systemctl reload ssh
 
-# --- 8. fail2ban ---
+# --- 9. fail2ban ---
 
-echo "[8/9] Setting up fail2ban..."
+echo "[9/10] Setting up fail2ban..."
 apt-get install -y -qq fail2ban
 cat > /etc/fail2ban/jail.d/sshd.local << EOF
 [sshd]
@@ -167,9 +205,9 @@ EOF
 systemctl enable --now fail2ban
 systemctl reload fail2ban
 
-# --- 9. Git safe directory ---
+# --- 10. Git safe directory ---
 
-echo "[9/9] Setting git safe directory..."
+echo "[10/10] Setting git safe directory..."
 sudo -u mediaserver git config --global --add safe.directory /opt/mediaserver
 sudo -u "$ADMIN_USER" git config --global --add safe.directory /opt/mediaserver
 
