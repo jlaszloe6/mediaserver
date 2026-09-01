@@ -69,31 +69,78 @@ chmod 2775 /opt/mediaserver
 # entirely when WIRED_IFACE isn't set (e.g. a wired-only or single-NIC host,
 # where this isn't needed).
 #
-# Must run BEFORE the NFS mount below: a route change doesn't move an
-# already-established connection, so if the mount happened first the initial
-# NFS session would still bind to whatever the default route was at mount
-# time (WiFi) and stay there until a later reboot or manual remount.
+# nas-route.service (not a NetworkManager dispatcher script alone) applies
+# the route: a dispatcher script only fires asynchronously off NM's own
+# event queue, with no ordering guarantee relative to the NFS mount unit —
+# on every future reboot, WiFi reaching network-online.target before the
+# wired NIC comes up would let the mount race ahead and bind its initial
+# connection to WiFi regardless. Ordering this service Before=remote-fs-pre
+# .target (which every network-filesystem mount unit is automatically
+# ordered After=) closes that race for good, not just for this run.
+#
+# The dispatcher script still matters for anything AFTER boot: reapplying
+# the route if the cable is unplugged and replugged, and removing it if the
+# link drops (see below) so traffic doesn't blackhole against a dead NIC.
+#
+# Installed at /usr/local/sbin rather than under /opt/mediaserver: the repo
+# isn't cloned there yet at this point in provisioning (see "Next steps" at
+# the end of this script), and nas-route.service must be able to run
+# starting from the very next boot regardless of when that clone happens.
 
 echo "[2/10] Pinning NAS route to wired NIC..."
 if [ -n "$WIRED_IFACE" ]; then
+    cat > /usr/local/sbin/nas-route-setup.sh << EOF
+#!/bin/sh
+# Pin NAS traffic to the wired NIC. Run by nas-route.service before every
+# NFS mount attempt (see server-setup.sh for why). Safe to rerun manually
+# any time, e.g. after reconnecting the cable.
+set -eu
+NAS_IP=$NAS_IP
+WIRED_IF=$WIRED_IFACE
+
+is_usable() {
+    # "ip link show up" only reflects administrative state — it stays true
+    # while unplugged (NO-CARRIER) or before DHCP finishes. Require an
+    # actual carrier and a global IPv4 address before trusting the link.
+    [ "\$(cat "/sys/class/net/\$1/carrier" 2>/dev/null)" = "1" ] && \\
+        ip -4 -o addr show dev "\$1" scope global 2>/dev/null | grep -q .
+}
+
+for _ in \$(seq 1 15); do
+    is_usable "\$WIRED_IF" && break
+    sleep 1
+done
+
+if ! is_usable "\$WIRED_IF"; then
+    echo "WARNING: \$WIRED_IF never came up — traffic stays on the default route for now." >&2
+    echo "Once it's connected, rerun this script or: systemctl restart mnt-mediaserver.mount" >&2
+    exit 0
+fi
+
+# Keep the wired NIC from becoming the general default route (e.g. if it
+# picks up a gateway from DHCP on the same LAN) — it should carry only the
+# NAS route below, leaving WiFi as the default path for everything else.
+CONN_NAME=\$(nmcli -t -f NAME,DEVICE connection show --active | awk -F: -v ifc="\$WIRED_IF" '\$2==ifc {print \$1; exit}')
+if [ -n "\$CONN_NAME" ]; then
+    nmcli connection modify "\$CONN_NAME" ipv4.never-default yes ipv4.route-metric 900
+    nmcli connection up "\$CONN_NAME" >/dev/null 2>&1 || true
+fi
+
+ip route replace \${NAS_IP}/32 dev "\$WIRED_IF"
+echo "NAS route pinned to \$WIRED_IF"
+EOF
+    chmod 755 /usr/local/sbin/nas-route-setup.sh
+
     cat > /etc/NetworkManager/dispatcher.d/99-nas-via-wired.sh << EOF
 #!/bin/sh
-# Route NAS traffic over the wired link so NFS reads never contend with
-# WiFi airtime used to stream to LAN clients. Installed by server-setup.sh.
+# Reapply/clear the NAS route on link changes after boot (nas-route.service
+# handles the initial pin ahead of the NFS mount — see server-setup.sh).
 # \$1/\$2 are the interface and action NetworkManager passes to every
 # dispatcher script (e.g. "enp0s31f6 up", "enp0s31f6 down").
 NAS_IP=$NAS_IP
 WIRED_IF=$WIRED_IFACE
 IFACE="\$1"
 ACTION="\$2"
-
-is_link_usable() {
-    # "ip link show up" only reflects administrative state — it stays true
-    # while unplugged (NO-CARRIER) or before DHCP finishes. Require an
-    # actual carrier and a global IPv4 address before trusting the link.
-    [ "\$(cat /sys/class/net/\$1/carrier 2>/dev/null)" = "1" ] && \\
-        ip -4 -o addr show dev "\$1" scope global 2>/dev/null | grep -q .
-}
 
 if [ "\$IFACE" = "\$WIRED_IF" ] && [ "\$ACTION" = "down" ]; then
     # Remove the pinned route so NAS traffic falls back to the default
@@ -102,34 +149,34 @@ if [ "\$IFACE" = "\$WIRED_IF" ] && [ "\$ACTION" = "down" ]; then
     exit 0
 fi
 
-if is_link_usable "\$WIRED_IF"; then
+if [ "\$(cat /sys/class/net/\$WIRED_IF/carrier 2>/dev/null)" = "1" ] && \\
+   ip -4 -o addr show dev "\$WIRED_IF" scope global 2>/dev/null | grep -q .; then
     ip route replace \${NAS_IP}/32 dev "\$WIRED_IF" 2>/dev/null || true
 fi
 EOF
     chmod 755 /etc/NetworkManager/dispatcher.d/99-nas-via-wired.sh
 
-    is_wired_iface_usable() {
-        [ "$(cat "/sys/class/net/$1/carrier" 2>/dev/null)" = "1" ] &&
-            ip -4 -o addr show dev "$1" scope global 2>/dev/null | grep -q .
-    }
+    cat > /etc/systemd/system/nas-route.service << EOF
+[Unit]
+Description=Pin NAS route to wired NIC before NFS mounts
+DefaultDependencies=no
+Before=remote-fs-pre.target
+Wants=network-online.target
+After=network-online.target
 
-    # Wait briefly for the wired link to actually come up (carrier + IPv4
-    # address) before mounting NFS below — otherwise the initial mount would
-    # bind to whatever route is currently default (WiFi) and stay there
-    # until a later reboot or manual remount.
-    echo "  Waiting for $WIRED_IFACE to come up..."
-    for _ in $(seq 1 15); do
-        is_wired_iface_usable "$WIRED_IFACE" && break
-        sleep 1
-    done
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/nas-route-setup.sh
+RemainAfterExit=yes
 
-    if is_wired_iface_usable "$WIRED_IFACE"; then
-        ip route replace "$NAS_IP/32" dev "$WIRED_IFACE" || true
-        echo "  NAS route pinned to $WIRED_IFACE (persists via NM dispatcher script)"
-    else
-        echo "  WARNING: $WIRED_IFACE never came up — NFS will mount over the default route for now."
-        echo "  Once $WIRED_IFACE is connected, run: systemctl restart mnt-mediaserver.mount"
-    fi
+[Install]
+WantedBy=remote-fs-pre.target
+EOF
+    systemctl daemon-reload
+    # "start" (not just "enable") also runs it now, synchronously, so the
+    # mount immediately below picks up the route on this very first boot too.
+    systemctl enable --now nas-route.service
+    echo "  nas-route.service installed and run (see 'systemctl status nas-route' for the result)"
 else
     echo "  WIRED_IFACE not set, skipping (no dedicated wired NIC for the NAS)"
 fi
