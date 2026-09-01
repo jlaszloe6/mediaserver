@@ -75,7 +75,7 @@ chmod 2775 /opt/mediaserver
 # on every future reboot, WiFi reaching network-online.target before the
 # wired NIC comes up would let the mount race ahead and bind its initial
 # connection to WiFi regardless. A systemd drop-in on the NFS mount unit
-# itself (Requires=/After=nas-route.service, added in the NFS mount step
+# itself (Wants=/After=nas-route.service, added in the NFS mount step
 # below) is what actually closes that race on every boot — merely ordering
 # this service Before=remote-fs-pre.target would NOT be enough, since that
 # target is a passive ordering point nothing pulls into the boot transaction
@@ -117,7 +117,11 @@ done
 if ! is_usable "\$WIRED_IF"; then
     echo "WARNING: \$WIRED_IF never came up — traffic stays on the default route for now." >&2
     echo "Once it's connected, rerun this script or: systemctl restart mnt-mediaserver.mount" >&2
-    exit 0
+    # Exit non-zero (not RemainAfterExit-active) so this run doesn't
+    # permanently satisfy the mount unit's dependency on us: a later retry
+    # (manual restart, or the mount unit itself restarting) will re-run this
+    # script instead of treating a skipped, one-time attempt as done for good.
+    exit 1
 fi
 
 # Keep the wired NIC from becoming the general default route (e.g. if it
@@ -162,6 +166,8 @@ EOF
     cat > /etc/systemd/system/nas-route.service << EOF
 [Unit]
 Description=Pin NAS route to wired NIC before NFS mounts
+Wants=network-online.target
+After=network-online.target
 
 [Service]
 Type=oneshot
@@ -199,11 +205,17 @@ if [ -n "$WIRED_IFACE" ]; then
     # chain, rather than relying on remote-fs-pre.target to pull it in (it
     # won't — see above). This is what actually guarantees the route exists
     # before the mount is attempted on every future boot.
+    #
+    # Wants= (not Requires=): the wired NIC not coming up in time is a
+    # tolerable, already-warned-about degraded case (NFS just falls back to
+    # WiFi) — it must not be able to block the mount, and by extension the
+    # whole stack, entirely. Requires= would propagate nas-route.service's
+    # failure into a hard mount failure instead.
     MOUNT_UNIT="$(systemd-escape --path --suffix=mount "$MOUNT_POINT")"
     mkdir -p "/etc/systemd/system/${MOUNT_UNIT}.d"
     cat > "/etc/systemd/system/${MOUNT_UNIT}.d/nas-route.conf" << 'EOF'
 [Unit]
-Requires=nas-route.service
+Wants=nas-route.service
 After=nas-route.service
 EOF
     systemctl daemon-reload
