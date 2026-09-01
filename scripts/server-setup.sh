@@ -87,6 +87,14 @@ WIRED_IF=$WIRED_IFACE
 IFACE="\$1"
 ACTION="\$2"
 
+is_link_usable() {
+    # "ip link show up" only reflects administrative state — it stays true
+    # while unplugged (NO-CARRIER) or before DHCP finishes. Require an
+    # actual carrier and a global IPv4 address before trusting the link.
+    [ "\$(cat /sys/class/net/\$1/carrier 2>/dev/null)" = "1" ] && \\
+        ip -4 -o addr show dev "\$1" scope global 2>/dev/null | grep -q .
+}
+
 if [ "\$IFACE" = "\$WIRED_IF" ] && [ "\$ACTION" = "down" ]; then
     # Remove the pinned route so NAS traffic falls back to the default
     # (WiFi) route instead of blackholing against a dead link.
@@ -94,22 +102,28 @@ if [ "\$IFACE" = "\$WIRED_IF" ] && [ "\$ACTION" = "down" ]; then
     exit 0
 fi
 
-if ip link show "\$WIRED_IF" up >/dev/null 2>&1; then
+if is_link_usable "\$WIRED_IF"; then
     ip route replace \${NAS_IP}/32 dev "\$WIRED_IF" 2>/dev/null || true
 fi
 EOF
     chmod 755 /etc/NetworkManager/dispatcher.d/99-nas-via-wired.sh
 
-    # Wait briefly for the wired link to come up before mounting NFS below —
-    # otherwise the initial mount would bind to whatever route is currently
-    # default (WiFi) and stay there until a later reboot or manual remount.
+    is_wired_iface_usable() {
+        [ "$(cat "/sys/class/net/$1/carrier" 2>/dev/null)" = "1" ] &&
+            ip -4 -o addr show dev "$1" scope global 2>/dev/null | grep -q .
+    }
+
+    # Wait briefly for the wired link to actually come up (carrier + IPv4
+    # address) before mounting NFS below — otherwise the initial mount would
+    # bind to whatever route is currently default (WiFi) and stay there
+    # until a later reboot or manual remount.
     echo "  Waiting for $WIRED_IFACE to come up..."
     for _ in $(seq 1 15); do
-        ip link show "$WIRED_IFACE" up &>/dev/null && break
+        is_wired_iface_usable "$WIRED_IFACE" && break
         sleep 1
     done
 
-    if ip link show "$WIRED_IFACE" up &>/dev/null; then
+    if is_wired_iface_usable "$WIRED_IFACE"; then
         ip route replace "$NAS_IP/32" dev "$WIRED_IFACE" || true
         echo "  NAS route pinned to $WIRED_IFACE (persists via NM dispatcher script)"
     else
