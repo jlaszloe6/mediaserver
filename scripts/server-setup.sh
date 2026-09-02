@@ -132,7 +132,14 @@ apply_never_default() {
         nmcli connection modify "\$conn" \\
             ipv4.never-default yes ipv4.route-metric 900 \\
             ipv6.never-default yes ipv6.route-metric 900
-        nmcli connection up "\$conn" >/dev/null 2>&1 || true
+        # "device reapply", NOT "connection up": these are route-level
+        # settings NM can push onto the already-active device in place.
+        # "connection up" on a connection whose settings just changed can
+        # force a full deactivate/reactivate cycle, which would emit its own
+        # down/up dispatcher events and re-enter this exact script — "device
+        # reapply" applies the change without any such device-state
+        # transition, so it can't self-trigger the dispatcher at all.
+        nmcli device reapply "\$WIRED_IF" >/dev/null 2>&1 || true
         return 0
     fi
     return 1
@@ -192,13 +199,12 @@ if [ "\$IFACE" = "\$WIRED_IF" ] && [ "\$ACTION" = "up" ] && \\
     # route out from under WiFi at that point.
     #
     # ACTION must be "up" specifically, not any event for this interface:
-    # nas-route-setup.sh calls "nmcli connection up", which reactivates the
-    # connection — fine on a genuine link-up, but routine dhcp4-change/
-    # dhcp6-change events on an already-active wired NIC (lease renewals)
-    # would otherwise trigger that same reactivation and risk briefly
-    # disrupting in-flight NFS. never-default/route-metric are persistent
-    # profile settings anyway — once applied on "up", they don't need
-    # reapplying just because the lease renews.
+    # never-default/route-metric are persistent profile settings — once
+    # applied on "up", they don't need reapplying just because a lease
+    # renews. nas-route-setup.sh uses "nmcli device reapply", not
+    # "connection up" (see below), so this isn't about avoiding a disruptive
+    # reactivation — it's just no reason to touch nmcli/NetworkManager on
+    # every routine dhcp4-change/dhcp6-change when nothing has changed.
     #
     # By design, this only affects FUTURE connections/mounts, not an NFS
     # mount already open over WiFi from earlier in this same boot — a route
@@ -231,8 +237,8 @@ if [ "\$IFACE" = "\$WIRED_IF" ] && [ "\$ACTION" = "up" ] && \\
     #
     # The \$IFACE check matters: this dispatcher fires for EVERY interface
     # event on the host, not just the wired one (WiFi DHCP renewals, AP
-    # roams, etc.). Without it, nas-route-setup.sh's "nmcli connection up"
-    # would needlessly reactivate the wired link on every unrelated event.
+    # roams, etc.). Without it, nas-route-setup.sh would needlessly re-run
+    # its whole check-and-apply sequence on every unrelated event.
     /usr/local/sbin/nas-route-setup.sh 2>/dev/null || true
     exit 0
 fi
@@ -242,10 +248,10 @@ if [ "\$IFACE" = "\$WIRED_IF" ] && [ "\$ACTION" = "dhcp4-change" ]; then
     # event: carrier is often reported before DHCPv4 finishes, so the "up"
     # branch above can already have given up and exited by the time the
     # address actually arrives — nothing would ever revisit it without this.
-    # Deliberately NOT delegating to nas-route-setup.sh here: that would
-    # mean "nmcli connection up" (and a possible brief reactivation) on
-    # every routine lease renewal, exactly what the ACTION="up" restriction
-    # above exists to avoid. Just sync the /32 route to current reachability.
+    # Deliberately NOT delegating to nas-route-setup.sh here: no need to
+    # re-run nmcli/the never-default guard on every routine lease renewal
+    # when nothing has actually changed profile-wise (see the ACTION="up"
+    # restriction above). Just sync the /32 route to current reachability.
     if [ "\$(cat /sys/class/net/\$WIRED_IF/carrier 2>/dev/null)" = "1" ] && \\
        ip -4 -o addr show dev "\$WIRED_IF" scope global 2>/dev/null | grep -q .; then
         ip route replace \${NAS_IP}/32 dev "\$WIRED_IF" 2>/dev/null || true
