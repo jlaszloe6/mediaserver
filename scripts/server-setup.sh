@@ -209,6 +209,20 @@ if [ "\$IFACE" = "\$WIRED_IF" ] && [ "\$ACTION" = "up" ] && \\
     # the WARNING nas-route-setup.sh prints already tells the operator how
     # to remount by hand. That boot simply keeps running NFS over WiFi.
     #
+    # This deliberately does NOT check whether NFS is currently mounted
+    # before applying the route/guard live. Skipping it while mounted would
+    # look more cautious but isn't: link-down cleanup and the never-default
+    # guard both need to keep working regardless of mount state — gating on
+    # it would leave the wired NIC exposed as a stray default-route
+    # candidate for longer, and a dropped link still needs its /32 route
+    # removed whether or not something happens to be mounted at that moment.
+    # A route changing under an established connection was verified live on
+    # this host (2026-09-01 fix) to not disrupt it, thanks to loose
+    # rp_filter — on a host with strict rp_filter this could theoretically
+    # still disrupt an in-flight NFS session, but that's a difference in
+    # network config, not a flaw in this logic, and isn't being engineered
+    # around here. No connection is force-migrated either way.
+    #
     # Gated on carrier only, NOT a global IPv4 address: nas-route-setup.sh's
     # own never-default guard must run even when the interface only ever
     # gets an IPv6 RA/gateway and no (or slow) DHCPv4 — gating on IPv4 here
