@@ -171,6 +171,11 @@ echo "NAS route pinned to \$WIRED_IF"
 EOF
     chmod 755 /usr/local/sbin/nas-route-setup.sh
 
+    # dispatcher.d ships with the network-manager package, but may not exist
+    # yet on a fresh install with no dispatcher scripts added before (and
+    # under this script's own set -e, writing into a missing directory
+    # would abort the rest of provisioning entirely).
+    mkdir -p /etc/NetworkManager/dispatcher.d
     cat > /etc/NetworkManager/dispatcher.d/99-nas-via-wired.sh << EOF
 #!/bin/sh
 # Reapply/clear the NAS route on link changes after boot (nas-route.service
