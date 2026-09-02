@@ -191,6 +191,15 @@ if [ "\$IFACE" = "\$WIRED_IF" ] && \\
     # guard here, a DHCP gateway on this NIC could still hijack the default
     # route out from under WiFi at that point.
     #
+    # By design, this only affects FUTURE connections/mounts, not an NFS
+    # mount already open over WiFi from earlier in this same boot — a route
+    # change never migrates an already-established TCP connection (see the
+    # 2026-09-01 incident notes in CLAUDE.md). Actually moving that live
+    # mount would mean stopping every container using it first (the same
+    # disruption as the live fix), so it's deliberately not automated here;
+    # the WARNING nas-route-setup.sh prints already tells the operator how
+    # to remount by hand. That boot simply keeps running NFS over WiFi.
+    #
     # Gated on carrier only, NOT a global IPv4 address: nas-route-setup.sh's
     # own never-default guard must run even when the interface only ever
     # gets an IPv6 RA/gateway and no (or slow) DHCPv4 — gating on IPv4 here
