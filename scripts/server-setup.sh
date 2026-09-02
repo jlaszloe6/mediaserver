@@ -111,10 +111,36 @@ is_usable() {
         ip -4 -o addr show dev "\$1" scope global 2>/dev/null | grep -q .
 }
 
+# Keep the wired NIC from becoming the general default route (e.g. if it
+# picks up a gateway from DHCP or an IPv6 RA on the same LAN) — it should
+# carry only the NAS route below, leaving WiFi as the default path for
+# everything else. IPv4 and IPv6 never-default are separate NetworkManager
+# properties (ipv6 defaults to enabled-as-default-candidate), so both need
+# setting or an IPv6 gateway could still hijack the default route on its own.
+# Applied via an active NM connection, NOT gated on is_usable() below: an
+# IPv6 RA can already make this interface a default-route candidate before
+# DHCPv4 (which is_usable() requires) finishes, so this can't wait for it.
+apply_never_default() {
+    conn=\$(nmcli -t -f NAME,DEVICE connection show --active | awk -F: -v ifc="\$WIRED_IF" '\$2==ifc {print \$1; exit}')
+    if [ -n "\$conn" ]; then
+        nmcli connection modify "\$conn" \\
+            ipv4.never-default yes ipv4.route-metric 900 \\
+            ipv6.never-default yes ipv6.route-metric 900
+        nmcli connection up "\$conn" >/dev/null 2>&1 || true
+        return 0
+    fi
+    return 1
+}
+
+guarded=0
 for _ in \$(seq 1 15); do
+    if [ "\$guarded" = 0 ] && apply_never_default; then
+        guarded=1
+    fi
     is_usable "\$WIRED_IF" && break
     sleep 1
 done
+[ "\$guarded" = 0 ] && apply_never_default || true
 
 if ! is_usable "\$WIRED_IF"; then
     echo "WARNING: \$WIRED_IF never came up — traffic stays on the default route for now." >&2
@@ -125,20 +151,6 @@ if ! is_usable "\$WIRED_IF"; then
     # RemainAfterExit here), so a later retry doesn't need any special
     # handling to get another chance at pinning the route.
     exit 1
-fi
-
-# Keep the wired NIC from becoming the general default route (e.g. if it
-# picks up a gateway from DHCP or an IPv6 RA on the same LAN) — it should
-# carry only the NAS route below, leaving WiFi as the default path for
-# everything else. IPv4 and IPv6 never-default are separate NetworkManager
-# properties (ipv6 defaults to enabled-as-default-candidate), so both need
-# setting or an IPv6 gateway could still hijack the default route on its own.
-CONN_NAME=\$(nmcli -t -f NAME,DEVICE connection show --active | awk -F: -v ifc="\$WIRED_IF" '\$2==ifc {print \$1; exit}')
-if [ -n "\$CONN_NAME" ]; then
-    nmcli connection modify "\$CONN_NAME" \\
-        ipv4.never-default yes ipv4.route-metric 900 \\
-        ipv6.never-default yes ipv6.route-metric 900
-    nmcli connection up "\$CONN_NAME" >/dev/null 2>&1 || true
 fi
 
 ip route replace \${NAS_IP}/32 dev "\$WIRED_IF"
