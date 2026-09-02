@@ -182,7 +182,7 @@ if [ "\$IFACE" = "\$WIRED_IF" ] && [ "\$ACTION" = "down" ]; then
     exit 0
 fi
 
-if [ "\$IFACE" = "\$WIRED_IF" ] && \\
+if [ "\$IFACE" = "\$WIRED_IF" ] && [ "\$ACTION" = "up" ] && \\
    [ "\$(cat /sys/class/net/\$WIRED_IF/carrier 2>/dev/null)" = "1" ]; then
     # Delegate to the same script nas-route.service uses, rather than just
     # replacing the /32 route here — this covers the case where the wired
@@ -190,6 +190,15 @@ if [ "\$IFACE" = "\$WIRED_IF" ] && \\
     # comes up later: without also applying the never-default/route-metric
     # guard here, a DHCP gateway on this NIC could still hijack the default
     # route out from under WiFi at that point.
+    #
+    # ACTION must be "up" specifically, not any event for this interface:
+    # nas-route-setup.sh calls "nmcli connection up", which reactivates the
+    # connection — fine on a genuine link-up, but routine dhcp4-change/
+    # dhcp6-change events on an already-active wired NIC (lease renewals)
+    # would otherwise trigger that same reactivation and risk briefly
+    # disrupting in-flight NFS. never-default/route-metric are persistent
+    # profile settings anyway — once applied on "up", they don't need
+    # reapplying just because the lease renews.
     #
     # By design, this only affects FUTURE connections/mounts, not an NFS
     # mount already open over WiFi from earlier in this same boot — a route
