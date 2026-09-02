@@ -10,8 +10,15 @@
 # GeoIP database update (weekly Sunday 2am)
 0 2 * * 0 /scripts/geodb-update.sh >> /var/log/cron/geodb-update.log 2>&1
 
-# Jellyfin library scan - every minute (covers manual additions outside Sonarr/Radarr)
-* * * * * /scripts/jellyfin-scan.sh >> /var/log/cron/jellyfin-scan.log 2>&1
+# Jellyfin library scan - every 5 min (covers manual additions outside Sonarr/Radarr)
+# Was every 1 min; that let an overlapping scan get cancelled by the next
+# trigger before it finished, and if the scan was ever slow enough to
+# ignore cancellation (colliding with concurrent playback subtitle
+# extraction/transcoding stresses the NAS), the retry loop just kept
+# recolliding with it every 60s. 5 min gives a slow scan room to actually
+# finish before being cut off. See "Jellyfin Library Scan Stalls" in
+# CLAUDE.md.
+*/5 * * * * /scripts/jellyfin-scan.sh >> /var/log/cron/jellyfin-scan.log 2>&1
 
 # Pipeline health monitor - every 30 min
 */30 * * * * /scripts/pipeline-monitor.sh >> /var/log/cron/pipeline-monitor.log 2>&1
