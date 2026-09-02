@@ -18,7 +18,9 @@
 #   - Run as root or with sudo
 #
 # Usage: sudo ./scripts/server-setup.sh
-#   WIRED_IFACE=enp0s31f6 sudo ./scripts/server-setup.sh   # if a spare wired NIC exists
+#   sudo WIRED_IFACE=enp0s31f6 ./scripts/server-setup.sh   # if a spare wired NIC exists
+#   (the var must come AFTER "sudo": sudo's default env_reset strips
+#   anything set only in the invoking shell's own environment before it)
 
 set -euo pipefail
 
@@ -125,11 +127,16 @@ if ! is_usable "\$WIRED_IF"; then
 fi
 
 # Keep the wired NIC from becoming the general default route (e.g. if it
-# picks up a gateway from DHCP on the same LAN) — it should carry only the
-# NAS route below, leaving WiFi as the default path for everything else.
+# picks up a gateway from DHCP or an IPv6 RA on the same LAN) — it should
+# carry only the NAS route below, leaving WiFi as the default path for
+# everything else. IPv4 and IPv6 never-default are separate NetworkManager
+# properties (ipv6 defaults to enabled-as-default-candidate), so both need
+# setting or an IPv6 gateway could still hijack the default route on its own.
 CONN_NAME=\$(nmcli -t -f NAME,DEVICE connection show --active | awk -F: -v ifc="\$WIRED_IF" '\$2==ifc {print \$1; exit}')
 if [ -n "\$CONN_NAME" ]; then
-    nmcli connection modify "\$CONN_NAME" ipv4.never-default yes ipv4.route-metric 900
+    nmcli connection modify "\$CONN_NAME" \\
+        ipv4.never-default yes ipv4.route-metric 900 \\
+        ipv6.never-default yes ipv6.route-metric 900
     nmcli connection up "\$CONN_NAME" >/dev/null 2>&1 || true
 fi
 
