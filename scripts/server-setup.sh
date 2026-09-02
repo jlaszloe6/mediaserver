@@ -158,7 +158,13 @@ fi
 
 if [ "\$(cat /sys/class/net/\$WIRED_IF/carrier 2>/dev/null)" = "1" ] && \\
    ip -4 -o addr show dev "\$WIRED_IF" scope global 2>/dev/null | grep -q .; then
-    ip route replace \${NAS_IP}/32 dev "\$WIRED_IF" 2>/dev/null || true
+    # Delegate to the same script nas-route.service uses, rather than just
+    # replacing the /32 route here — this covers the case where the wired
+    # NIC wasn't up during boot (nas-route.service already gave up) and only
+    # comes up later: without also applying the never-default/route-metric
+    # guard here, a DHCP gateway on this NIC could still hijack the default
+    # route out from under WiFi at that point.
+    /usr/local/sbin/nas-route-setup.sh 2>/dev/null || true
 fi
 EOF
     chmod 755 /etc/NetworkManager/dispatcher.d/99-nas-via-wired.sh
