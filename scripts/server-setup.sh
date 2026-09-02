@@ -119,10 +119,11 @@ done
 if ! is_usable "\$WIRED_IF"; then
     echo "WARNING: \$WIRED_IF never came up — traffic stays on the default route for now." >&2
     echo "Once it's connected, rerun this script or: systemctl restart mnt-mediaserver.mount" >&2
-    # Exit non-zero (not RemainAfterExit-active) so this run doesn't
-    # permanently satisfy the mount unit's dependency on us: a later retry
-    # (manual restart, or the mount unit itself restarting) will re-run this
-    # script instead of treating a skipped, one-time attempt as done for good.
+    # Exit non-zero so this shows as failed, not succeeded, in nas-route's
+    # status/logs — the mount unit's Wants= (not Requires=) already lets it
+    # proceed anyway, and every mount/remount re-runs this script fresh (no
+    # RemainAfterExit here), so a later retry doesn't need any special
+    # handling to get another chance at pinning the route.
     exit 1
 fi
 
@@ -163,7 +164,8 @@ if [ "\$IFACE" = "\$WIRED_IF" ] && [ "\$ACTION" = "down" ]; then
     exit 0
 fi
 
-if [ "\$(cat /sys/class/net/\$WIRED_IF/carrier 2>/dev/null)" = "1" ] && \\
+if [ "\$IFACE" = "\$WIRED_IF" ] && \\
+   [ "\$(cat /sys/class/net/\$WIRED_IF/carrier 2>/dev/null)" = "1" ] && \\
    ip -4 -o addr show dev "\$WIRED_IF" scope global 2>/dev/null | grep -q .; then
     # Delegate to the same script nas-route.service uses, rather than just
     # replacing the /32 route here — this covers the case where the wired
@@ -171,6 +173,11 @@ if [ "\$(cat /sys/class/net/\$WIRED_IF/carrier 2>/dev/null)" = "1" ] && \\
     # comes up later: without also applying the never-default/route-metric
     # guard here, a DHCP gateway on this NIC could still hijack the default
     # route out from under WiFi at that point.
+    #
+    # The \$IFACE check matters: this dispatcher fires for EVERY interface
+    # event on the host, not just the wired one (WiFi DHCP renewals, AP
+    # roams, etc.). Without it, nas-route-setup.sh's "nmcli connection up"
+    # would needlessly reactivate the wired link on every unrelated event.
     /usr/local/sbin/nas-route-setup.sh 2>/dev/null || true
 fi
 EOF
@@ -185,7 +192,6 @@ After=network-online.target
 [Service]
 Type=oneshot
 ExecStart=/usr/local/sbin/nas-route-setup.sh
-RemainAfterExit=yes
 EOF
     systemctl daemon-reload
     # "start" (not just enabling it) also runs it now, synchronously, so the
