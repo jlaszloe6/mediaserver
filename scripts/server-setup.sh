@@ -94,6 +94,11 @@ chmod 2775 /opt/mediaserver
 
 echo "[2/10] Pinning NAS route to wired NIC..."
 if [ -n "$WIRED_IFACE" ]; then
+    # Computed once here (not re-derived in the NFS mount step below) so the
+    # retry guidance below and the actual mount-unit drop-in always agree,
+    # even when MOUNT_POINT isn't the default /mnt/mediaserver.
+    MOUNT_UNIT="$(systemd-escape --path --suffix=mount "$MOUNT_POINT")"
+
     cat > /usr/local/sbin/nas-route-setup.sh << EOF
 #!/bin/sh
 # Pin NAS traffic to the wired NIC. Run by nas-route.service before every
@@ -102,6 +107,7 @@ if [ -n "$WIRED_IFACE" ]; then
 set -eu
 NAS_IP=$NAS_IP
 WIRED_IF=$WIRED_IFACE
+MOUNT_UNIT=$MOUNT_UNIT
 
 is_usable() {
     # "ip link show up" only reflects administrative state — it stays true
@@ -144,7 +150,7 @@ done
 
 if ! is_usable "\$WIRED_IF"; then
     echo "WARNING: \$WIRED_IF never came up — traffic stays on the default route for now." >&2
-    echo "Once it's connected, rerun this script or: systemctl restart mnt-mediaserver.mount" >&2
+    echo "Once it's connected, rerun this script or: systemctl restart \$MOUNT_UNIT" >&2
     # Exit non-zero so this shows as failed, not succeeded, in nas-route's
     # status/logs — the mount unit's Wants= (not Requires=) already lets it
     # proceed anyway, and every mount/remount re-runs this script fresh (no
@@ -177,14 +183,19 @@ if [ "\$IFACE" = "\$WIRED_IF" ] && [ "\$ACTION" = "down" ]; then
 fi
 
 if [ "\$IFACE" = "\$WIRED_IF" ] && \\
-   [ "\$(cat /sys/class/net/\$WIRED_IF/carrier 2>/dev/null)" = "1" ] && \\
-   ip -4 -o addr show dev "\$WIRED_IF" scope global 2>/dev/null | grep -q .; then
+   [ "\$(cat /sys/class/net/\$WIRED_IF/carrier 2>/dev/null)" = "1" ]; then
     # Delegate to the same script nas-route.service uses, rather than just
     # replacing the /32 route here — this covers the case where the wired
     # NIC wasn't up during boot (nas-route.service already gave up) and only
     # comes up later: without also applying the never-default/route-metric
     # guard here, a DHCP gateway on this NIC could still hijack the default
     # route out from under WiFi at that point.
+    #
+    # Gated on carrier only, NOT a global IPv4 address: nas-route-setup.sh's
+    # own never-default guard must run even when the interface only ever
+    # gets an IPv6 RA/gateway and no (or slow) DHCPv4 — gating on IPv4 here
+    # would skip calling it in exactly that case, the same gap this guard
+    # exists to close.
     #
     # The \$IFACE check matters: this dispatcher fires for EVERY interface
     # event on the host, not just the wired one (WiFi DHCP renewals, AP
@@ -248,7 +259,8 @@ if [ -n "$WIRED_IFACE" ]; then
     # WiFi) — it must not be able to block the mount, and by extension the
     # whole stack, entirely. Requires= would propagate nas-route.service's
     # failure into a hard mount failure instead.
-    MOUNT_UNIT="$(systemd-escape --path --suffix=mount "$MOUNT_POINT")"
+    # ($MOUNT_UNIT was already computed in step 2, above — reused here so
+    # this drop-in and nas-route-setup.sh's retry guidance can't disagree.)
     mkdir -p "/etc/systemd/system/${MOUNT_UNIT}.d"
     cat > "/etc/systemd/system/${MOUNT_UNIT}.d/nas-route.conf" << 'EOF'
 [Unit]
