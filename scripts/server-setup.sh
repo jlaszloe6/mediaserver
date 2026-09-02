@@ -220,6 +220,24 @@ if [ "\$IFACE" = "\$WIRED_IF" ] && [ "\$ACTION" = "up" ] && \\
     # roams, etc.). Without it, nas-route-setup.sh's "nmcli connection up"
     # would needlessly reactivate the wired link on every unrelated event.
     /usr/local/sbin/nas-route-setup.sh 2>/dev/null || true
+    exit 0
+fi
+
+if [ "\$IFACE" = "\$WIRED_IF" ] && [ "\$ACTION" = "dhcp4-change" ]; then
+    # DHCPv4 can complete, or a lease can be lost, without a fresh up/down
+    # event: carrier is often reported before DHCPv4 finishes, so the "up"
+    # branch above can already have given up and exited by the time the
+    # address actually arrives — nothing would ever revisit it without this.
+    # Deliberately NOT delegating to nas-route-setup.sh here: that would
+    # mean "nmcli connection up" (and a possible brief reactivation) on
+    # every routine lease renewal, exactly what the ACTION="up" restriction
+    # above exists to avoid. Just sync the /32 route to current reachability.
+    if [ "\$(cat /sys/class/net/\$WIRED_IF/carrier 2>/dev/null)" = "1" ] && \\
+       ip -4 -o addr show dev "\$WIRED_IF" scope global 2>/dev/null | grep -q .; then
+        ip route replace \${NAS_IP}/32 dev "\$WIRED_IF" 2>/dev/null || true
+    else
+        ip route del \${NAS_IP}/32 dev "\$WIRED_IF" 2>/dev/null || true
+    fi
 fi
 EOF
     chmod 755 /etc/NetworkManager/dispatcher.d/99-nas-via-wired.sh
