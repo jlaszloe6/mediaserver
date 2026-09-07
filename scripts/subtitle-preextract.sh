@@ -78,16 +78,20 @@ log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
 }
 
-# Any Jellyfin user works for the read-only lookups below (MediaStreams
-# aren't user-specific) - Jellyfin's /Items endpoints require a userId in
-# the path regardless, so just grab the first one.
+# MediaSources/MediaStreams themselves aren't user-specific, but the
+# catalog listing below (Users/{id}/Items) is filtered to whatever
+# libraries that user can see - a guest user (EnableAllFolders=false,
+# restricted to the Guest Movies/Guest TV folders per CLAUDE.md's Guest
+# Onboarding section) would silently return an empty catalog for the real
+# libraries, making every real import look "not yet indexed" forever.
+# Must be a user with unrestricted library access, not just "any" user.
 JELLYFIN_USERS=$(curl -sf --max-time 15 -H "$JF_HEADER" "$JELLYFIN_URL/Users") || {
     echo "ERROR: Failed to fetch Jellyfin users" >&2
     exit 1
 }
-JELLYFIN_USER_ID=$(echo "$JELLYFIN_USERS" | jq -r '.[0].Id // empty')
+JELLYFIN_USER_ID=$(echo "$JELLYFIN_USERS" | jq -r '[.[] | select(.Policy.EnableAllFolders == true)] | .[0].Id // empty')
 if [ -z "$JELLYFIN_USER_ID" ]; then
-    echo "ERROR: Could not find a Jellyfin user id" >&2
+    echo "ERROR: Could not find a Jellyfin user with unrestricted library access" >&2
     exit 1
 fi
 
