@@ -78,6 +78,21 @@ log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
 }
 
+# Guard against overlapping runs, same as ebook-pipeline.sh: each embedded
+# subtitle track gets its own up-to-180s extraction request, and a batch with
+# several multi-track episodes can spill well past the next 5-minute tick.
+# Without this, a second instance starts on top of the first, both fetch and
+# act on the same Jellyfin catalog snapshot, and their unsynchronized writes
+# to the shared state files race each other - doubling load on an already-
+# struggling Jellyfin/NFS during exactly the contention this script exists to
+# avoid piling onto.
+LOCK_FILE="/tmp/subtitle-preextract.lock"
+exec 200>"$LOCK_FILE"
+if ! flock -n 200; then
+    log "Another run is already in progress, skipping"
+    exit 0
+fi
+
 # MediaSources/MediaStreams themselves aren't user-specific, but the
 # catalog listing below (Users/{id}/Items) is filtered to whatever
 # libraries that user can see - a guest user (EnableAllFolders=false,
