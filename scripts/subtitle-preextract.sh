@@ -78,6 +78,21 @@ log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
 }
 
+# Guard against overlapping runs, same as ebook-pipeline.sh: each embedded
+# subtitle track gets its own up-to-180s extraction request, and a batch with
+# several multi-track episodes can spill well past the next 5-minute tick.
+# Without this, a second instance starts on top of the first, both fetch and
+# act on the same Jellyfin catalog snapshot, and their unsynchronized writes
+# to the shared state files race each other - doubling load on an already-
+# struggling Jellyfin/NFS during exactly the contention this script exists to
+# avoid piling onto.
+LOCK_FILE="/tmp/subtitle-preextract.lock"
+exec 200>"$LOCK_FILE"
+if ! flock -n 200; then
+    log "Another run is already in progress, skipping"
+    exit 0
+fi
+
 # MediaSources/MediaStreams themselves aren't user-specific, but the
 # catalog listing below (Users/{id}/Items) is filtered to whatever
 # libraries that user can see - a guest user (EnableAllFolders=false,
@@ -188,7 +203,7 @@ preextract_movie() {
     tmdb_id=$(echo "$movie" | jq -r '.tmdbId')
 
     local jf_id
-    jf_id=$(echo "$JELLYFIN_MOVIES" | jq -r ".Items[] | select(.ProviderIds.Tmdb == \"$tmdb_id\") | .Id" | head -1)
+    jf_id=$(echo "$JELLYFIN_MOVIES" | jq -r "[.Items[] | select(.ProviderIds.Tmdb == \"$tmdb_id\")] | .[0].Id // empty")
     if [ -z "$jf_id" ]; then
         log "  '$title': not yet indexed in Jellyfin, will retry"
         HAD_FAILURE=1
@@ -230,7 +245,7 @@ preextract_episode() {
     tvdb_id=$(echo "$series" | jq -r '.tvdbId')
 
     local jf_series_id
-    jf_series_id=$(echo "$JELLYFIN_SERIES" | jq -r ".Items[] | select(.ProviderIds.Tvdb == \"$tvdb_id\") | .Id" | head -1)
+    jf_series_id=$(echo "$JELLYFIN_SERIES" | jq -r "[.Items[] | select(.ProviderIds.Tvdb == \"$tvdb_id\")] | .[0].Id // empty")
     if [ -z "$jf_series_id" ]; then
         log "  '$series_title': series not yet indexed in Jellyfin, will retry"
         HAD_FAILURE=1
@@ -244,10 +259,25 @@ preextract_episode() {
     local label
     label="'$series_title' S$(printf '%02d' "$season_num")E$(printf '%02d' "$episode_num")"
 
+    # Jellyfin's own seasonNumber query param on this endpoint does not
+    # actually filter - it returns every episode of every season regardless
+    # - so the season match has to happen in the jq filter below via
+    # ParentIndexNumber, not by trusting the query string. Without that,
+    # IndexNumber alone is ambiguous across seasons (every season's episode 1
+    # has IndexNumber 1), so this used to silently resolve to season 1's
+    # episode for any other season whenever it didn't hit the bug below.
+    #
+    # `| head -1` here (like elsewhere in this script) is also wrong under
+    # `set -o pipefail`: with more than one line of jq output - guaranteed
+    # by the unfiltered response above - head closes the pipe after the
+    # first line, jq gets SIGPIPE writing the rest, and the pipeline's exit
+    # status (which the `||` below checks) is that SIGPIPE, not success -
+    # even though the right id was already captured. Selecting the first
+    # match inside jq itself avoids the external `head` entirely.
     local jf_episode_id
     jf_episode_id=$(curl -sf --max-time 15 -H "$JF_HEADER" \
         "$JELLYFIN_URL/Shows/$jf_series_id/Episodes?seasonNumber=$season_num" \
-        | jq -r ".Items[] | select(.IndexNumber == $episode_num) | .Id" | head -1) || {
+        | jq -r "[.Items[] | select(.ParentIndexNumber == $season_num and .IndexNumber == $episode_num)] | .[0].Id // empty") || {
         log "  ERROR: Could not fetch episode list for $label"
         ERRORS=$((ERRORS + 1))
         HAD_FAILURE=1
