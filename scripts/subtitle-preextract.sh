@@ -177,6 +177,16 @@ preextract_item() {
         if [ "$code" = "200" ]; then
             log "  Pre-extracted subtitle index $idx for $label"
             EXTRACTED=$((EXTRACTED + 1))
+        elif [ "$code" = "400" ]; then
+            # Jellyfin returns 400 when a subtitle stream can't be converted
+            # to SRT - always an image-based track (PGS/VobSub/DVD sub, no
+            # OCR path in Jellyfin), never a transient condition. Treating
+            # this as a regular failure would retry the same unconvertible
+            # track every 5 minutes forever, since it can never succeed -
+            # this pre-extraction technique doesn't apply to it in the first
+            # place, since there's no on-demand text extraction at playback
+            # time for these to race the NAS on either.
+            log "  Skipped subtitle index $idx for $label - not text-convertible (HTTP 400, likely image-based PGS/VobSub)"
         else
             log "  ERROR: Failed to pre-extract subtitle index $idx for $label - HTTP $code"
             ERRORS=$((ERRORS + 1))
