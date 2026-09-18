@@ -4,7 +4,7 @@
 # Checks for:
 # 1. Prowlarr indexers disabled (nCore, etc.)
 # 2. Sonarr/Radarr queue items stuck for 2+ hours
-# 3. NFS mount health (media directories accessible)
+# 3. Primary media mount health (media directories accessible)
 # 4. Sonarr/Radarr connection to Transmission
 # 5. Jellyfin library empty (potential mount issue)
 #
@@ -252,27 +252,28 @@ check_zero_progress() {
     printf '%s' "$new_state" > "$state_file"
 }
 
-# --- Check 3: NFS mount health ---
-check_nfs_mount() {
-    log "Checking NFS mount..."
+# --- Check 3: primary media mount health ---
+check_primary_mount() {
+    log "Checking primary media mount..."
 
-    local media_root="${MEDIA_ROOT:-/mnt/mediaserver}"
-    # Inside cron container, media is at /mnt/mediaserver
+    local media_root="${MEDIA_ROOT:-/mnt/mediaserver-ssd}"
+    # Inside cron container, media is at /mnt/mediaserver (bind-mounted from
+    # the host's MEDIA_ROOT, which is the local SSD - not NFS)
     local check_path="/mnt/mediaserver/media"
 
     if [ ! -d "$check_path" ]; then
-        alert "NFS mount missing: ${check_path} does not exist"
+        alert "Primary media mount missing: ${check_path} does not exist"
         return
     fi
 
-    # Check if we can list the directory (hangs if NFS is stale)
+    # Check if we can list the directory (hangs if the mount is stale)
     local result
     result=$(timeout 5 ls "$check_path" 2>&1) || {
-        alert "NFS mount stale or unresponsive: ${check_path}"
+        alert "Primary media mount stale or unresponsive: ${check_path}"
         return
     }
 
-    log "NFS mount OK"
+    log "Primary media mount OK"
 }
 
 # --- Check 4: Download client connectivity ---
@@ -306,7 +307,7 @@ check_jellyfin_library() {
     series_count=$(echo "$items" | jq '.SeriesCount // 0')
 
     if [ "$movie_count" -eq 0 ] && [ "$series_count" -eq 0 ]; then
-        alert "Jellyfin library is empty — possible NFS mount issue"
+        alert "Jellyfin library is empty — possible mount issue"
     fi
 
     log "Jellyfin library: ${movie_count} movies, ${series_count} series"
@@ -315,7 +316,7 @@ check_jellyfin_library() {
 # --- Main ---
 log "=== Pipeline health check ==="
 
-check_nfs_mount
+check_primary_mount
 check_prowlarr_indexers
 check_stuck_queue "Sonarr" "http://sonarr:8989" "$SONARR_API_KEY"
 check_stuck_queue "Radarr" "http://radarr:7878" "$RADARR_API_KEY"
