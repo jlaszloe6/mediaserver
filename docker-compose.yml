@@ -429,6 +429,11 @@ services:
       - TZ=Europe/Budapest
       - STATUSPAGE_DB_PATH=/config/statuspage/statuspage.db
       - SERVER_NAME=${SERVER_NAME:-Media Server}
+      # Container-internal path, deliberately NOT derived from host-side
+      # MEDIA_ROOT: this container always sees the media root at the fixed
+      # path /mnt/mediaserver below, regardless of what host directory that
+      # actually is. See .env.example's BACKUP_DIR comment.
+      - BACKUP_DIR=/mnt/mediaserver/backups
     volumes:
       - ./scripts:/scripts:ro
       - ./.env:/config/.env:ro

@@ -4,23 +4,29 @@
 # Run this ONCE on a fresh Ubuntu 24.04 install to configure:
 # - mediaserver system user
 # - Docker prerequisites
-# - NFS mount
-# - NAS route pinned to a dedicated wired NIC, if present (keeps NFS off
-#   the WiFi radio so it can't contend with WiFi streaming bandwidth)
+# - Primary media storage: a local SSD, formatted ext4 (required)
+# - NFS mount (OPTIONAL, off by default - see ENABLE_NFS below; this stack's
+#   primary storage is the local SSD, not NFS/a NAS)
+# - NAS route pinned to a dedicated wired NIC, if present and ENABLE_NFS=true
 # - Network watchdog (self-heals a stuck NetworkManager connection)
 # - Firewall (UFW)
-# - Systemd drop-ins (Docker waits for NFS)
+# - Systemd drop-ins (Docker waits for the SSD mount)
 # - PAM SSH agent auth (passwordless sudo for key-based SSH)
 #
 # Prerequisites:
 #   - Ubuntu 24.04 with Docker installed
-#   - NAS at $NAS_IP with NFS export
+#   - A local SSD/disk attached for primary media storage, identified by a
+#     stable path under /dev/disk/by-id/ (NOT /dev/sdX, which can change
+#     across reboots/replugs - this script formats the device you give it)
 #   - Run as root or with sudo
 #
-# Usage: sudo ./scripts/server-setup.sh
-#   sudo WIRED_IFACE=enp0s31f6 ./scripts/server-setup.sh   # if a spare wired NIC exists
-#   (the var must come AFTER "sudo": sudo's default env_reset strips
-#   anything set only in the invoking shell's own environment before it)
+# Usage: sudo SSD_DEVICE=/dev/disk/by-id/usb-Foo-part1 ./scripts/server-setup.sh
+#   sudo ENABLE_NFS=true NAS_IP=... NAS_EXPORT=... SSD_DEVICE=... ./scripts/server-setup.sh
+#       # only if you also want an NFS mount (not required by this stack)
+#   sudo ENABLE_NFS=true WIRED_IFACE=enp0s31f6 NAS_IP=... NAS_EXPORT=... SSD_DEVICE=... ./scripts/server-setup.sh
+#       # plus pin NFS traffic to a spare wired NIC, if present
+#   (vars must come AFTER "sudo": sudo's default env_reset strips anything
+#   set only in the invoking shell's own environment before it)
 
 set -euo pipefail
 
@@ -32,22 +38,41 @@ fi
 # --- Configuration (edit these) ---
 
 SERVER_IP="${SERVER_IP:?Set SERVER_IP}"
-NAS_IP="${NAS_IP:?Set NAS_IP}"
-NAS_EXPORT="${NAS_EXPORT:?Set NAS_EXPORT}"
-MOUNT_POINT="${MOUNT_POINT:-/mnt/mediaserver}"
 ADMIN_USER="${ADMIN_USER:?Set ADMIN_USER}"
+
+# Primary media storage (local SSD) - always required. No /dev/sdX default:
+# device-node letters aren't stable across reboots/replugs, and this
+# variable feeds a formatting operation later in this script.
+SSD_DEVICE="${SSD_DEVICE:?Set SSD_DEVICE to the stable /dev/disk/by-id/...-partN path for the media SSD (run 'ls -l /dev/disk/by-id/' to find it)}"
+SSD_MOUNT_POINT="${SSD_MOUNT_POINT:-/mnt/mediaserver-ssd}"
+
+# NFS (optional - this stack's primary storage is the SSD above, not NFS).
+# Only set NAS_IP/NAS_EXPORT and pay attention to MOUNT_POINT/WIRED_IFACE
+# below if you explicitly want an NFS mount for reasons outside this stack.
+ENABLE_NFS="${ENABLE_NFS:-false}"
+if [ "$ENABLE_NFS" = true ]; then
+    NAS_IP="${NAS_IP:?Set NAS_IP}"
+    NAS_EXPORT="${NAS_EXPORT:?Set NAS_EXPORT}"
+fi
+MOUNT_POINT="${MOUNT_POINT:-/mnt/mediaserver}"
 WIRED_IFACE="${WIRED_IFACE:-}"
 
 echo "=== Media Server - Server Setup ==="
-echo "Server IP:  $SERVER_IP"
-echo "NAS:        $NAS_IP:$NAS_EXPORT"
-echo "Mount:      $MOUNT_POINT"
-echo "Admin user: $ADMIN_USER"
+echo "Server IP:   $SERVER_IP"
+echo "Admin user:  $ADMIN_USER"
+echo "SSD device:  $SSD_DEVICE"
+echo "SSD mount:   $SSD_MOUNT_POINT"
+if [ "$ENABLE_NFS" = true ]; then
+    echo "NFS:         $NAS_IP:$NAS_EXPORT (enabled)"
+    echo "NFS mount:   $MOUNT_POINT"
+else
+    echo "NFS:         disabled (ENABLE_NFS=false) - this stack does not require it"
+fi
 echo ""
 
 # --- 1. Create mediaserver system user ---
 
-echo "[1/10] Creating mediaserver user..."
+echo "[1/11] Creating mediaserver user..."
 if id mediaserver &>/dev/null; then
     echo "  User 'mediaserver' already exists"
 else
@@ -60,7 +85,72 @@ mkdir -p /opt/mediaserver
 chown mediaserver:mediaserver /opt/mediaserver
 chmod 2775 /opt/mediaserver
 
-# --- 2. Pin NAS traffic to a dedicated wired NIC (optional) ---
+# --- 2. Provision primary media storage (local SSD) ---
+#
+# This is the stack's sole storage for media, downloads, and config backups
+# - required unconditionally, unlike the optional NFS mount below. Detection
+# is tri-state, not a simple "format if nothing else is there" check: an
+# existing ext4 filesystem is reused as-is (never reformatted, so re-running
+# this script against an already-provisioned host is safe), no filesystem
+# means it's a fresh disk and gets one created, and any OTHER existing
+# filesystem (e.g. this device's current NTFS) aborts loudly rather than
+# silently skipping formatting and leaving a non-ext4 disk in place - ext4
+# is required for correct hardlink semantics (Sonarr/Radarr's hardlink
+# import, transmission-cleanup.sh's stat -c '%h' orphan check) and POSIX
+# uid/gid ownership (the PUID/PGID convention every container here uses).
+
+echo "[2/11] Provisioning primary media storage (SSD)..."
+
+if [ ! -b "$SSD_DEVICE" ]; then
+    echo "ERROR: $SSD_DEVICE does not resolve to a block device" >&2
+    exit 1
+fi
+
+# Refuse to touch a device that's already mounted somewhere other than
+# where we're about to put it - a re-run against an already-provisioned
+# host should find it already at SSD_MOUNT_POINT (fine, falls through to
+# the ext4 case below with nothing to do), not mounted anywhere unexpected.
+EXISTING_MOUNT="$(findmnt -rn -S "$SSD_DEVICE" -o TARGET || true)"
+if [ -n "$EXISTING_MOUNT" ] && [ "$EXISTING_MOUNT" != "$SSD_MOUNT_POINT" ]; then
+    echo "ERROR: $SSD_DEVICE is already mounted at $EXISTING_MOUNT, not $SSD_MOUNT_POINT" >&2
+    echo "Refusing to proceed against a device mounted somewhere unexpected." >&2
+    exit 1
+fi
+
+SSD_FSTYPE="$(blkid -o value -s TYPE "$SSD_DEVICE" 2>/dev/null || true)"
+case "$SSD_FSTYPE" in
+    ext4)
+        echo "  $SSD_DEVICE already ext4 - reusing, not formatting"
+        ;;
+    "")
+        echo "  $SSD_DEVICE has no filesystem - creating ext4"
+        # -m 1: reduces ext4's reserved-block ratio from the ~5% default to
+        # 1%, reclaiming a few percent of the volume that's not needed on a
+        # data-only disk owned by the mediaserver user, not root.
+        mkfs.ext4 -L mediaserver-ssd -m 1 "$SSD_DEVICE"
+        ;;
+    *)
+        echo "ERROR: $SSD_DEVICE has an existing '$SSD_FSTYPE' filesystem." >&2
+        echo "Refusing to auto-format a non-ext4, non-empty device. If you intend" >&2
+        echo "to reuse it, verify there is nothing worth keeping, then run manually:" >&2
+        echo "  wipefs -a $SSD_DEVICE && mkfs.ext4 -L mediaserver-ssd -m 1 $SSD_DEVICE" >&2
+        echo "and re-run this script." >&2
+        exit 1
+        ;;
+esac
+
+mkdir -p "$SSD_MOUNT_POINT"
+SSD_UUID="$(blkid -o value -s UUID "$SSD_DEVICE")"
+if ! grep -q "UUID=$SSD_UUID" /etc/fstab; then
+    echo "UUID=$SSD_UUID $SSD_MOUNT_POINT ext4 defaults,noatime,nofail,x-systemd.device-timeout=10s 0 2" >> /etc/fstab
+    echo "  Added fstab entry"
+else
+    echo "  fstab entry already exists"
+fi
+mount -a 2>/dev/null || true
+chown mediaserver:mediaserver "$SSD_MOUNT_POINT"
+
+# --- 3. Pin NAS traffic to a dedicated wired NIC (optional, ENABLE_NFS only) ---
 #
 # If the host's primary network path is WiFi (see network-watchdog below),
 # NFS reads compete with WiFi airtime used to stream to LAN clients — heavy
@@ -92,8 +182,10 @@ chmod 2775 /opt/mediaserver
 # the end of this script), and nas-route.service must be able to run
 # starting from the very next boot regardless of when that clone happens.
 
-echo "[2/10] Pinning NAS route to wired NIC..."
-if [ -n "$WIRED_IFACE" ]; then
+echo "[3/11] Pinning NAS route to wired NIC..."
+if [ "$ENABLE_NFS" != true ]; then
+    echo "  Skipped (ENABLE_NFS=false) - this stack's primary storage is the SSD, not NFS"
+elif [ -n "$WIRED_IFACE" ]; then
     # Computed once here (not re-derived in the NFS mount step below) so the
     # retry guidance below and the actual mount-unit drop-in always agree,
     # even when MOUNT_POINT isn't the default /mnt/mediaserver.
@@ -296,57 +388,73 @@ else
     echo "  WIRED_IFACE not set, skipping (no dedicated wired NIC for the NAS)"
 fi
 
-# --- 3. NFS mount ---
+# --- 4. NFS mount (optional, ENABLE_NFS only) ---
 
-echo "[3/10] Setting up NFS mount..."
-apt-get install -y -qq nfs-common
-mkdir -p "$MOUNT_POINT"
-
-if ! grep -q "$NAS_IP:$NAS_EXPORT" /etc/fstab; then
-    echo "$NAS_IP:$NAS_EXPORT $MOUNT_POINT nfs defaults,_netdev,auto 0 0" >> /etc/fstab
-    echo "  Added fstab entry"
+echo "[4/11] Setting up NFS mount..."
+if [ "$ENABLE_NFS" != true ]; then
+    echo "  Skipped (ENABLE_NFS=false) - this stack's primary storage is the SSD, not NFS"
 else
-    echo "  fstab entry already exists"
-fi
+    apt-get install -y -qq nfs-common
+    mkdir -p "$MOUNT_POINT"
 
-if [ -n "$WIRED_IFACE" ]; then
-    # Tie nas-route.service directly into this mount unit's own dependency
-    # chain, rather than relying on remote-fs-pre.target to pull it in (it
-    # won't — see above). This is what actually guarantees the route exists
-    # before the mount is attempted on every future boot.
-    #
-    # Wants= (not Requires=): the wired NIC not coming up in time is a
-    # tolerable, already-warned-about degraded case (NFS just falls back to
-    # WiFi) — it must not be able to block the mount, and by extension the
-    # whole stack, entirely. Requires= would propagate nas-route.service's
-    # failure into a hard mount failure instead.
-    # ($MOUNT_UNIT was already computed in step 2, above — reused here so
-    # this drop-in and nas-route-setup.sh's retry guidance can't disagree.)
-    mkdir -p "/etc/systemd/system/${MOUNT_UNIT}.d"
-    cat > "/etc/systemd/system/${MOUNT_UNIT}.d/nas-route.conf" << 'EOF'
+    if ! grep -q "$NAS_IP:$NAS_EXPORT" /etc/fstab; then
+        echo "$NAS_IP:$NAS_EXPORT $MOUNT_POINT nfs defaults,_netdev,auto 0 0" >> /etc/fstab
+        echo "  Added fstab entry"
+    else
+        echo "  fstab entry already exists"
+    fi
+
+    if [ -n "$WIRED_IFACE" ]; then
+        # Tie nas-route.service directly into this mount unit's own dependency
+        # chain, rather than relying on remote-fs-pre.target to pull it in (it
+        # won't — see above). This is what actually guarantees the route exists
+        # before the mount is attempted on every future boot.
+        #
+        # Wants= (not Requires=): the wired NIC not coming up in time is a
+        # tolerable, already-warned-about degraded case (NFS just falls back to
+        # WiFi) — it must not be able to block the mount, and by extension the
+        # whole stack, entirely. Requires= would propagate nas-route.service's
+        # failure into a hard mount failure instead.
+        # ($MOUNT_UNIT was already computed in step 3, above — reused here so
+        # this drop-in and nas-route-setup.sh's retry guidance can't disagree.)
+        mkdir -p "/etc/systemd/system/${MOUNT_UNIT}.d"
+        cat > "/etc/systemd/system/${MOUNT_UNIT}.d/nas-route.conf" << 'EOF'
 [Unit]
 Wants=nas-route.service
 After=nas-route.service
 EOF
-    systemctl daemon-reload
+        systemctl daemon-reload
+    fi
+
+    mount -a 2>/dev/null || true
 fi
 
-mount -a 2>/dev/null || true
+# --- 5. Docker waits for the SSD mount ---
+#
+# Docker's boot dependency is on the SSD ONLY, not NFS - this stack's
+# primary storage. Unlike the NFS mount above (soft Wants= on its wired-NIC
+# route, tolerating a degraded fallback), this is a hard Requires=: starting
+# the stack with the SSD missing risks Sonarr/Radarr/Jellyfin concluding
+# media was deleted and acting on it. RequiresMountsFor= auto-generates the
+# correct Requires=/After= on the SSD's mount unit regardless of filesystem
+# type, rather than chasing local-fs.target/remote-fs.target membership by
+# hand. If a prior run of this script (or a manual install predating the
+# SSD migration) left the old NFS-based drop-in in place, remove it first -
+# two differently-named drop-ins under docker.service.d/ can coexist, which
+# would leave the old NFS dependency active alongside this one.
 
-# --- 4. Docker waits for NFS ---
-
-echo "[4/10] Configuring Docker to wait for NFS..."
+echo "[5/11] Configuring Docker to wait for the SSD mount..."
 mkdir -p /etc/systemd/system/docker.service.d
-cat > /etc/systemd/system/docker.service.d/wait-for-nfs.conf << EOF
+rm -f /etc/systemd/system/docker.service.d/wait-for-nfs.conf
+cat > /etc/systemd/system/docker.service.d/wait-for-ssd.conf << EOF
 [Unit]
-After=remote-fs.target
-Requires=remote-fs.target
+RequiresMountsFor=$SSD_MOUNT_POINT
 EOF
 systemctl daemon-reload
 
-# --- 5. Network watchdog ---
+# --- 6. Network watchdog ---
 
-echo "[5/10] Installing network watchdog..."
+echo "[6/11] Installing network watchdog..."
 cat > /etc/systemd/system/network-watchdog.service << EOF
 [Unit]
 Description=Network connectivity watchdog (self-heal stuck NetworkManager state)
@@ -371,11 +479,11 @@ EOF
 systemctl daemon-reload
 systemctl enable --now network-watchdog.timer
 
-# --- 6. UFW firewall ---
+# --- 7. UFW firewall ---
 
 LAN_SUBNET="${LAN_SUBNET:-192.168.1.0/24}"
 
-echo "[6/10] Configuring UFW firewall..."
+echo "[7/11] Configuring UFW firewall..."
 ufw --force enable
 ufw default deny incoming
 ufw allow from "$LAN_SUBNET" to any port 22 proto tcp comment "SSH (LAN only)"
@@ -386,9 +494,9 @@ ufw allow from "$LAN_SUBNET" to any port 53 comment "DNS (dnsmasq for LAN)"
 ufw deny 3389/tcp comment "Block RDP"
 echo "  UFW rules configured"
 
-# --- 7. PAM SSH agent auth (passwordless sudo for key-based SSH) ---
+# --- 8. PAM SSH agent auth (passwordless sudo for key-based SSH) ---
 
-echo "[7/10] Setting up PAM SSH agent auth..."
+echo "[8/11] Setting up PAM SSH agent auth..."
 apt-get install -y -qq libpam-ssh-agent-auth
 
 # Copy admin user's authorized keys for sudo verification
@@ -408,9 +516,9 @@ EOF
 chmod 440 /etc/sudoers.d/ssh-agent
 visudo -c -f /etc/sudoers.d/ssh-agent
 
-# --- 8. SSH server config ---
+# --- 9. SSH server config ---
 
-echo "[8/10] Configuring SSH server..."
+echo "[9/11] Configuring SSH server..."
 if ! grep -q '^AllowAgentForwarding yes' /etc/ssh/sshd_config; then
     echo 'AllowAgentForwarding yes' >> /etc/ssh/sshd_config
 fi
@@ -421,9 +529,9 @@ elif ! grep -q '^X11Forwarding no' /etc/ssh/sshd_config; then
 fi
 systemctl reload ssh
 
-# --- 9. fail2ban ---
+# --- 10. fail2ban ---
 
-echo "[9/10] Setting up fail2ban..."
+echo "[10/11] Setting up fail2ban..."
 apt-get install -y -qq fail2ban
 cat > /etc/fail2ban/jail.d/sshd.local << EOF
 [sshd]
@@ -432,9 +540,9 @@ EOF
 systemctl enable --now fail2ban
 systemctl reload fail2ban
 
-# --- 10. Git safe directory ---
+# --- 11. Git safe directory ---
 
-echo "[10/10] Setting git safe directory..."
+echo "[11/11] Setting git safe directory..."
 sudo -u mediaserver git config --global --add safe.directory /opt/mediaserver
 sudo -u "$ADMIN_USER" git config --global --add safe.directory /opt/mediaserver
 

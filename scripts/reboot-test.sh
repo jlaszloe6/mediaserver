@@ -2,7 +2,7 @@
 # reboot-test.sh - Verify stack health after reboot/shutdown/start
 #
 # Checks that all services came back up correctly:
-# - NFS mount is accessible
+# - Primary media mount (local SSD) is accessible
 # - All containers are running
 # - Each service responds to health checks (via Docker healthcheck status)
 # - SQLite databases are accessible
@@ -58,7 +58,7 @@ else
     echo "WARNING: .env not found at $PROJECT_DIR/.env"
 fi
 
-MEDIA_ROOT="${MEDIA_ROOT:-/mnt/mediaserver}"
+MEDIA_ROOT="${MEDIA_ROOT:-/mnt/mediaserver-ssd}"
 SERVER_IP="${SERVER_IP:-127.0.0.1}"
 
 echo "=== Reboot Health Check ==="
@@ -66,18 +66,18 @@ echo "Waiting ${WAIT_SECS}s for services to start..."
 sleep "$WAIT_SECS"
 echo ""
 
-# --- 1. NFS mount ---
+# --- 1. Primary media mount (SSD) ---
 
-echo "[NFS Mount]"
+echo "[Primary Media Mount (SSD)]"
 if mountpoint -q "$MEDIA_ROOT" 2>/dev/null; then
-    pass "NFS mounted at $MEDIA_ROOT"
+    pass "Primary media mount mounted at $MEDIA_ROOT"
     if ls "$MEDIA_ROOT/media" >/dev/null 2>&1; then
-        pass "NFS is readable"
+        pass "Primary media mount is readable"
     else
-        fail "NFS mounted but not readable"
+        fail "Primary media mount mounted but not readable"
     fi
 else
-    fail "NFS not mounted at $MEDIA_ROOT"
+    fail "Primary media mount not mounted at $MEDIA_ROOT"
 fi
 echo ""
 
