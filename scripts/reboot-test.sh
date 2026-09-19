@@ -331,13 +331,13 @@ latest_encrypted_backup() {
 }
 
 echo "[Backups]"
-BACKUP_DIR="${BACKUP_DIR:-${MEDIA_ROOT}/backups}"
+BACKUP_DIR="${BACKUP_DIR:-${BACKUP_HOST_DIR:-${MEDIA_ROOT}/backups}}"
 if [ -d "$BACKUP_DIR" ]; then
     backup_count=$(count_encrypted_backups "$BACKUP_DIR")
     if [ "$backup_count" -gt 0 ]; then
         latest=$(latest_encrypted_backup "$BACKUP_DIR")
         latest_name=$(basename "$latest")
-        pass "$backup_count backup(s) on NAS (latest: $latest_name)"
+        pass "$backup_count backup(s) in $BACKUP_DIR (latest: $latest_name)"
     else
         warn_check "Backup directory exists but no backups found"
     fi
