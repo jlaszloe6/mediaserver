@@ -3,11 +3,12 @@ import hmac
 import secrets
 from datetime import datetime, timedelta, timezone
 from functools import wraps
+from urllib.parse import urlparse
 
 from flask import Blueprint, abort, flash, redirect, render_template, request, session, url_for
 
 from config import (
-    ADMIN_EMAIL, ALLOWED_EMAILS, RATE_LIMIT_MAX, RATE_LIMIT_WINDOW,
+    ADMIN_EMAIL, ALLOWED_EMAILS, BASE_URL, RATE_LIMIT_MAX, RATE_LIMIT_WINDOW,
     REQUIRE_TURNSTILE, TURNSTILE_SECRET_KEY, TURNSTILE_SITE_KEY,
 )
 from db import get_db, get_all_guest_emails
@@ -97,6 +98,23 @@ def verify_turnstile(token):
         return False
 
 
+def is_lan_direct_request():
+    """True when reached via the LAN-only direct-IP port (docker-compose.yml's
+    statuspage port), not the public domain through Caddy.
+
+    Turnstile site keys are domain-locked in the Cloudflare dashboard and
+    can't be configured for a raw IP - the same underlying limitation as
+    Caddy's SNI-based automatic HTTPS (see docker-compose.yml's statuspage
+    port comment) - so the widget's token never verifies on this path,
+    permanently failing every login with no way to fix it from this side.
+    Skipping Turnstile here mirrors how Caddy's own geoip_hungary already
+    treats LAN differently, and this path is already fully gated at the
+    network level regardless (the port is bound to $SERVER_IP only).
+    """
+    public_host = urlparse(BASE_URL).hostname
+    return bool(public_host) and request.host.split(":")[0] != public_host
+
+
 def generate_csrf():
     if "_csrf" not in session:
         session["_csrf"] = secrets.token_hex(16)
@@ -156,7 +174,11 @@ def init_app(app):
 
     @app.context_processor
     def inject_turnstile():
-        return {"turnstile_site_key": TURNSTILE_SITE_KEY}
+        # Skip the widget entirely on the LAN-direct path, not just its
+        # server-side check - it would just render a permanently-erroring
+        # box for a token that can never verify (see is_lan_direct_request).
+        return {"show_turnstile": TURNSTILE_SITE_KEY and not is_lan_direct_request(),
+                "turnstile_site_key": TURNSTILE_SITE_KEY}
 
     app.jinja_env.globals["csrf_token"] = generate_csrf
     app.jinja_env.globals["is_admin"] = lambda: is_admin()
@@ -169,7 +191,7 @@ def login():
     if request.method == "POST":
         if not check_csrf():
             abort(403)
-        if not verify_turnstile(request.form.get("cf-turnstile-response", "")):
+        if not is_lan_direct_request() and not verify_turnstile(request.form.get("cf-turnstile-response", "")):
             flash("Verification failed. Please try again.", "error")
             return render_template("login.html")
         email = request.form.get("email", "").strip().lower()
