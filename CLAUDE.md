@@ -11,7 +11,7 @@ Services: Jellyfin, Transmission, Sonarr, Radarr, Prowlarr, Bazarr, Seerr, Caddy
 ### Networking
 - Custom bridge network `mediaserver` for all services
 - All inter-container communication via Docker service names: `jellyfin`, `sonarr`, `radarr`, `prowlarr`, `transmission`, `seerr`, `caddy`, `statuspage`
-- Only published ports: Caddy 443 (HTTPS), Jellyfin 8096, Lidarr 8686, Navidrome 4533, Audiobookshelf 13378, Seerr 5055 (all LAN-only, bound to `$SERVER_IP`), Transmission 51413 TCP+UDP (torrent peers, deliberately internet-facing)
+- Only published ports: Caddy 443 (HTTPS), Jellyfin 8096, Lidarr 8686, Navidrome 4533, Audiobookshelf 13378, Seerr 5055, Statuspage 8080 (all LAN-only, bound to `$SERVER_IP`), Transmission 51413 TCP+UDP (torrent peers, deliberately internet-facing)
 - LAN clients access Jellyfin directly via `http://SERVER_IP:8096`, remote access via DuckDNS domain through Caddy
 
 ### Storage & Boot
@@ -161,7 +161,10 @@ Services: Jellyfin, Transmission, Sonarr, Radarr, Prowlarr, Bazarr, Seerr, Caddy
 - Modular structure: `app.py` (init) → `config.py`, `db.py`, `auth.py`, `services/*`, `routes/*`
 - Blueprints: `auth_bp`, `dashboard_bp`, `guests_bp` — all `url_for` calls use blueprint prefix
 - Cloudflare Turnstile captcha on login form
-- Session cookies: Secure, HttpOnly, SameSite=Lax
+- Session cookies: HttpOnly, SameSite=Lax, NOT Secure-flagged - see below for why
+- Unlike Jellyfin/Seerr/etc., LAN access normally goes through Caddy + the public DuckDNS domain (`$CADDY_DOMAIN_STATUS`), same as remote access, since statuspage itself has no LAN-direct port. On this network specifically, that path doesn't work: the router's own admin UI answers on port 443 for LAN-sourced requests to its own WAN IP instead of hairpin-NATing them back to Caddy (confirmed live 2026-09-19 - the response body was the router's "KAON Broadband CPE" login page, not statuspage)
+- Fix: statuspage also publishes `${SERVER_IP}:8080` directly (LAN-only, bypasses Caddy entirely, mirrors Jellyfin/Seerr/etc.'s LAN-port pattern) - reach it at `http://SERVER_IP:8080` from the LAN. Plain HTTP, not HTTPS via a self-signed cert: confirmed live that Caddy can't present ANY certificate for a bare-IP connection with no SNI (browsers/curl never send SNI for a literal IP, per RFC 6066 - tried `tls internal`, a static cert file, and Caddy's `default_sni` option, all failed identically, including on the *existing* port 443 when accessed via bare IP - a fundamental limitation of SNI-based automatic HTTPS with multiple named sites sharing one Caddy instance, not something fixable in this Caddyfile)
+- Because this LAN path is plain HTTP, the login session cookie can't be Secure-flagged (a Secure cookie is never stored by the browser over plain HTTP) - traded off deliberately; the cookie still travels encrypted on the remote/public path through Caddy, this only affects the LAN-only direct path
 - Dashboard: service health, library stats, active downloads, recent activity (local time, readable labels)
 - Custom error pages (400, 403, 404, 500) with dark theme
 - Favicon logo on all pages (login, dashboard, errors)
