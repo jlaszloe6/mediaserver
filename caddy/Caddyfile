@@ -95,6 +95,22 @@
 	}
 }
 
+# LAN-only direct-IP access to the status page - see docker-compose.yml's
+# caddy service for why this exists (router hairpin-NAT doesn't work here).
+# `tls internal` since Caddy can't get a publicly-trusted cert for a private
+# IP - browsers will show an untrusted-certificate warning on first visit,
+# which is expected; click through it (or add a one-time exception). The
+# port itself is only ever exposed on $SERVER_IP (see docker-compose.yml),
+# never on the internet, so no geoip_hungary import is needed here.
+:8443 {
+	tls internal
+	import base_headers
+	import strict_csp
+	reverse_proxy statuspage:8080 {
+		header_up X-Real-IP {remote_host}
+	}
+}
+
 {$CADDY_DOMAIN_NAVIDROME} {
 	tls {
 		dns duckdns {env.DUCKDNS_TOKEN}

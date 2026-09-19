@@ -11,8 +11,9 @@ Services: Jellyfin, Transmission, Sonarr, Radarr, Prowlarr, Bazarr, Seerr, Caddy
 ### Networking
 - Custom bridge network `mediaserver` for all services
 - All inter-container communication via Docker service names: `jellyfin`, `sonarr`, `radarr`, `prowlarr`, `transmission`, `seerr`, `caddy`, `statuspage`
-- Only published ports: Caddy 443 (HTTPS), Jellyfin 8096, Lidarr 8686, Navidrome 4533, Audiobookshelf 13378, Seerr 5055 (all LAN-only, bound to `$SERVER_IP`), Transmission 51413 TCP+UDP (torrent peers, deliberately internet-facing)
+- Only published ports: Caddy 443 (HTTPS) and 8443 (HTTPS, LAN-only, bound to `$SERVER_IP` - see Status Page below), Jellyfin 8096, Lidarr 8686, Navidrome 4533, Audiobookshelf 13378, Seerr 5055 (all LAN-only, bound to `$SERVER_IP`), Transmission 51413 TCP+UDP (torrent peers, deliberately internet-facing)
 - LAN clients access Jellyfin directly via `http://SERVER_IP:8096`, remote access via DuckDNS domain through Caddy
+- UFW's `default deny incoming` (see Host Security below) does NOT block any of these published ports, LAN-bound or not - Docker manages iptables directly and inserts its own ACCEPT rules for published ports ahead of UFW's chain, a well-known Docker/UFW interaction. No explicit UFW rule exists for 8096/5055/4533/13378/8686/8443, and none is needed
 
 ### Storage & Boot
 - Media on NFS (NAS) — inotify doesn't work over NFS
@@ -161,7 +162,9 @@ Services: Jellyfin, Transmission, Sonarr, Radarr, Prowlarr, Bazarr, Seerr, Caddy
 - Modular structure: `app.py` (init) → `config.py`, `db.py`, `auth.py`, `services/*`, `routes/*`
 - Blueprints: `auth_bp`, `dashboard_bp`, `guests_bp` — all `url_for` calls use blueprint prefix
 - Cloudflare Turnstile captcha on login form
-- Session cookies: Secure, HttpOnly, SameSite=Lax
+- Session cookies: Secure, HttpOnly, SameSite=Lax - login won't work over plain HTTP, since browsers refuse to store a Secure-flagged cookie on a non-HTTPS connection
+- Unlike Jellyfin/Seerr/etc., statuspage has no plain-HTTP LAN-direct port (couldn't have one anyway, given the Secure cookie above) - LAN access normally goes through Caddy + the public DuckDNS domain (`$CADDY_DOMAIN_STATUS`), same as remote access. On this network specifically, that path doesn't actually work: the router's own admin UI answers on port 443 for LAN-sourced requests to its own WAN IP instead of hairpin-NATing them back to Caddy (confirmed live 2026-09-19 - the response body was the router's "KAON Broadband CPE" login page, not statuspage)
+- Fix: Caddy also publishes `${SERVER_IP}:8443` (LAN-only, see Networking above) with a separate `:8443` site block using `tls internal` (Caddy's own self-signed cert - a real one can't be issued for a private IP). Reach the dashboard directly at `https://SERVER_IP:8443` from the LAN; expect a browser untrusted-certificate warning on first visit (click through, or add a one-time exception) - that's expected, not a misconfiguration
 - Dashboard: service health, library stats, active downloads, recent activity (local time, readable labels)
 - Custom error pages (400, 403, 404, 500) with dark theme
 - Favicon logo on all pages (login, dashboard, errors)

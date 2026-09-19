@@ -321,6 +321,15 @@ services:
       - mediaserver
     ports:
       - "443:443"
+      # LAN-only direct-IP access to the status page (e.g. https://192.168.1.14:8443),
+      # bypassing the public DuckDNS domain + router hairpin-NAT path entirely -
+      # that path doesn't work on this network (the router's own admin UI answers
+      # on port 443 for LAN-sourced requests to its own WAN IP instead of
+      # forwarding them back to Caddy). Bound to $SERVER_IP like Jellyfin/Seerr/
+      # etc.'s LAN ports, so it's never reachable from the internet - no GeoIP
+      # filtering needed on this one. Uses a self-signed cert (see Caddyfile),
+      # since a publicly-trusted cert can't be issued for a private IP.
+      - "${SERVER_IP}:8443:8443"
     environment:
       - DUCKDNS_TOKEN=${DUCKDNS_TOKEN}
       - CADDY_DOMAIN_JELLYFIN=${CADDY_DOMAIN_JELLYFIN}
