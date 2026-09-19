@@ -11,7 +11,14 @@ from routes.guests import guests_bp
 app = Flask(__name__)
 app.secret_key = os.environ["SECRET_KEY"]
 app.config.update(
-    SESSION_COOKIE_SECURE=True,
+    # Not Secure-flagged: this app is also reachable over plain HTTP on the
+    # LAN (see docker-compose.yml's statuspage port) for hosts where Caddy's
+    # HTTPS path doesn't work for LAN clients (e.g. a router with no NAT
+    # loopback for its own public IP+port). A Secure cookie would never be
+    # stored by the browser on that path, breaking login there entirely.
+    # Traffic still travels encrypted on the remote/public path (through
+    # Caddy); this only affects the LAN-only direct-HTTP path.
+    SESSION_COOKIE_SECURE=False,
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
 )

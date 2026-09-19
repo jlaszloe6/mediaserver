@@ -375,6 +375,19 @@ services:
     container_name: statuspage
     networks:
       - mediaserver
+    # LAN-only direct HTTP access (e.g. http://192.168.1.14:8080), bypassing
+    # the public DuckDNS domain + Caddy entirely - that path doesn't reach
+    # this specific network's LAN clients (the router's own admin UI answers
+    # on port 443 for LAN-sourced requests to its own WAN IP instead of
+    # forwarding them back to Caddy). Bound to $SERVER_IP like Jellyfin/
+    # Seerr/etc.'s LAN ports. Plain HTTP, not HTTPS-via-a-self-signed-cert:
+    # Caddy can't present any cert at all for a bare-IP connection with no
+    # SNI (confirmed live - a fundamental limitation of SNI-based automatic
+    # HTTPS, not something fixable in this Caddyfile), and browsers never
+    # send SNI for a literal IP (RFC 6066). See app.py's SESSION_COOKIE_SECURE
+    # comment for the corresponding login-cookie tradeoff this requires.
+    ports:
+      - "${SERVER_IP:-127.0.0.1}:8080:8080"
     # Official python:3.12-slim image has no PUID/PGID support; runs as
     # whatever `user:` is set to, so align it with the mediaserver system
     # user (same reasoning as Navidrome/Audiobookshelf's fixed user: usage).
