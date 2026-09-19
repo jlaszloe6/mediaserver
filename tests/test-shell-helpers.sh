@@ -1714,7 +1714,7 @@ test_reboot_test_backup_dir_with_backups_still_reports_correct_count() {
 
     if [ "$result" -eq 0 ] \
         && echo "$output" | grep -q "=== Summary ===" \
-        && echo "$output" | grep -q "PASS: 3 backup(s) on NAS"; then
+        && echo "$output" | grep -q "PASS: 3 backup(s) in $full_dir"; then
         pass "reboot-test.sh's Backups check still reports the correct count when backups are present"
     else
         fail "reboot-test.sh's Backups check still reports the correct count when backups are present (exit=$result, output='$output')"

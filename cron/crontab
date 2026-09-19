@@ -10,15 +10,14 @@
 # GeoIP database update (weekly Sunday 2am)
 0 2 * * 0 /scripts/geodb-update.sh >> /var/log/cron/geodb-update.log 2>&1
 
-# Jellyfin library scan - every 5 min (covers manual additions outside Sonarr/Radarr)
-# Was every 1 min; that let an overlapping scan get cancelled by the next
-# trigger before it finished, and if the scan was ever slow enough to
-# ignore cancellation (colliding with concurrent playback subtitle
-# extraction/transcoding stresses the NAS), the retry loop just kept
-# recolliding with it every 60s. 5 min gives a slow scan room to actually
-# finish before being cut off. See "Jellyfin Library Scan Stalls" in
-# CLAUDE.md.
-*/5 * * * * /scripts/jellyfin-scan.sh >> /var/log/cron/jellyfin-scan.log 2>&1
+# Jellyfin library scan - every 1 min (covers manual additions outside Sonarr/Radarr)
+# Was slowed to every 5 min while media lived on NFS: an overlapping scan
+# colliding with concurrent playback subtitle extraction/transcoding could
+# stress the NAS into minutes-long stalls (see "Jellyfin Library Scan
+# Stalls" in CLAUDE.md). That constraint was specific to NAS capacity -
+# since the SSD migration, media reads no longer compete for NAS bandwidth,
+# so the 1-minute cadence is safe again.
+*/1 * * * * /scripts/jellyfin-scan.sh >> /var/log/cron/jellyfin-scan.log 2>&1
 
 # Pipeline health monitor - every 30 min
 */30 * * * * /scripts/pipeline-monitor.sh >> /var/log/cron/pipeline-monitor.log 2>&1
@@ -29,11 +28,10 @@
 
 # Subtitle pre-extract - force embedded-subtitle extraction right after
 # Sonarr/Radarr imports a video, instead of leaving it to happen on demand
-# at playback time (which competes with the concurrent NFS read the video
-# itself needs - see "Jellyfin Library Scan Stalls" in CLAUDE.md). Every
-# 5 min to match jellyfin-scan.sh's cadence, since an item can't be found
-# here until Jellyfin's own scan has indexed it.
-*/5 * * * * /scripts/subtitle-preextract.sh >> /var/log/cron/subtitle-preextract.log 2>&1
+# at playback time (see "Jellyfin Library Scan Stalls" in CLAUDE.md for the
+# NFS-era rationale). Every 1 min to match jellyfin-scan.sh's cadence,
+# since an item can't be found here until Jellyfin's own scan has indexed it.
+*/1 * * * * /scripts/subtitle-preextract.sh >> /var/log/cron/subtitle-preextract.log 2>&1
 
 # Config backup to NAS (daily 2:30am)
 30 2 * * * /scripts/backup.sh >> /var/log/cron/backup.log 2>&1

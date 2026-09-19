@@ -552,6 +552,13 @@ echo ""
 echo "Next steps:"
 echo "  1. Clone repo:  sudo -u mediaserver git clone <repo-url> /opt/mediaserver"
 echo "  2. Copy .env:   cp .env /opt/mediaserver/.env"
+echo "     Set BACKUP_HOST_DIR in that .env to somewhere off the SSD - backups"
+if [ "$ENABLE_NFS" = true ]; then
+    echo "     must survive an SSD failure, e.g. BACKUP_HOST_DIR=$MOUNT_POINT/backups"
+else
+    echo "     must survive an SSD failure (no NAS configured on this host - pick"
+    echo "     another off-device location)"
+fi
 echo "  3. Start stack: cd /opt/mediaserver && sudo -u mediaserver docker compose up -d"
 echo "  4. Run setup:   cd /opt/mediaserver && bash scripts/init-setup.sh"
 echo "  5. Restore:     cd /opt/mediaserver && bash scripts/restore.sh"

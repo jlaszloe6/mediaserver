@@ -62,11 +62,11 @@ if [ -f "$PROJECT_DIR/.env" ]; then
     set +a
 fi
 
-BACKUP_DIR="${BACKUP_DIR:-${MEDIA_ROOT:-/mnt/mediaserver}/backups}"
+BACKUP_DIR="${BACKUP_DIR:-${BACKUP_HOST_DIR:-${MEDIA_ROOT:-/mnt/mediaserver}/backups}}"
 
 if [ ! -d "$BACKUP_DIR" ]; then
     echo "ERROR: Backup directory not found: $BACKUP_DIR" >&2
-    echo "Make sure the NAS is mounted at ${MEDIA_ROOT:-/mnt/mediaserver}" >&2
+    echo "Make sure BACKUP_HOST_DIR (or its backing storage, e.g. the NAS) is mounted" >&2
     exit 1
 fi
 

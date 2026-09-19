@@ -442,11 +442,13 @@ services:
       - TZ=Europe/Budapest
       - STATUSPAGE_DB_PATH=/config/statuspage/statuspage.db
       - SERVER_NAME=${SERVER_NAME:-Media Server}
-      # Container-internal path, deliberately NOT derived from host-side
-      # MEDIA_ROOT: this container always sees the media root at the fixed
-      # path /mnt/mediaserver below, regardless of what host directory that
-      # actually is. See .env.example's BACKUP_DIR comment.
-      - BACKUP_DIR=/mnt/mediaserver/backups
+      # Container-internal path, fixed regardless of host directory. Bound
+      # from BACKUP_HOST_DIR below, deliberately NOT derived from MEDIA_ROOT
+      # or its /mnt/mediaserver in-container mount above - backups need to
+      # keep landing on durable off-device storage (e.g. the NAS) even when
+      # MEDIA_ROOT itself points at local/primary storage such as an SSD.
+      # See .env.example's BACKUP_HOST_DIR comment.
+      - BACKUP_DIR=/mnt/backup-target
     volumes:
       - ./scripts:/scripts:ro
       - ./.env:/config/.env:ro
@@ -454,6 +456,7 @@ services:
       - ./config:/config/all-configs:ro
       - ./.ssh:/config/ssh-keys:ro
       - ${MEDIA_ROOT}:/mnt/mediaserver
+      - ${BACKUP_HOST_DIR}:/mnt/backup-target
       - cron-state:/var/tmp
       - cron-logs:/var/log/cron
     mem_limit: 256m
