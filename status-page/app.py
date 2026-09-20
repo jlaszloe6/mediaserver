@@ -7,6 +7,7 @@ import auth
 from auth import auth_bp
 from routes.dashboard import dashboard_bp
 from routes.guests import guests_bp
+from routes.ebooks import ebooks_bp
 
 app = Flask(__name__)
 app.secret_key = os.environ["SECRET_KEY"]
@@ -21,6 +22,10 @@ app.config.update(
     SESSION_COOKIE_SECURE=False,
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
+    # Real .torrent uploads (routes/ebooks.py) are a few KB; this just
+    # rejects an oversized request body outright before it reaches any
+    # route handler.
+    MAX_CONTENT_LENGTH=2 * 1024 * 1024,
 )
 
 # Initialize modules
@@ -31,6 +36,7 @@ auth.init_app(app)
 app.register_blueprint(auth_bp)
 app.register_blueprint(dashboard_bp)
 app.register_blueprint(guests_bp)
+app.register_blueprint(ebooks_bp)
 
 # Error pages
 ERROR_PAGES = {
