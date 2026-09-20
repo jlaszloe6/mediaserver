@@ -9,8 +9,9 @@ from flask import Blueprint, render_template, session
 
 from auth import is_admin, login_required
 from config import (
-    API_TIMEOUT, HNR_HOURS, JELLYFIN_URL,
-    PROWLARR_KEY, PROWLARR_URL, RADARR_KEY, RADARR_URL, SEERR_URL,
+    API_TIMEOUT, AUDIOBOOKSHELF_KEY, AUDIOBOOKSHELF_URL, BAZARR_URL,
+    HNR_HOURS, JELLYFIN_API_KEY, JELLYFIN_URL, LIDARR_URL, NAVIDROME_URL,
+    PROWLARR_KEY, PROWLARR_URL, RADARR_KEY, RADARR_URL, SEERR_API_KEY, SEERR_URL,
     SERVER_NAME, SONARR_KEY, SONARR_URL, TRANSMISSION_URL,
 )
 from db import get_db, get_guests
@@ -37,6 +38,10 @@ def fetch_service_health():
         ("Transmission", f"{TRANSMISSION_URL.rsplit('/rpc', 1)[0]}/web/"),
         ("Prowlarr", f"{PROWLARR_URL}/ping"),
         ("Seerr", f"{SEERR_URL}/api/v1/status"),
+        ("Bazarr", f"{BAZARR_URL}/"),
+        ("Lidarr", f"{LIDARR_URL}/ping"),
+        ("Navidrome", f"{NAVIDROME_URL}/"),
+        ("Audiobookshelf", f"{AUDIOBOOKSHELF_URL}/healthcheck"),
     ]
     results = []
     with ThreadPoolExecutor(max_workers=8) as ex:
@@ -331,6 +336,94 @@ def fetch_missing_counts():
     return counts
 
 
+# --- Audiobookshelf library stats ---
+
+def fetch_audiobookshelf_stats():
+    """Item counts per Audiobookshelf library (Audiobooks/Ebooks/Podcasts),
+    via limit=0 item listing calls - Audiobookshelf returns the real total
+    in the `total` field even with limit=0, so this never actually pulls
+    the item list itself. None means "couldn't reach Audiobookshelf at
+    all" (the /api/libraries call itself failed); a library that fails its
+    own count call is just skipped, same partial-failure tolerance as
+    fetch_missing_counts."""
+    try:
+        r = requests.get(
+            f"{AUDIOBOOKSHELF_URL}/api/libraries",
+            headers={"Authorization": f"Bearer {AUDIOBOOKSHELF_KEY}"},
+            timeout=API_TIMEOUT,
+        )
+        r.raise_for_status()
+        libraries = r.json().get("libraries", [])
+    except Exception:
+        return None
+
+    stats = {}
+    for lib in libraries:
+        try:
+            r = requests.get(
+                f"{AUDIOBOOKSHELF_URL}/api/libraries/{lib['id']}/items",
+                params={"limit": 0},
+                headers={"Authorization": f"Bearer {AUDIOBOOKSHELF_KEY}"},
+                timeout=API_TIMEOUT,
+            )
+            r.raise_for_status()
+            stats[lib.get("name", lib["id"])] = r.json().get("total")
+        except Exception:
+            continue
+    return stats
+
+
+# --- Jellyfin active playback ---
+
+def fetch_active_playback():
+    """Currently-playing Jellyfin sessions, via /Sessions - the same data
+    Jellyfin's own dashboard shows. None means "couldn't check" (API
+    error), distinct from [] ("checked, nobody is watching anything right
+    now")."""
+    try:
+        r = requests.get(
+            f"{JELLYFIN_URL}/Sessions",
+            headers={"X-Emby-Token": JELLYFIN_API_KEY},
+            timeout=API_TIMEOUT,
+        )
+        r.raise_for_status()
+        sessions = r.json()
+    except Exception:
+        return None
+
+    playing = []
+    for s in sessions:
+        item = s.get("NowPlayingItem")
+        if not item:
+            continue
+        series_name = item.get("SeriesName")
+        title = f"{series_name} - {item.get('Name', 'Unknown')}" if series_name else item.get("Name", "Unknown")
+        playing.append({
+            "user": s.get("UserName", "Unknown"),
+            "title": title,
+            "paused": s.get("PlayState", {}).get("IsPaused", False),
+        })
+    return playing
+
+
+# --- Seerr pending requests ---
+
+def fetch_seerr_pending():
+    """Total pending Seerr requests, via take=1 (only the count is needed,
+    not the request list itself). None means "couldn't check"."""
+    try:
+        r = requests.get(
+            f"{SEERR_URL}/api/v1/request",
+            params={"filter": "pending", "take": 1},
+            headers={"X-Api-Key": SEERR_API_KEY},
+            timeout=API_TIMEOUT,
+        )
+        r.raise_for_status()
+        return r.json().get("pageInfo", {}).get("results")
+    except Exception:
+        return None
+
+
 # --- Snapshot logic ---
 
 def build_snapshot(series, movies):
@@ -520,6 +613,9 @@ def dashboard():
             ex.submit(fetch_disabled_indexers): "disabled_indexers",
             ex.submit(fetch_upcoming): "upcoming",
             ex.submit(fetch_missing_counts): "missing_counts",
+            ex.submit(fetch_audiobookshelf_stats): "audiobookshelf_stats",
+            ex.submit(fetch_active_playback): "active_playback",
+            ex.submit(fetch_seerr_pending): "seerr_pending",
         }
         for fut in as_completed(futures):
             key = futures[fut]
@@ -559,4 +655,7 @@ def dashboard():
         disabled_indexers=results.get("disabled_indexers"),
         upcoming=(results.get("upcoming") or [])[:10],
         missing_counts=results.get("missing_counts") or {},
+        audiobookshelf_stats=results.get("audiobookshelf_stats"),
+        active_playback=results.get("active_playback"),
+        seerr_pending=results.get("seerr_pending"),
     )

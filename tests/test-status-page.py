@@ -968,6 +968,112 @@ def test_is_lan_direct_request_false_when_host_matches_base_url():
         )
 
 
+# === routes/dashboard.py: Audiobookshelf stats, active playback, Seerr pending ===
+
+def _audiobookshelf_get_side_effect(libraries, counts_by_id, failing_ids=frozenset()):
+    """libraries: the /api/libraries payload. counts_by_id: {lib_id: total}.
+    failing_ids: lib ids whose own /items call should raise, to test the
+    per-library partial-failure tolerance."""
+    def _get(url, **kwargs):
+        if url.endswith("/api/libraries"):
+            return _mock_json_response({"libraries": libraries})
+        for lib_id, total in counts_by_id.items():
+            if f"/api/libraries/{lib_id}/items" in url:
+                if lib_id in failing_ids:
+                    raise Exception("boom")
+                return _mock_json_response({"total": total})
+        raise Exception(f"unexpected url in test: {url}")
+    return _get
+
+
+def test_audiobookshelf_stats_reports_counts_per_library():
+    import routes.dashboard as dashboard
+    libraries = [{"id": "a", "name": "Audiobooks"}, {"id": "b", "name": "Ebooks"}]
+    counts = {"a": 4, "b": 414}
+    with mock.patch.object(dashboard.requests, "get", side_effect=_audiobookshelf_get_side_effect(libraries, counts)):
+        result = dashboard.fetch_audiobookshelf_stats()
+    check(
+        "audiobookshelf_stats: reports each library's item count by name",
+        result == {"Audiobooks": 4, "Ebooks": 414},
+    )
+
+
+def test_audiobookshelf_stats_skips_a_library_whose_count_call_fails():
+    import routes.dashboard as dashboard
+    libraries = [{"id": "a", "name": "Audiobooks"}, {"id": "b", "name": "Podcasts"}]
+    counts = {"a": 4, "b": 1}
+    with mock.patch.object(
+        dashboard.requests, "get",
+        side_effect=_audiobookshelf_get_side_effect(libraries, counts, failing_ids={"b"}),
+    ):
+        result = dashboard.fetch_audiobookshelf_stats()
+    check(
+        "audiobookshelf_stats: a library whose own count call fails is skipped, the rest still reported",
+        result == {"Audiobooks": 4},
+    )
+
+
+def test_audiobookshelf_stats_top_level_api_error_returns_none():
+    import routes.dashboard as dashboard
+    with mock.patch.object(dashboard.requests, "get", side_effect=Exception("boom")):
+        result = dashboard.fetch_audiobookshelf_stats()
+    check("audiobookshelf_stats: an error listing libraries at all reports None, not an empty dict", result is None)
+
+
+def test_active_playback_reports_only_sessions_with_now_playing_item():
+    import routes.dashboard as dashboard
+    sessions = [
+        {"UserName": "janoslaszlo", "NowPlayingItem": {"Name": "A Movie"}, "PlayState": {"IsPaused": False}},
+        {"UserName": "idle-user", "NowPlayingItem": None},
+    ]
+    with mock.patch.object(dashboard.requests, "get", return_value=_mock_json_response(sessions)):
+        result = dashboard.fetch_active_playback()
+    check(
+        "active_playback: an idle session (no NowPlayingItem) is excluded, only the playing one is reported",
+        result == [{"user": "janoslaszlo", "title": "A Movie", "paused": False}],
+    )
+
+
+def test_active_playback_builds_series_title_for_episodes():
+    import routes.dashboard as dashboard
+    sessions = [{
+        "UserName": "jeberling",
+        "NowPlayingItem": {"Name": "Episode 4", "SeriesName": "Slow Horses"},
+        "PlayState": {"IsPaused": True},
+    }]
+    with mock.patch.object(dashboard.requests, "get", return_value=_mock_json_response(sessions)):
+        result = dashboard.fetch_active_playback()
+    check(
+        "active_playback: an episode's title includes its series name, and paused state is reported",
+        result == [{"user": "jeberling", "title": "Slow Horses - Episode 4", "paused": True}],
+    )
+
+
+def test_active_playback_api_error_returns_none():
+    import routes.dashboard as dashboard
+    with mock.patch.object(dashboard.requests, "get", side_effect=Exception("boom")):
+        result = dashboard.fetch_active_playback()
+    check(
+        "active_playback: an API error reports None, distinct from [] (checked, nobody watching)",
+        result is None,
+    )
+
+
+def test_seerr_pending_reports_the_results_count():
+    import routes.dashboard as dashboard
+    payload = {"pageInfo": {"results": 3}, "results": []}
+    with mock.patch.object(dashboard.requests, "get", return_value=_mock_json_response(payload)):
+        result = dashboard.fetch_seerr_pending()
+    check("seerr_pending: reports pageInfo.results as the pending count", result == 3)
+
+
+def test_seerr_pending_api_error_returns_none():
+    import routes.dashboard as dashboard
+    with mock.patch.object(dashboard.requests, "get", side_effect=Exception("boom")):
+        result = dashboard.fetch_seerr_pending()
+    check("seerr_pending: an API error reports None", result is None)
+
+
 def main():
     tests = [obj for name, obj in list(globals().items()) if name.startswith("test_") and callable(obj)]
     for t in tests:

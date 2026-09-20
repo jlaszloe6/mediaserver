@@ -283,6 +283,20 @@
                     <div class="label">Free ({{ disk_space.percent_used }}% used)</div>
                 </div>
                 {% endif %}
+                {% if audiobookshelf_stats %}
+                {% for lib_name, lib_count in audiobookshelf_stats.items() %}
+                <div class="stat-card">
+                    <div class="number">{{ lib_count }}</div>
+                    <div class="label">{{ lib_name }}</div>
+                </div>
+                {% endfor %}
+                {% endif %}
+                {% if seerr_pending is not none %}
+                <div class="stat-card">
+                    <div class="number">{{ seerr_pending }}</div>
+                    <div class="label">Pending Requests</div>
+                </div>
+                {% endif %}
             </div>
             {% if missing_counts.series is not none or missing_counts.movies is not none %}
             <p style="font-size:0.8rem;color:#8892b0;margin-top:1rem;">
@@ -303,6 +317,21 @@
                 <li>
                     <span class="time">{{ item.date }}</span>
                     <span>{{ item.title }}</span>
+                </li>
+                {% endfor %}
+            </ul>
+        </div>
+        {% endif %}
+
+        {% if active_playback %}
+        <!-- Now Playing -->
+        <div class="section">
+            <h2>Now Playing</h2>
+            <ul class="timeline">
+                {% for session in active_playback %}
+                <li>
+                    <span class="event-tag {{ 'event-other' if session.paused else 'event-downloaded' }}">{{ 'paused' if session.paused else 'playing' }}</span>
+                    <span>{{ session.user }} - {{ session.title }}</span>
                 </li>
                 {% endfor %}
             </ul>
