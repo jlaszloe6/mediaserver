@@ -968,6 +968,248 @@ def test_is_lan_direct_request_false_when_host_matches_base_url():
         )
 
 
+# === routes/dashboard.py: Audiobookshelf stats, active playback, Seerr pending ===
+
+def _audiobookshelf_get_side_effect(libraries, counts_by_id, failing_ids=frozenset()):
+    """libraries: the /api/libraries payload. counts_by_id: {lib_id: total}.
+    failing_ids: lib ids whose own /items call should raise, to test the
+    per-library partial-failure tolerance."""
+    def _get(url, **kwargs):
+        if url.endswith("/api/libraries"):
+            return _mock_json_response({"libraries": libraries})
+        for lib_id, total in counts_by_id.items():
+            if f"/api/libraries/{lib_id}/items" in url:
+                if lib_id in failing_ids:
+                    raise Exception("boom")
+                return _mock_json_response({"total": total})
+        raise Exception(f"unexpected url in test: {url}")
+    return _get
+
+
+def test_audiobookshelf_stats_reports_counts_per_library():
+    import routes.dashboard as dashboard
+    libraries = [{"id": "a", "name": "Audiobooks"}, {"id": "b", "name": "Ebooks"}]
+    counts = {"a": 4, "b": 414}
+    with mock.patch.object(dashboard.requests, "get", side_effect=_audiobookshelf_get_side_effect(libraries, counts)):
+        result = dashboard.fetch_audiobookshelf_stats()
+    check(
+        "audiobookshelf_stats: reports each library's item count by name",
+        result == {"Audiobooks": 4, "Ebooks": 414},
+    )
+
+
+def test_audiobookshelf_stats_skips_a_library_whose_count_call_fails():
+    import routes.dashboard as dashboard
+    libraries = [{"id": "a", "name": "Audiobooks"}, {"id": "b", "name": "Podcasts"}]
+    counts = {"a": 4, "b": 1}
+    with mock.patch.object(
+        dashboard.requests, "get",
+        side_effect=_audiobookshelf_get_side_effect(libraries, counts, failing_ids={"b"}),
+    ):
+        result = dashboard.fetch_audiobookshelf_stats()
+    check(
+        "audiobookshelf_stats: a library whose own count call fails is skipped, the rest still reported",
+        result == {"Audiobooks": 4},
+    )
+
+
+def test_audiobookshelf_stats_top_level_api_error_returns_none():
+    import routes.dashboard as dashboard
+    with mock.patch.object(dashboard.requests, "get", side_effect=Exception("boom")):
+        result = dashboard.fetch_audiobookshelf_stats()
+    check("audiobookshelf_stats: an error listing libraries at all reports None, not an empty dict", result is None)
+
+
+def test_active_playback_reports_only_sessions_with_now_playing_item():
+    import routes.dashboard as dashboard
+    sessions = [
+        {"UserName": "janoslaszlo", "NowPlayingItem": {"Name": "A Movie"}, "PlayState": {"IsPaused": False}},
+        {"UserName": "idle-user", "NowPlayingItem": None},
+    ]
+    with mock.patch.object(dashboard.requests, "get", return_value=_mock_json_response(sessions)):
+        result = dashboard.fetch_active_playback()
+    check(
+        "active_playback: an idle session (no NowPlayingItem) is excluded, only the playing one is reported",
+        result == [{"user": "janoslaszlo", "title": "A Movie", "paused": False}],
+    )
+
+
+def test_active_playback_builds_series_title_for_episodes():
+    import routes.dashboard as dashboard
+    sessions = [{
+        "UserName": "jeberling",
+        "NowPlayingItem": {"Name": "Episode 4", "SeriesName": "Slow Horses"},
+        "PlayState": {"IsPaused": True},
+    }]
+    with mock.patch.object(dashboard.requests, "get", return_value=_mock_json_response(sessions)):
+        result = dashboard.fetch_active_playback()
+    check(
+        "active_playback: an episode's title includes its series name, and paused state is reported",
+        result == [{"user": "jeberling", "title": "Slow Horses - Episode 4", "paused": True}],
+    )
+
+
+def test_active_playback_api_error_returns_none():
+    import routes.dashboard as dashboard
+    with mock.patch.object(dashboard.requests, "get", side_effect=Exception("boom")):
+        result = dashboard.fetch_active_playback()
+    check(
+        "active_playback: an API error reports None, distinct from [] (checked, nobody watching)",
+        result is None,
+    )
+
+
+def _make_seerr_request(id_, status, media_status, req_type="movie", tmdb_id=1, created_at="2026-01-01T00:00:00.000Z"):
+    return {
+        "id": id_,
+        "status": status,
+        "type": req_type,
+        "createdAt": created_at,
+        "media": {"tmdbId": tmdb_id, "status": media_status},
+    }
+
+
+def _seerr_get_side_effect(request_pages, titles_by_tmdb_id=None):
+    """request_pages: list of request-page payloads (each a dict with
+    'results' and 'pageInfo'), consumed in order for successive
+    /api/v1/request calls. titles_by_tmdb_id: {(type, tmdb_id): title}."""
+    titles_by_tmdb_id = titles_by_tmdb_id or {}
+    pages = list(request_pages)
+
+    def _get(url, **kwargs):
+        if "/api/v1/request" in url:
+            return _mock_json_response(pages.pop(0))
+        if "/api/v1/movie/" in url:
+            tmdb_id = int(url.rsplit("/", 1)[-1])
+            return _mock_json_response({"title": titles_by_tmdb_id.get(("movie", tmdb_id), "Unknown")})
+        if "/api/v1/tv/" in url:
+            tmdb_id = int(url.rsplit("/", 1)[-1])
+            return _mock_json_response({"name": titles_by_tmdb_id.get(("tv", tmdb_id), "Unknown")})
+        raise Exception(f"unexpected url in test: {url}")
+    return _get
+
+
+def test_seerr_unfulfilled_excludes_available_partially_available_deleted_and_declined():
+    """Regression guard: Seerr's own request.status doesn't determine the
+    "Requested" badge the UI shows on the request list - the underlying
+    media.status does. Confirmed live: a request.status of 5 shows as
+    "Available" for one title and "Requested" for another, purely based
+    on that title's media.status."""
+    import routes.dashboard as dashboard
+    requests_page = {
+        "pageInfo": {"pages": 1},
+        "results": [
+            _make_seerr_request(1, status=2, media_status=1, tmdb_id=101),  # still requested
+            _make_seerr_request(2, status=5, media_status=5, tmdb_id=102),  # available
+            _make_seerr_request(3, status=5, media_status=4, tmdb_id=103),  # partially available
+            _make_seerr_request(4, status=5, media_status=7, tmdb_id=104),  # deleted
+            _make_seerr_request(5, status=3, media_status=1, tmdb_id=105),  # declined
+        ],
+    }
+    with mock.patch.object(
+        dashboard.requests, "get",
+        side_effect=_seerr_get_side_effect([requests_page], {("movie", 101): "Still Waiting"}),
+    ):
+        result = dashboard.fetch_seerr_unfulfilled()
+    check(
+        "seerr_unfulfilled: only the still-not-available, non-declined request is counted",
+        result["count"] == 1 and result["requests"] == [{"title": "Still Waiting", "type": "movie"}],
+    )
+
+
+def test_seerr_unfulfilled_a_newer_declined_request_supersedes_an_older_pending_one():
+    """Regression case found live this session: an older, non-declined
+    "Mayday" request and a newer, declined request both existed for the
+    same movie - without picking only the most recent request per title,
+    Mayday kept showing up as still awaiting availability despite being
+    declined in the real Seerr UI."""
+    import routes.dashboard as dashboard
+    requests_page = {
+        "pageInfo": {"pages": 1},
+        "results": [
+            _make_seerr_request(57, status=5, media_status=1, tmdb_id=1137844, created_at="2026-09-13T12:34:39.000Z"),
+            _make_seerr_request(63, status=3, media_status=1, tmdb_id=1137844, created_at="2026-09-19T06:07:02.000Z"),
+        ],
+    }
+    with mock.patch.object(
+        dashboard.requests, "get",
+        side_effect=_seerr_get_side_effect([requests_page], {("movie", 1137844): "Mayday"}),
+    ):
+        result = dashboard.fetch_seerr_unfulfilled()
+    check(
+        "seerr_unfulfilled: the newer declined request wins over an older non-declined one for the same title",
+        result["count"] == 0,
+    )
+
+
+def test_seerr_unfulfilled_deduplicates_repeat_requests_for_the_same_title():
+    """Regression case found live this session: the same season of "Last
+    Seen" had been requested twice, and both request rows independently
+    passed the not-declined/not-available check, double-listing the same
+    show."""
+    import routes.dashboard as dashboard
+    requests_page = {
+        "pageInfo": {"pages": 1},
+        "results": [
+            _make_seerr_request(59, status=5, media_status=1, req_type="tv", tmdb_id=258230, created_at="2026-09-13T17:44:14.000Z"),
+            _make_seerr_request(62, status=2, media_status=1, req_type="tv", tmdb_id=258230, created_at="2026-09-19T06:06:23.000Z"),
+        ],
+    }
+    with mock.patch.object(
+        dashboard.requests, "get",
+        side_effect=_seerr_get_side_effect([requests_page], {("tv", 258230): "Last Seen"}),
+    ):
+        result = dashboard.fetch_seerr_unfulfilled()
+    check(
+        "seerr_unfulfilled: two requests for the same title count and list as one, not two",
+        result["count"] == 1 and result["requests"] == [{"title": "Last Seen", "type": "tv"}],
+    )
+
+
+def test_seerr_unfulfilled_resolves_tv_titles_via_the_tv_endpoint():
+    import routes.dashboard as dashboard
+    requests_page = {
+        "pageInfo": {"pages": 1},
+        "results": [_make_seerr_request(1, status=2, media_status=1, req_type="tv", tmdb_id=258230)],
+    }
+    with mock.patch.object(
+        dashboard.requests, "get",
+        side_effect=_seerr_get_side_effect([requests_page], {("tv", 258230): "Last Seen"}),
+    ):
+        result = dashboard.fetch_seerr_unfulfilled()
+    check(
+        "seerr_unfulfilled: a tv-type request resolves its title via /api/v1/tv, not /api/v1/movie",
+        result["requests"] == [{"title": "Last Seen", "type": "tv"}],
+    )
+
+
+def test_seerr_unfulfilled_falls_back_to_unknown_on_title_lookup_failure():
+    import routes.dashboard as dashboard
+    requests_page = {
+        "pageInfo": {"pages": 1},
+        "results": [_make_seerr_request(1, status=2, media_status=1, tmdb_id=999)],
+    }
+
+    def _get(url, **kwargs):
+        if "/api/v1/request" in url:
+            return _mock_json_response(requests_page)
+        raise Exception("tmdb lookup failed")
+
+    with mock.patch.object(dashboard.requests, "get", side_effect=_get):
+        result = dashboard.fetch_seerr_unfulfilled()
+    check(
+        "seerr_unfulfilled: a failed title lookup falls back to 'Unknown' rather than dropping the item",
+        result["count"] == 1 and result["requests"][0]["title"] == "Unknown",
+    )
+
+
+def test_seerr_unfulfilled_api_error_returns_none():
+    import routes.dashboard as dashboard
+    with mock.patch.object(dashboard.requests, "get", side_effect=Exception("boom")):
+        result = dashboard.fetch_seerr_unfulfilled()
+    check("seerr_unfulfilled: an error listing requests at all reports None, not an empty result", result is None)
+
+
 def main():
     tests = [obj for name, obj in list(globals().items()) if name.startswith("test_") and callable(obj)]
     for t in tests:
