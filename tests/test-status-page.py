@@ -15,6 +15,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 from datetime import datetime, timedelta, timezone
 from unittest import mock
 
@@ -494,6 +495,123 @@ def test_remove_route_deletes_row_on_full_success():
     with app.app_context():
         guest = db.get_guest("cleanremove@example.com")
     check("remove_route: row fully deleted when both deletions succeed", guest is None)
+
+
+# === services/automation.py: cron/backup health on the dashboard ===
+# New feature: surface each cron job's log mtime (staleness) and backup.sh's
+# last-run outcome, rather than relying on the jobs to self-report - the
+# whole point is catching the cron container itself being silently down,
+# which a self-reported "I'm fine" file would go equally silent along with.
+
+def test_cron_status_fresh_log_is_not_stale():
+    tmp_dir = tempfile.mkdtemp(prefix="cron-log-test-")
+    try:
+        import services.automation as automation
+        with open(os.path.join(tmp_dir, "jellyfin-scan.log"), "w") as f:
+            f.write("ok\n")
+        with mock.patch.object(automation, "CRON_LOG_DIR", tmp_dir):
+            results = automation.fetch_cron_status()
+        entry = next(r for r in results if r["name"] == "jellyfin-scan.sh")
+        check("cron_status: a just-written log is not stale", not entry["stale"])
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def test_cron_status_old_log_is_stale():
+    """Regression case: this is exactly what would have caught the ~26h
+    cron-container outage found live during this project's SSD migration -
+    every job's log simply stopped updating."""
+    tmp_dir = tempfile.mkdtemp(prefix="cron-log-test-")
+    try:
+        import services.automation as automation
+        log_path = os.path.join(tmp_dir, "jellyfin-scan.log")
+        with open(log_path, "w") as f:
+            f.write("ok\n")
+        old_time = time.time() - 26 * 3600
+        os.utime(log_path, (old_time, old_time))
+        with mock.patch.object(automation, "CRON_LOG_DIR", tmp_dir):
+            results = automation.fetch_cron_status()
+        entry = next(r for r in results if r["name"] == "jellyfin-scan.sh")
+        check(
+            "cron_status: a 26h-old log (1-min cadence job) is flagged stale",
+            entry["stale"],
+        )
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def test_cron_status_missing_log_reports_never():
+    tmp_dir = tempfile.mkdtemp(prefix="cron-log-test-")
+    try:
+        import services.automation as automation
+        with mock.patch.object(automation, "CRON_LOG_DIR", tmp_dir):
+            results = automation.fetch_cron_status()
+        entry = next(r for r in results if r["name"] == "backup.sh")
+        check(
+            "cron_status: a job with no log file at all reports 'never' and stale",
+            entry["last_run"] == "never" and entry["stale"],
+        )
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def test_backup_status_success():
+    tmp_dir = tempfile.mkdtemp(prefix="cron-log-test-")
+    try:
+        import services.automation as automation
+        with open(os.path.join(tmp_dir, "backup.log"), "w") as f:
+            f.write(
+                "[2026-09-20 02:30:00] Starting backup to /mnt/x/backup-1.tar.gz\n"
+                "[2026-09-20 02:30:05]   sonarr: sqlite3 .backup OK\n"
+                "[2026-09-20 02:32:10] Backup complete (0 warning(s))\n"
+            )
+        with mock.patch.object(automation, "CRON_LOG_DIR", tmp_dir):
+            result = automation.fetch_backup_status()
+        check(
+            "backup_status: a run ending in 'Backup complete' is reported OK",
+            result["ok"] and result["last_run"] == "2026-09-20 02:30:00",
+        )
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def test_backup_status_crashed_run_is_not_ok():
+    """Regression case: backup.sh runs under set -euo pipefail like every
+    script in this repo - a crashed run just stops logging mid-way, with
+    no distinct 'Backup failed' line ever printed."""
+    tmp_dir = tempfile.mkdtemp(prefix="cron-log-test-")
+    try:
+        import services.automation as automation
+        with open(os.path.join(tmp_dir, "backup.log"), "w") as f:
+            f.write(
+                "[2026-09-19 02:30:00] Starting backup to /mnt/x/backup-0.tar.gz\n"
+                "[2026-09-19 02:32:10] Backup complete (0 warning(s))\n"
+                "[2026-09-20 02:30:00] Starting backup to /mnt/x/backup-1.tar.gz\n"
+                "[2026-09-20 02:30:05]   sonarr: sqlite3 .backup OK\n"
+            )
+        with mock.patch.object(automation, "CRON_LOG_DIR", tmp_dir):
+            result = automation.fetch_backup_status()
+        check(
+            "backup_status: the most recent run never reaching 'Backup complete' is reported as failed, "
+            "not masked by an earlier successful run",
+            not result["ok"] and result["last_run"] == "2026-09-20 02:30:00",
+        )
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def test_backup_status_no_log_reports_never():
+    tmp_dir = tempfile.mkdtemp(prefix="cron-log-test-")
+    try:
+        import services.automation as automation
+        with mock.patch.object(automation, "CRON_LOG_DIR", tmp_dir):
+            result = automation.fetch_backup_status()
+        check(
+            "backup_status: no backup.log at all reports 'never' and not ok",
+            result["last_run"] == "never" and not result["ok"],
+        )
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 def main():

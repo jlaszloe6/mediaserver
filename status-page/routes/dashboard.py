@@ -14,6 +14,7 @@ from config import (
     SERVER_NAME, SONARR_KEY, SONARR_URL, TRANSMISSION_URL,
 )
 from db import get_db, get_guests
+from services.automation import fetch_backup_status, fetch_cron_status
 
 dashboard_bp = Blueprint("dashboard_bp", __name__)
 
@@ -339,4 +340,6 @@ def dashboard():
         prev_timestamp=prev_timestamp,
         server_name=SERVER_NAME,
         guests=guests,
+        cron_jobs=fetch_cron_status(),
+        backup=fetch_backup_status(),
     )
