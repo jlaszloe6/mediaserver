@@ -42,3 +42,11 @@ ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "").strip().lower() or (ALLOWED_EMAI
 
 API_TIMEOUT = 3
 HNR_HOURS = 72  # nCore H&R policy
+
+# Fixed in-container mount point for ebook-pipeline.sh's watch folder (see
+# docker-compose.yml's statuspage volumes) - dropping a .torrent here is
+# picked up by the ebook-pipeline container's own cron (every 5 min), which
+# adds it to Transmission, converts it to epub, and imports it into
+# Audiobookshelf. Not derived from MEDIA_ROOT: statuspage never sees that
+# variable, same as cron's fixed /mnt/mediaserver label.
+WATCH_EBOOKS_DIR = "/watch-ebooks"

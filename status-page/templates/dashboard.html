@@ -337,6 +337,17 @@
         </div>
 
         {% if is_admin() %}
+        <!-- Upload Ebook Torrent -->
+        <div class="section">
+            <h2>Add Ebook</h2>
+            <form action="{{ url_for('ebooks_bp.upload_torrent') }}" method="post" enctype="multipart/form-data" style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;">
+                <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+                <input type="file" name="torrent_file" accept=".torrent" required style="flex:1;min-width:200px;color:#e0e0e0;font-size:0.85rem;">
+                <button type="submit" class="guide-btn" style="color:#2ecc71;border-color:#2ecc71;">Upload</button>
+            </form>
+            <p style="font-size:0.75rem;color:#5a6a8a;margin-top:0.5rem;">Drop in a .torrent file - the ebook pipeline downloads it, converts it to epub, and imports it into Audiobookshelf within a few minutes.</p>
+        </div>
+
         <!-- Invite Guest -->
         <div class="section">
             <h2>Invite Guest</h2>
