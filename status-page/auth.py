@@ -226,7 +226,14 @@ def login():
         db.commit()
 
         try:
-            send_magic_link(email, token)
+            # Use the request's own origin on the LAN-direct path, not the
+            # public BASE_URL - a magic link built from BASE_URL would send
+            # the recipient back through the public domain + Caddy, which is
+            # exactly the path that doesn't work on this network (see
+            # is_lan_direct_request). Confirmed live: had to be hand-edited
+            # from the domain to the IP to work.
+            link_base_url = request.url_root.rstrip("/") if is_lan_direct_request() else BASE_URL
+            send_magic_link(email, token, base_url=link_base_url)
         except Exception as e:
             from flask import current_app
             current_app.logger.error(f"Failed to send email: {e}")
