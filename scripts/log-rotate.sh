@@ -28,6 +28,12 @@ KEEP_BYTES=$((1 * 1024 * 1024))   # keep the most recent 1MB after rotating
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 
+# Always logs a summary line, even when nothing needed rotating - the
+# status page's automation-health check (services/automation.py) judges
+# this job "alive" by this log file's mtime, same as every other cron job,
+# and a run that only logs on an actual rotation would look STALE for
+# however long it happens to go between files crossing MAX_BYTES.
+rotated=0
 shopt -s nullglob
 for f in "$LOG_DIR"/*.log; do
     size=$(stat -c%s "$f" 2>/dev/null || echo 0)
@@ -38,5 +44,7 @@ for f in "$LOG_DIR"/*.log; do
         cat "$tmp" >> "$f"
         rm -f "$tmp"
         log "rotated $f (was ${size} bytes, kept last ${KEEP_BYTES} bytes)"
+        rotated=$((rotated + 1))
     fi
 done
+log "Done: $rotated file(s) rotated"

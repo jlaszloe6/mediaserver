@@ -204,6 +204,37 @@
             </div>
         </div>
 
+        <!-- Automation Health -->
+        <div class="section">
+            <h2>Automation Health</h2>
+            <div style="overflow-x:auto">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Job</th>
+                            <th>Last Run</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for job in cron_jobs %}
+                        <tr>
+                            <td>{{ job.name }}</td>
+                            <td>{{ job.last_run }}</td>
+                            <td><span class="badge {{ 'down' if job.stale else 'up' }}">{{ 'STALE' if job.stale else 'OK' }}</span></td>
+                        </tr>
+                        {% endfor %}
+                        <tr>
+                            <td>backup.sh</td>
+                            <td>{{ backup.last_run }}</td>
+                            <td><span class="badge {{ 'up' if backup.ok else 'down' }}">{{ 'OK' if backup.ok else 'FAILED' }}</span></td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <p style="font-size:0.75rem;color:#5a6a8a;margin-top:0.5rem;">A job goes STALE if its log hasn't updated within roughly twice its expected schedule - most often means the cron container itself is down, not just that one job failing.</p>
+        </div>
+
         <!-- Library Overview -->
         <div class="section">
             <h2>Library Overview</h2>
@@ -286,6 +317,32 @@
                 <p class="empty">No active torrents or Transmission is offline.</p>
             {% endif %}
         </div>
+
+        {% if stuck_downloads %}
+        <!-- Stuck Downloads -->
+        <div class="section" style="border:1px solid rgba(233,69,96,0.4)">
+            <h2 style="color:#e94560">Stuck Downloads</h2>
+            <div style="overflow-x:auto">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Finished</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for d in stuck_downloads %}
+                        <tr>
+                            <td>{{ d.name }}</td>
+                            <td>{{ d.age }} ago</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            <p style="font-size:0.75rem;color:#5a6a8a;margin-top:0.5rem;">Fully downloaded in Transmission, but Sonarr/Radarr never imported it. Check Sonarr/Radarr's manual import screen for these.</p>
+        </div>
+        {% endif %}
 
         <!-- Recent Activity -->
         <div class="section">

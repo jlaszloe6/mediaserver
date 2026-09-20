@@ -16,6 +16,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 from datetime import datetime, timedelta, timezone
 from unittest import mock
 
@@ -497,6 +498,223 @@ def test_remove_route_deletes_row_on_full_success():
     with app.app_context():
         guest = db.get_guest("cleanremove@example.com")
     check("remove_route: row fully deleted when both deletions succeed", guest is None)
+
+
+# === services/automation.py: cron/backup health on the dashboard ===
+# New feature: surface each cron job's log mtime (staleness) and backup.sh's
+# last-run outcome, rather than relying on the jobs to self-report - the
+# whole point is catching the cron container itself being silently down,
+# which a self-reported "I'm fine" file would go equally silent along with.
+
+def test_cron_status_fresh_log_is_not_stale():
+    tmp_dir = tempfile.mkdtemp(prefix="cron-log-test-")
+    try:
+        import services.automation as automation
+        with open(os.path.join(tmp_dir, "jellyfin-scan.log"), "w") as f:
+            f.write("ok\n")
+        with mock.patch.object(automation, "CRON_LOG_DIR", tmp_dir):
+            results = automation.fetch_cron_status()
+        entry = next(r for r in results if r["name"] == "jellyfin-scan.sh")
+        check("cron_status: a just-written log is not stale", not entry["stale"])
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def test_cron_status_old_log_is_stale():
+    """Regression case: this is exactly what would have caught the ~26h
+    cron-container outage found live during this project's SSD migration -
+    every job's log simply stopped updating."""
+    tmp_dir = tempfile.mkdtemp(prefix="cron-log-test-")
+    try:
+        import services.automation as automation
+        log_path = os.path.join(tmp_dir, "jellyfin-scan.log")
+        with open(log_path, "w") as f:
+            f.write("ok\n")
+        old_time = time.time() - 26 * 3600
+        os.utime(log_path, (old_time, old_time))
+        with mock.patch.object(automation, "CRON_LOG_DIR", tmp_dir):
+            results = automation.fetch_cron_status()
+        entry = next(r for r in results if r["name"] == "jellyfin-scan.sh")
+        check(
+            "cron_status: a 26h-old log (1-min cadence job) is flagged stale",
+            entry["stale"],
+        )
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def test_cron_status_missing_log_reports_never():
+    tmp_dir = tempfile.mkdtemp(prefix="cron-log-test-")
+    try:
+        import services.automation as automation
+        with mock.patch.object(automation, "CRON_LOG_DIR", tmp_dir):
+            results = automation.fetch_cron_status()
+        entry = next(r for r in results if r["name"] == "backup.sh")
+        check(
+            "cron_status: a job with no log file at all reports 'never' and stale",
+            entry["last_run"] == "never" and entry["stale"],
+        )
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def test_backup_status_success():
+    tmp_dir = tempfile.mkdtemp(prefix="cron-log-test-")
+    try:
+        import services.automation as automation
+        with open(os.path.join(tmp_dir, "backup.log"), "w") as f:
+            f.write(
+                "[2026-09-20 02:30:00] Starting backup to /mnt/x/backup-1.tar.gz\n"
+                "[2026-09-20 02:30:05]   sonarr: sqlite3 .backup OK\n"
+                "[2026-09-20 02:32:10] Backup complete (0 warning(s))\n"
+            )
+        with mock.patch.object(automation, "CRON_LOG_DIR", tmp_dir):
+            result = automation.fetch_backup_status()
+        check(
+            "backup_status: a run ending in 'Backup complete' is reported OK",
+            result["ok"] and result["last_run"] == "2026-09-20 02:30:00",
+        )
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def test_backup_status_crashed_run_is_not_ok():
+    """Regression case: backup.sh runs under set -euo pipefail like every
+    script in this repo - a crashed run just stops logging mid-way, with
+    no distinct 'Backup failed' line ever printed."""
+    tmp_dir = tempfile.mkdtemp(prefix="cron-log-test-")
+    try:
+        import services.automation as automation
+        with open(os.path.join(tmp_dir, "backup.log"), "w") as f:
+            f.write(
+                "[2026-09-19 02:30:00] Starting backup to /mnt/x/backup-0.tar.gz\n"
+                "[2026-09-19 02:32:10] Backup complete (0 warning(s))\n"
+                "[2026-09-20 02:30:00] Starting backup to /mnt/x/backup-1.tar.gz\n"
+                "[2026-09-20 02:30:05]   sonarr: sqlite3 .backup OK\n"
+            )
+        with mock.patch.object(automation, "CRON_LOG_DIR", tmp_dir):
+            result = automation.fetch_backup_status()
+        check(
+            "backup_status: the most recent run never reaching 'Backup complete' is reported as failed, "
+            "not masked by an earlier successful run",
+            not result["ok"] and result["last_run"] == "2026-09-20 02:30:00",
+        )
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def test_backup_status_no_log_reports_never():
+    tmp_dir = tempfile.mkdtemp(prefix="cron-log-test-")
+    try:
+        import services.automation as automation
+        with mock.patch.object(automation, "CRON_LOG_DIR", tmp_dir):
+            result = automation.fetch_backup_status()
+        check(
+            "backup_status: no backup.log at all reports 'never' and not ok",
+            result["last_run"] == "never" and not result["ok"],
+        )
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+# === routes/dashboard.py: stuck-download detection ===
+# New feature: catches the exact failure mode found live this session with
+# Blue Lights/Last Seen - a torrent finishes downloading, but Sonarr/Radarr
+# never imports it, and nothing else on the dashboard (or anywhere) shows it.
+
+def _mock_history_response(imported, event_type="downloadFolderImported"):
+    """A fake requests.Response for Sonarr/Radarr's /api/v3/history."""
+    records = [{"eventType": event_type}] if imported else []
+    resp = mock.Mock()
+    resp.raise_for_status = mock.Mock()
+    resp.json.return_value = {"records": records}
+    return resp
+
+
+def _make_torrent(name="Some.Show.S01E01", percent_done=1.0, done_age_seconds=3 * 3600,
+                   download_dir="/downloads/complete/tv-sonarr", hash_string="abc123"):
+    done_date = 0 if done_age_seconds is None else time.time() - done_age_seconds
+    return {
+        "name": name,
+        "percentDone": percent_done,
+        "doneDate": done_date,
+        "downloadDir": download_dir,
+        "hashString": hash_string,
+    }
+
+
+def test_stuck_downloads_flags_old_completed_untracked_torrent():
+    import routes.dashboard as dashboard
+    torrent = _make_torrent()
+    with mock.patch.object(dashboard.requests, "get", return_value=_mock_history_response(imported=False)):
+        result = dashboard.fetch_stuck_downloads([torrent])
+    check(
+        "stuck_downloads: a torrent completed hours ago with no import event is flagged",
+        len(result) == 1 and result[0]["name"] == torrent["name"],
+    )
+
+
+def test_stuck_downloads_ignores_recently_completed():
+    """Grace period: Sonarr/Radarr's own import polling needs a chance to
+    run before this flags anything - a torrent that just finished isn't
+    "stuck" yet."""
+    import routes.dashboard as dashboard
+    torrent = _make_torrent(done_age_seconds=5 * 60)
+    with mock.patch.object(dashboard.requests, "get", return_value=_mock_history_response(imported=False)):
+        result = dashboard.fetch_stuck_downloads([torrent])
+    check("stuck_downloads: a torrent completed 5 minutes ago is not flagged yet", result == [])
+
+
+def test_stuck_downloads_ignores_already_imported():
+    import routes.dashboard as dashboard
+    torrent = _make_torrent()
+    with mock.patch.object(dashboard.requests, "get", return_value=_mock_history_response(imported=True)):
+        result = dashboard.fetch_stuck_downloads([torrent])
+    check("stuck_downloads: a torrent with a matching downloadFolderImported event is not flagged", result == [])
+
+
+def test_stuck_downloads_recognizes_seriesFolderImported_too():
+    """Regression case found live this session: Blue Lights S03's only
+    import event on record was 'seriesFolderImported', not
+    'downloadFolderImported' - checking only the latter reported a
+    successfully-imported torrent as stuck."""
+    import routes.dashboard as dashboard
+    torrent = _make_torrent()
+    with mock.patch.object(
+        dashboard.requests, "get",
+        return_value=_mock_history_response(imported=True, event_type="seriesFolderImported"),
+    ):
+        result = dashboard.fetch_stuck_downloads([torrent])
+    check("stuck_downloads: a 'seriesFolderImported' event also counts as imported", result == [])
+
+
+def test_stuck_downloads_ignores_incomplete_torrent():
+    import routes.dashboard as dashboard
+    torrent = _make_torrent(percent_done=0.6)
+    with mock.patch.object(dashboard.requests, "get", return_value=_mock_history_response(imported=False)):
+        result = dashboard.fetch_stuck_downloads([torrent])
+    check("stuck_downloads: a still-downloading torrent is never flagged", result == [])
+
+
+def test_stuck_downloads_ignores_non_sonarr_radarr_downloads():
+    """e.g. ebook torrents - out of scope for this check, ebook-pipeline.sh
+    has its own idempotency tracking."""
+    import routes.dashboard as dashboard
+    torrent = _make_torrent(download_dir="/downloads/complete/ebooks-incoming")
+    with mock.patch.object(dashboard.requests, "get", return_value=_mock_history_response(imported=False)):
+        result = dashboard.fetch_stuck_downloads([torrent])
+    check("stuck_downloads: a non-Sonarr/Radarr download directory is skipped entirely", result == [])
+
+
+def test_stuck_downloads_fails_safe_on_api_error():
+    """A transient Sonarr/Radarr API error must not be reported as a stuck
+    download - "couldn't check" and "checked, not imported" are different
+    things."""
+    import routes.dashboard as dashboard
+    torrent = _make_torrent()
+    with mock.patch.object(dashboard.requests, "get", side_effect=Exception("boom")):
+        result = dashboard.fetch_stuck_downloads([torrent])
+    check("stuck_downloads: an API error while checking is not reported as stuck", result == [])
 
 
 # === routes/ebooks.py: torrent upload ===

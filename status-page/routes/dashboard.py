@@ -14,6 +14,7 @@ from config import (
     SERVER_NAME, SONARR_KEY, SONARR_URL, TRANSMISSION_URL,
 )
 from db import get_db, get_guests
+from services.automation import fetch_backup_status, fetch_cron_status
 
 dashboard_bp = Blueprint("dashboard_bp", __name__)
 
@@ -102,7 +103,7 @@ def fetch_transmission_torrents():
         payload = {
             "method": "torrent-get",
             "arguments": {
-                "fields": ["name", "percentDone", "rateDownload", "rateUpload", "eta", "status", "doneDate", "uploadRatio", "downloadDir", "isPrivate", "trackers"],
+                "fields": ["name", "percentDone", "rateDownload", "rateUpload", "eta", "status", "doneDate", "uploadRatio", "downloadDir", "isPrivate", "trackers", "hashString"],
             },
         }
         # Transmission RPC requires a session ID obtained from a 409 response
@@ -121,6 +122,85 @@ def fetch_transmission_torrents():
         return data.get("arguments", {}).get("torrents", [])
     except Exception:
         return None
+
+
+# --- Stuck downloads ---
+# Catches the exact failure mode found live this session with Blue Lights/
+# Last Seen: a torrent finishes downloading, but Sonarr/Radarr never
+# imports it (Sonarr's own queue had already dropped it - nothing else on
+# this dashboard, or any alert, surfaced that it was just sitting there).
+
+STUCK_DOWNLOAD_AGE_SECONDS = 2 * 60 * 60  # give Sonarr/Radarr room to import before flagging
+
+
+# Sonarr/Radarr's own successful-import event, by app - matches
+# _EVENT_LABELS' "Downloaded" entries below. Confirmed live this session:
+# checking only "downloadFolderImported" produced a false positive for a
+# torrent whose matching import event was "seriesFolderImported" instead.
+_IMPORT_EVENT_TYPES = {"downloadFolderImported", "seriesFolderImported", "movieImported"}
+
+
+def _was_imported(base_url, api_key, download_id):
+    """None means "couldn't check" (API error) - deliberately distinct from
+    False ("checked, no import event found"), so a transient Sonarr/Radarr
+    hiccup doesn't get reported as a stuck download.
+
+    pageSize is explicit and generous: without it, Sonarr/Radarr's default
+    page size can return only the newest few "grabbed" events for a
+    re-grabbed release, silently paging past an older but still-real
+    "imported" event further back in that same downloadId's history -
+    confirmed live this session (Blue Lights S03, re-grabbed twice after
+    the SSD migration wiped its files; the only import event on record was
+    from weeks earlier, past the default page).
+    """
+    try:
+        r = requests.get(
+            f"{base_url}/api/v3/history",
+            params={"downloadId": download_id, "pageSize": 250},
+            headers={"X-Api-Key": api_key},
+            timeout=API_TIMEOUT,
+        )
+        r.raise_for_status()
+        records = r.json().get("records", [])
+        return any(rec.get("eventType") in _IMPORT_EVENT_TYPES for rec in records)
+    except Exception:
+        return None
+
+
+def _format_age(seconds):
+    minutes = int(seconds // 60)
+    if minutes < 60:
+        return f"{minutes}m"
+    hours = minutes // 60
+    if hours < 48:
+        return f"{hours}h"
+    return f"{hours // 24}d"
+
+
+def fetch_stuck_downloads(torrents):
+    if not torrents:
+        return []
+    now = time.time()
+    stuck = []
+    for t in torrents:
+        if t.get("percentDone") != 1.0:
+            continue
+        done = t.get("doneDate") or 0
+        if done <= 0 or (now - done) < STUCK_DOWNLOAD_AGE_SECONDS:
+            continue
+        download_dir = t.get("downloadDir", "")
+        download_id = (t.get("hashString") or "").upper()
+        if not download_id:
+            continue
+        if "tv-sonarr" in download_dir:
+            imported = _was_imported(SONARR_URL, SONARR_KEY, download_id)
+        elif "radarr" in download_dir:
+            imported = _was_imported(RADARR_URL, RADARR_KEY, download_id)
+        else:
+            continue  # not a Sonarr/Radarr download (e.g. ebooks) - out of scope
+        if imported is False:
+            stuck.append({"name": t.get("name", "Unknown"), "age": _format_age(now - done)})
+    return stuck
 
 
 # --- Snapshot logic ---
@@ -319,6 +399,7 @@ def dashboard():
     series = results.get("series") or []
     movies = results.get("movies") or []
     total_episodes = sum(s.get("statistics", {}).get("episodeFileCount", 0) for s in series)
+    stuck_downloads = fetch_stuck_downloads(results.get("torrents"))
 
     snapshot = build_snapshot(series, movies)
     prev_snapshot, prev_timestamp = get_previous_snapshot(email)
@@ -334,9 +415,12 @@ def dashboard():
         series_count=len(series),
         episode_count=total_episodes,
         torrents=_format_torrents(results.get("torrents")),
+        stuck_downloads=stuck_downloads,
         activity=_format_activity(results.get("sonarr_history"), results.get("radarr_history"))[:20],
         diff=diff,
         prev_timestamp=prev_timestamp,
         server_name=SERVER_NAME,
         guests=guests,
+        cron_jobs=fetch_cron_status(),
+        backup=fetch_backup_status(),
     )
