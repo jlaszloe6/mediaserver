@@ -191,9 +191,9 @@ handle_import_blocked() {
 
     log "  Found $count import-blocked item(s) in $service_name"
 
-    # See handle_suspicious's comment above: `| while` runs the loop body in
-    # a subshell, silently losing every ERRORS/queue_alert update this loop
-    # makes (i.e. most of what this function actually does).
+    # Same `<<<` here-string as handle_suspicious above, for the same
+    # reason: keeps this loop in the current shell so ERRORS/queue_alert
+    # updates inside it actually reach this function's caller.
     local blocked_items
     blocked_items=$(echo "$blocked" | jq -c '.[]')
     while IFS= read -r item; do
@@ -213,9 +213,25 @@ handle_import_blocked() {
         log "  Import blocked: $title — $messages"
 
         # If all status messages are "Unable to parse file" (e.g. BR-DISK rip),
-        # remove the release, blocklist it, and trigger a new search
+        # remove the release, blocklist it, and trigger a new search.
+        #
+        # Bug found live this session: without the explicit parens around
+        # each `length > 0`/`length == 0` clause, jq's `|` binds looser than
+        # `and`, so this parsed as `A | (B > 0 and C) | (D == 0)` - the
+        # second array filter (C) ran against the FIRST filter's own output
+        # (an array of message objects) instead of the original item, and
+        # the `and`'s boolean result got piped into a `length` call that
+        # can't apply to a boolean. This crashed with "jq: error ...
+        # boolean (false) has no length" on every single import-blocked
+        # item ever hit - and since this line isn't inside any
+        # if/&&/||/while condition, `set -e` killed the entire script right
+        # here, silently skipping this item's handling AND every remaining
+        # check for that run (including handle_stalled, never reached).
+        # Confirmed live: a real "Movie title mismatch" block (The Odyssey,
+        # 2026-09-19) and a recurring one (Slow Horses, 2026-09-14 to 17)
+        # both hit this and got zero automated handling for days.
         local all_unparseable
-        all_unparseable=$(echo "$item" | jq '[.statusMessages[] | select(.messages[] | test("Unable to parse file"))] | length > 0 and [.statusMessages[] | select(.messages[] | test("Unable to parse file") | not) | select(.title != "One or more movies expected in this release were not imported or missing" and .title != "One or more episodes expected in this release were not imported or missing")] | length == 0')
+        all_unparseable=$(echo "$item" | jq '([.statusMessages[] | select(.messages[] | test("Unable to parse file"))] | length > 0) and ([.statusMessages[] | select(.messages[] | test("Unable to parse file") | not) | select(.title != "One or more movies expected in this release were not imported or missing" and .title != "One or more episodes expected in this release were not imported or missing")] | length == 0)')
 
         if [ "$all_unparseable" = "true" ]; then
             log "  All files unparseable (likely BR-DISK) — removing and searching for new release"

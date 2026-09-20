@@ -1722,6 +1722,69 @@ test_reboot_test_backup_dir_with_backups_still_reports_correct_count() {
     rm -rf "$full_dir"
 }
 
+# --- queue-cleanup.sh: import-blocked "all unparseable" jq filter --------
+# Bug found live this session: without explicit parens around each
+# `length > 0`/`length == 0` clause, jq's `|` binds looser than `and`, so
+# a real import-blocked item with no "Unable to parse file" message at
+# all (a plain title mismatch) crashed with "jq: error ... boolean
+# (false) has no length". That line isn't inside any if/&&/||/while
+# condition, so under this script's `set -euo pipefail`, the crash killed
+# queue-cleanup.sh's entire run right there - silently skipping every
+# other check for that cycle too (handle_stalled never even ran).
+# Confirmed live: a recurring block (Slow Horses) went completely
+# unhandled for three days (2026-09-14 to 17) before being traced to this
+# exact expression.
+#
+# Extracts the real jq filter straight out of the script source (rather
+# than a hardcoded copy) so this test can't silently drift from what's
+# actually deployed.
+
+_queue_cleanup_all_unparseable_filter() {
+    local line
+    line=$(grep 'all_unparseable=\$(echo "\$item" | jq' "$REPO_ROOT/scripts/queue-cleanup.sh")
+    line="${line#*jq \'}"
+    line="${line%\'\)}"
+    printf '%s' "$line"
+}
+
+test_queue_cleanup_all_unparseable_true_for_pure_brdisk_release() {
+    local filter item result
+    filter=$(_queue_cleanup_all_unparseable_filter)
+    item='{"statusMessages":[{"title":"x","messages":["Unable to parse file: foo.mkv"]},{"title":"One or more movies expected in this release were not imported or missing","messages":["blah"]}]}'
+    result=$(echo "$item" | jq "$filter" 2>&1)
+    if [ "$result" = "true" ]; then
+        pass "queue-cleanup all_unparseable: a pure BR-DISK unparseable release evaluates to true"
+    else
+        fail "queue-cleanup all_unparseable: a pure BR-DISK unparseable release evaluates to true" "got '$result'"
+    fi
+}
+
+test_queue_cleanup_all_unparseable_false_for_title_mismatch_without_crashing() {
+    # Regression case: this exact shape (no "Unable to parse file"
+    # message at all) is what crashed live for The Odyssey (2026-09-19).
+    local filter item result
+    filter=$(_queue_cleanup_all_unparseable_filter)
+    item='{"statusMessages":[{"title":"Movie title mismatch","messages":["automatic import is not possible"]}]}'
+    result=$(echo "$item" | jq "$filter" 2>&1)
+    if [ "$result" = "false" ]; then
+        pass "queue-cleanup all_unparseable: a plain title-mismatch block evaluates to false, without a jq crash"
+    else
+        fail "queue-cleanup all_unparseable: a plain title-mismatch block evaluates to false, without a jq crash" "got '$result'"
+    fi
+}
+
+test_queue_cleanup_all_unparseable_false_when_mixed_with_a_real_problem() {
+    local filter item result
+    filter=$(_queue_cleanup_all_unparseable_filter)
+    item='{"statusMessages":[{"title":"x","messages":["Unable to parse file: foo.mkv"]},{"title":"Some other real problem","messages":["blah"]}]}'
+    result=$(echo "$item" | jq "$filter" 2>&1)
+    if [ "$result" = "false" ]; then
+        pass "queue-cleanup all_unparseable: an unparseable file mixed with a genuinely different problem evaluates to false"
+    else
+        fail "queue-cleanup all_unparseable: an unparseable file mixed with a genuinely different problem evaluates to false" "got '$result'"
+    fi
+}
+
 # --- run everything -------------------------------------------------------
 
 test_env_set_preserves_inode
@@ -1777,6 +1840,9 @@ test_latest_encrypted_backup_selects_newest_by_mtime
 test_latest_encrypted_backup_empty_dir_returns_empty_without_aborting
 test_reboot_test_empty_backup_dir_does_not_abort_and_prints_summary
 test_reboot_test_backup_dir_with_backups_still_reports_correct_count
+test_queue_cleanup_all_unparseable_true_for_pure_brdisk_release
+test_queue_cleanup_all_unparseable_false_for_title_mismatch_without_crashing
+test_queue_cleanup_all_unparseable_false_when_mixed_with_a_real_problem
 
 echo
 echo "$PASS_COUNT passed, $FAIL_COUNT failed"
