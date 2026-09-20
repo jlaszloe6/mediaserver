@@ -619,9 +619,9 @@ def test_backup_status_no_log_reports_never():
 # Blue Lights/Last Seen - a torrent finishes downloading, but Sonarr/Radarr
 # never imports it, and nothing else on the dashboard (or anywhere) shows it.
 
-def _mock_history_response(imported):
+def _mock_history_response(imported, event_type="downloadFolderImported"):
     """A fake requests.Response for Sonarr/Radarr's /api/v3/history."""
-    records = [{"eventType": "downloadFolderImported"}] if imported else []
+    records = [{"eventType": event_type}] if imported else []
     resp = mock.Mock()
     resp.raise_for_status = mock.Mock()
     resp.json.return_value = {"records": records}
@@ -668,6 +668,21 @@ def test_stuck_downloads_ignores_already_imported():
     with mock.patch.object(dashboard.requests, "get", return_value=_mock_history_response(imported=True)):
         result = dashboard.fetch_stuck_downloads([torrent])
     check("stuck_downloads: a torrent with a matching downloadFolderImported event is not flagged", result == [])
+
+
+def test_stuck_downloads_recognizes_seriesFolderImported_too():
+    """Regression case found live this session: Blue Lights S03's only
+    import event on record was 'seriesFolderImported', not
+    'downloadFolderImported' - checking only the latter reported a
+    successfully-imported torrent as stuck."""
+    import routes.dashboard as dashboard
+    torrent = _make_torrent()
+    with mock.patch.object(
+        dashboard.requests, "get",
+        return_value=_mock_history_response(imported=True, event_type="seriesFolderImported"),
+    ):
+        result = dashboard.fetch_stuck_downloads([torrent])
+    check("stuck_downloads: a 'seriesFolderImported' event also counts as imported", result == [])
 
 
 def test_stuck_downloads_ignores_incomplete_torrent():

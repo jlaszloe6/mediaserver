@@ -133,20 +133,36 @@ def fetch_transmission_torrents():
 STUCK_DOWNLOAD_AGE_SECONDS = 2 * 60 * 60  # give Sonarr/Radarr room to import before flagging
 
 
+# Sonarr/Radarr's own successful-import event, by app - matches
+# _EVENT_LABELS' "Downloaded" entries below. Confirmed live this session:
+# checking only "downloadFolderImported" produced a false positive for a
+# torrent whose matching import event was "seriesFolderImported" instead.
+_IMPORT_EVENT_TYPES = {"downloadFolderImported", "seriesFolderImported", "movieImported"}
+
+
 def _was_imported(base_url, api_key, download_id):
     """None means "couldn't check" (API error) - deliberately distinct from
     False ("checked, no import event found"), so a transient Sonarr/Radarr
-    hiccup doesn't get reported as a stuck download."""
+    hiccup doesn't get reported as a stuck download.
+
+    pageSize is explicit and generous: without it, Sonarr/Radarr's default
+    page size can return only the newest few "grabbed" events for a
+    re-grabbed release, silently paging past an older but still-real
+    "imported" event further back in that same downloadId's history -
+    confirmed live this session (Blue Lights S03, re-grabbed twice after
+    the SSD migration wiped its files; the only import event on record was
+    from weeks earlier, past the default page).
+    """
     try:
         r = requests.get(
             f"{base_url}/api/v3/history",
-            params={"downloadId": download_id},
+            params={"downloadId": download_id, "pageSize": 250},
             headers={"X-Api-Key": api_key},
             timeout=API_TIMEOUT,
         )
         r.raise_for_status()
         records = r.json().get("records", [])
-        return any(rec.get("eventType") == "downloadFolderImported" for rec in records)
+        return any(rec.get("eventType") in _IMPORT_EVENT_TYPES for rec in records)
     except Exception:
         return None
 
