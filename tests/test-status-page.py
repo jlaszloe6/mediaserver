@@ -1059,11 +1059,12 @@ def test_active_playback_api_error_returns_none():
     )
 
 
-def _make_seerr_request(id_, status, media_status, req_type="movie", tmdb_id=1):
+def _make_seerr_request(id_, status, media_status, req_type="movie", tmdb_id=1, created_at="2026-01-01T00:00:00.000Z"):
     return {
         "id": id_,
         "status": status,
         "type": req_type,
+        "createdAt": created_at,
         "media": {"tmdbId": tmdb_id, "status": media_status},
     }
 
@@ -1113,6 +1114,55 @@ def test_seerr_unfulfilled_excludes_available_partially_available_deleted_and_de
     check(
         "seerr_unfulfilled: only the still-not-available, non-declined request is counted",
         result["count"] == 1 and result["requests"] == [{"title": "Still Waiting", "type": "movie"}],
+    )
+
+
+def test_seerr_unfulfilled_a_newer_declined_request_supersedes_an_older_pending_one():
+    """Regression case found live this session: an older, non-declined
+    "Mayday" request and a newer, declined request both existed for the
+    same movie - without picking only the most recent request per title,
+    Mayday kept showing up as still awaiting availability despite being
+    declined in the real Seerr UI."""
+    import routes.dashboard as dashboard
+    requests_page = {
+        "pageInfo": {"pages": 1},
+        "results": [
+            _make_seerr_request(57, status=5, media_status=1, tmdb_id=1137844, created_at="2026-09-13T12:34:39.000Z"),
+            _make_seerr_request(63, status=3, media_status=1, tmdb_id=1137844, created_at="2026-09-19T06:07:02.000Z"),
+        ],
+    }
+    with mock.patch.object(
+        dashboard.requests, "get",
+        side_effect=_seerr_get_side_effect([requests_page], {("movie", 1137844): "Mayday"}),
+    ):
+        result = dashboard.fetch_seerr_unfulfilled()
+    check(
+        "seerr_unfulfilled: the newer declined request wins over an older non-declined one for the same title",
+        result["count"] == 0,
+    )
+
+
+def test_seerr_unfulfilled_deduplicates_repeat_requests_for_the_same_title():
+    """Regression case found live this session: the same season of "Last
+    Seen" had been requested twice, and both request rows independently
+    passed the not-declined/not-available check, double-listing the same
+    show."""
+    import routes.dashboard as dashboard
+    requests_page = {
+        "pageInfo": {"pages": 1},
+        "results": [
+            _make_seerr_request(59, status=5, media_status=1, req_type="tv", tmdb_id=258230, created_at="2026-09-13T17:44:14.000Z"),
+            _make_seerr_request(62, status=2, media_status=1, req_type="tv", tmdb_id=258230, created_at="2026-09-19T06:06:23.000Z"),
+        ],
+    }
+    with mock.patch.object(
+        dashboard.requests, "get",
+        side_effect=_seerr_get_side_effect([requests_page], {("tv", 258230): "Last Seen"}),
+    ):
+        result = dashboard.fetch_seerr_unfulfilled()
+    check(
+        "seerr_unfulfilled: two requests for the same title count and list as one, not two",
+        result["count"] == 1 and result["requests"] == [{"title": "Last Seen", "type": "tv"}],
     )
 
 

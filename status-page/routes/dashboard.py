@@ -454,8 +454,27 @@ def fetch_seerr_unfulfilled():
     except Exception:
         return None
 
+    # Multiple requests can exist for the same title (a re-request after a
+    # decline, or - confirmed live - a duplicate request for the same
+    # season) - Seerr's own request-list page shows every individual
+    # request row, but only the most recent one reflects this title's
+    # *current* state. Without this, an older non-declined "Mayday"
+    # request kept it listed as still awaiting availability even though a
+    # newer request for the same movie had been declined in the UI.
+    # createdAt is a fixed-width ISO 8601 UTC string, so plain string
+    # comparison sorts chronologically. tmdbId can be missing in principle
+    # (defensive only, never seen live) - fall back to the request's own
+    # id so that case can't accidentally collide two unrelated requests.
+    latest_by_media = {}
+    for req in all_requests:
+        media = req.get("media") or {}
+        key = (req.get("type"), media.get("tmdbId") or req.get("id"))
+        existing = latest_by_media.get(key)
+        if existing is None or req.get("createdAt", "") > existing.get("createdAt", ""):
+            latest_by_media[key] = req
+
     unfulfilled = [
-        req for req in all_requests
+        req for req in latest_by_media.values()
         if req.get("status") != _SEERR_DECLINED
         and (req.get("media") or {}).get("status") not in _SEERR_RESOLVED_MEDIA_STATUSES
     ]
