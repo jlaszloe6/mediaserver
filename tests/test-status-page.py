@@ -11,6 +11,7 @@
 # script keeps it that way rather than adding a new dependency just for
 # this. Run directly: python3 tests/test-status-page.py
 
+import io
 import os
 import shutil
 import sys
@@ -425,10 +426,12 @@ def _make_test_client_app():
     from auth import auth_bp
     from routes.dashboard import dashboard_bp
     from routes.guests import guests_bp
+    from routes.ebooks import ebooks_bp
     auth.init_app(app)
     app.register_blueprint(auth_bp)
     app.register_blueprint(dashboard_bp)
     app.register_blueprint(guests_bp)
+    app.register_blueprint(ebooks_bp)
     return app
 
 
@@ -712,6 +715,128 @@ def test_stuck_downloads_fails_safe_on_api_error():
     with mock.patch.object(dashboard.requests, "get", side_effect=Exception("boom")):
         result = dashboard.fetch_stuck_downloads([torrent])
     check("stuck_downloads: an API error while checking is not reported as stuck", result == [])
+
+
+# === routes/ebooks.py: torrent upload ===
+# New feature: drop a .torrent via the dashboard into ebook-pipeline.sh's
+# watch folder instead of copying it there by hand.
+
+def test_ebooks_upload_rejects_anonymous():
+    app = _make_test_client_app()
+    client = app.test_client()
+    resp = client.post("/ebooks/upload", data={"_csrf": "x"}, follow_redirects=False)
+    check(
+        "ebooks_upload: anonymous request is redirected to login, not allowed through",
+        resp.status_code == 302 and "/login" in resp.headers.get("Location", ""),
+    )
+
+
+def test_ebooks_upload_rejects_bad_csrf():
+    app = _make_test_client_app()
+    client = app.test_client()
+    with client.session_transaction() as sess:
+        sess["_csrf"] = "real-token"
+        sess["user_email"] = "admin@example.com"
+    resp = client.post("/ebooks/upload", data={"_csrf": "wrong-token"}, follow_redirects=False)
+    check("ebooks_upload: mismatched CSRF token is rejected (403)", resp.status_code == 403)
+
+
+def test_ebooks_upload_rejects_non_torrent_extension():
+    tmp_watch_dir = tempfile.mkdtemp(prefix="watch-ebooks-test-")
+    try:
+        app = _make_test_client_app()
+        client = app.test_client()
+        import routes.ebooks as ebooks_module
+        with client.session_transaction() as sess:
+            sess["_csrf"] = "test-csrf-token"
+            sess["user_email"] = "admin@example.com"
+        with mock.patch.object(ebooks_module, "WATCH_EBOOKS_DIR", tmp_watch_dir):
+            resp = client.post(
+                "/ebooks/upload",
+                data={"_csrf": "test-csrf-token", "torrent_file": (io.BytesIO(b"d8:announce"), "not-a-torrent.txt")},
+                content_type="multipart/form-data",
+                follow_redirects=False,
+            )
+        check(
+            "ebooks_upload: a non-.torrent filename is rejected, nothing written to the watch folder",
+            resp.status_code == 302 and os.listdir(tmp_watch_dir) == [],
+        )
+    finally:
+        shutil.rmtree(tmp_watch_dir, ignore_errors=True)
+
+
+def test_ebooks_upload_rejects_invalid_torrent_content():
+    tmp_watch_dir = tempfile.mkdtemp(prefix="watch-ebooks-test-")
+    try:
+        app = _make_test_client_app()
+        client = app.test_client()
+        import routes.ebooks as ebooks_module
+        with client.session_transaction() as sess:
+            sess["_csrf"] = "test-csrf-token"
+            sess["user_email"] = "admin@example.com"
+        with mock.patch.object(ebooks_module, "WATCH_EBOOKS_DIR", tmp_watch_dir):
+            resp = client.post(
+                "/ebooks/upload",
+                data={"_csrf": "test-csrf-token", "torrent_file": (io.BytesIO(b"not a bencoded file"), "fake.torrent")},
+                content_type="multipart/form-data",
+                follow_redirects=False,
+            )
+        check(
+            "ebooks_upload: a .torrent-named file that isn't actually bencoded is rejected",
+            resp.status_code == 302 and os.listdir(tmp_watch_dir) == [],
+        )
+    finally:
+        shutil.rmtree(tmp_watch_dir, ignore_errors=True)
+
+
+def test_ebooks_upload_saves_valid_torrent_file():
+    tmp_watch_dir = tempfile.mkdtemp(prefix="watch-ebooks-test-")
+    try:
+        app = _make_test_client_app()
+        client = app.test_client()
+        import routes.ebooks as ebooks_module
+        with client.session_transaction() as sess:
+            sess["_csrf"] = "test-csrf-token"
+            sess["user_email"] = "admin@example.com"
+        with mock.patch.object(ebooks_module, "WATCH_EBOOKS_DIR", tmp_watch_dir):
+            resp = client.post(
+                "/ebooks/upload",
+                data={"_csrf": "test-csrf-token", "torrent_file": (io.BytesIO(b"d8:announce0:e"), "My Book.torrent")},
+                content_type="multipart/form-data",
+                follow_redirects=False,
+            )
+        written = os.listdir(tmp_watch_dir)
+        check(
+            "ebooks_upload: a valid .torrent file is written to the watch folder",
+            resp.status_code == 302 and len(written) == 1 and written[0].endswith("My_Book.torrent"),
+            f"watch dir contents: {written}",
+        )
+    finally:
+        shutil.rmtree(tmp_watch_dir, ignore_errors=True)
+
+
+# === LAN-direct login link routing ===
+# Bug: magic-link emails always pointed at the public BASE_URL, even when
+# login started from the LAN-direct IP path - sending the recipient back
+# through the exact hairpin-NAT path that doesn't work on this network,
+# instead of the IP they were already using.
+
+def test_is_lan_direct_request_true_when_host_differs_from_base_url():
+    app = make_app()
+    with app.test_request_context(base_url="http://192.168.1.14:8080/"):
+        check(
+            "is_lan_direct_request: true when request Host differs from BASE_URL's hostname",
+            auth.is_lan_direct_request(),
+        )
+
+
+def test_is_lan_direct_request_false_when_host_matches_base_url():
+    app = make_app()
+    with app.test_request_context(base_url=config.BASE_URL + "/"):
+        check(
+            "is_lan_direct_request: false when request Host matches BASE_URL's hostname",
+            not auth.is_lan_direct_request(),
+        )
 
 
 def main():

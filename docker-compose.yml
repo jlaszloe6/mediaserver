@@ -422,6 +422,13 @@ services:
       # updating, which this catches; a self-reported status file would go
       # equally silent right along with it and prove nothing.
       - cron-logs:/var/log/cron:ro
+      # Ebook torrent upload (routes/ebooks.py) - only this one folder, not
+      # the rest of MEDIA_ROOT, matching ebook-pipeline's own least-privilege
+      # mount (see its own volumes comment: it parses untrusted downloaded
+      # content, so it doesn't get blast-radius access to the rest of the
+      # media library either). ebook-pipeline.sh's cron (every 5 min) picks
+      # up whatever lands here from either source.
+      - ${MEDIA_ROOT}/watch-ebooks:/watch-ebooks
     mem_limit: 256m
     restart: unless-stopped
     logging: *default-logging
