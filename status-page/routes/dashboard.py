@@ -406,22 +406,93 @@ def fetch_active_playback():
     return playing
 
 
-# --- Seerr pending requests ---
+# --- Seerr requests still awaiting availability ---
 
-def fetch_seerr_pending():
-    """Total pending Seerr requests, via take=1 (only the count is needed,
-    not the request list itself). None means "couldn't check"."""
+# Seerr's own /api/v1/request?filter=pending means "awaiting admin
+# approval" - a request.status of 1, which this deployment's requests
+# never reach: every request here comes from an admin account (permissions
+# include ADMIN), and Seerr auto-approves admin requests, so "pending
+# approval" is structurally always 0 regardless of how much is actually
+# still downloading. Verified live: 61/61 requests were made by the admin
+# user; the one other Seerr account (a leftover guest test user) has never
+# requested anything.
+#
+# What actually matches the Seerr UI's own "Requested" badge on the
+# request-list page is the underlying MEDIA's availability, not the
+# request's approval status - confirmed live against the real dashboard:
+# a request.status of 5 shows as "Available" for one title and "Requested"
+# for another, entirely depending on that title's media.status. Declined
+# requests (request.status == 3) are excluded even if their media info
+# never went anywhere.
+_SEERR_DECLINED = 3
+_SEERR_RESOLVED_MEDIA_STATUSES = {4, 5, 7}  # partially available, available, deleted
+
+
+def fetch_seerr_unfulfilled():
+    """Requests whose media isn't fully available yet (still shows
+    "Requested" on Seerr's own request list), with titles resolved for the
+    first 20 so the dashboard can list them, not just count them. None
+    means "couldn't check" the request list at all; a title that fails to
+    resolve falls back to "Unknown" rather than dropping the whole item."""
     try:
-        r = requests.get(
-            f"{SEERR_URL}/api/v1/request",
-            params={"filter": "pending", "take": 1},
-            headers={"X-Api-Key": SEERR_API_KEY},
-            timeout=API_TIMEOUT,
-        )
-        r.raise_for_status()
-        return r.json().get("pageInfo", {}).get("results")
+        all_requests = []
+        page = 1
+        while True:
+            r = requests.get(
+                f"{SEERR_URL}/api/v1/request",
+                params={"take": 100, "skip": (page - 1) * 100, "sort": "modified"},
+                headers={"X-Api-Key": SEERR_API_KEY},
+                timeout=API_TIMEOUT,
+            )
+            r.raise_for_status()
+            data = r.json()
+            all_requests.extend(data.get("results", []))
+            total_pages = data.get("pageInfo", {}).get("pages", 1)
+            if page >= total_pages or page >= 10:  # safety cap
+                break
+            page += 1
     except Exception:
         return None
+
+    unfulfilled = [
+        req for req in all_requests
+        if req.get("status") != _SEERR_DECLINED
+        and (req.get("media") or {}).get("status") not in _SEERR_RESOLVED_MEDIA_STATUSES
+    ]
+
+    items = []
+    for req in unfulfilled[:20]:
+        media_type = req.get("type")
+        tmdb_id = (req.get("media") or {}).get("tmdbId")
+        title = None
+        try:
+            if media_type == "movie" and tmdb_id:
+                info = requests.get(
+                    f"{SEERR_URL}/api/v1/movie/{tmdb_id}",
+                    headers={"X-Api-Key": SEERR_API_KEY},
+                    timeout=API_TIMEOUT,
+                )
+                info.raise_for_status()
+                title = info.json().get("title")
+            elif media_type == "tv" and tmdb_id:
+                info = requests.get(
+                    f"{SEERR_URL}/api/v1/tv/{tmdb_id}",
+                    headers={"X-Api-Key": SEERR_API_KEY},
+                    timeout=API_TIMEOUT,
+                )
+                info.raise_for_status()
+                title = info.json().get("name")
+        except Exception:
+            pass
+        items.append({"title": title or "Unknown", "type": media_type})
+
+    # Key is "requests", not "items" - Jinja's dot-notation resolves
+    # `seerr_unfulfilled.items` to Python dict's own bound `.items()`
+    # method before it ever tries a same-named dict key, so a key
+    # literally called "items" would silently become uniterable in the
+    # template. Confirmed live: this exact collision threw
+    # "'builtin_function_or_method' object is not iterable".
+    return {"count": len(unfulfilled), "requests": items}
 
 
 # --- Snapshot logic ---
@@ -615,7 +686,7 @@ def dashboard():
             ex.submit(fetch_missing_counts): "missing_counts",
             ex.submit(fetch_audiobookshelf_stats): "audiobookshelf_stats",
             ex.submit(fetch_active_playback): "active_playback",
-            ex.submit(fetch_seerr_pending): "seerr_pending",
+            ex.submit(fetch_seerr_unfulfilled): "seerr_unfulfilled",
         }
         for fut in as_completed(futures):
             key = futures[fut]
@@ -657,5 +728,5 @@ def dashboard():
         missing_counts=results.get("missing_counts") or {},
         audiobookshelf_stats=results.get("audiobookshelf_stats"),
         active_playback=results.get("active_playback"),
-        seerr_pending=results.get("seerr_pending"),
+        seerr_unfulfilled=results.get("seerr_unfulfilled"),
     )

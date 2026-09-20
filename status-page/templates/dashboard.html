@@ -291,10 +291,10 @@
                 </div>
                 {% endfor %}
                 {% endif %}
-                {% if seerr_pending is not none %}
+                {% if seerr_unfulfilled %}
                 <div class="stat-card">
-                    <div class="number">{{ seerr_pending }}</div>
-                    <div class="label">Pending Requests</div>
+                    <div class="number">{{ seerr_unfulfilled.count }}</div>
+                    <div class="label">Awaiting Availability</div>
                 </div>
                 {% endif %}
             </div>
@@ -320,6 +320,24 @@
                 </li>
                 {% endfor %}
             </ul>
+        </div>
+        {% endif %}
+
+        {% if seerr_unfulfilled and seerr_unfulfilled.requests %}
+        <!-- Requests Awaiting Availability -->
+        <div class="section">
+            <h2>Requests Awaiting Availability ({{ seerr_unfulfilled.count }})</h2>
+            <ul class="timeline">
+                {% for item in seerr_unfulfilled.requests %}
+                <li>
+                    <span class="event-tag event-searching">{{ item.type }}</span>
+                    <span>{{ item.title }}</span>
+                </li>
+                {% endfor %}
+            </ul>
+            {% if seerr_unfulfilled.count > seerr_unfulfilled.requests|length %}
+            <p style="font-size:0.75rem;color:#5a6a8a;margin-top:0.5rem;">+ {{ seerr_unfulfilled.count - seerr_unfulfilled.requests|length }} more</p>
+            {% endif %}
         </div>
         {% endif %}
 

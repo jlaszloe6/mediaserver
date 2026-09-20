@@ -1059,19 +1059,105 @@ def test_active_playback_api_error_returns_none():
     )
 
 
-def test_seerr_pending_reports_the_results_count():
+def _make_seerr_request(id_, status, media_status, req_type="movie", tmdb_id=1):
+    return {
+        "id": id_,
+        "status": status,
+        "type": req_type,
+        "media": {"tmdbId": tmdb_id, "status": media_status},
+    }
+
+
+def _seerr_get_side_effect(request_pages, titles_by_tmdb_id=None):
+    """request_pages: list of request-page payloads (each a dict with
+    'results' and 'pageInfo'), consumed in order for successive
+    /api/v1/request calls. titles_by_tmdb_id: {(type, tmdb_id): title}."""
+    titles_by_tmdb_id = titles_by_tmdb_id or {}
+    pages = list(request_pages)
+
+    def _get(url, **kwargs):
+        if "/api/v1/request" in url:
+            return _mock_json_response(pages.pop(0))
+        if "/api/v1/movie/" in url:
+            tmdb_id = int(url.rsplit("/", 1)[-1])
+            return _mock_json_response({"title": titles_by_tmdb_id.get(("movie", tmdb_id), "Unknown")})
+        if "/api/v1/tv/" in url:
+            tmdb_id = int(url.rsplit("/", 1)[-1])
+            return _mock_json_response({"name": titles_by_tmdb_id.get(("tv", tmdb_id), "Unknown")})
+        raise Exception(f"unexpected url in test: {url}")
+    return _get
+
+
+def test_seerr_unfulfilled_excludes_available_partially_available_deleted_and_declined():
+    """Regression guard: Seerr's own request.status doesn't determine the
+    "Requested" badge the UI shows on the request list - the underlying
+    media.status does. Confirmed live: a request.status of 5 shows as
+    "Available" for one title and "Requested" for another, purely based
+    on that title's media.status."""
     import routes.dashboard as dashboard
-    payload = {"pageInfo": {"results": 3}, "results": []}
-    with mock.patch.object(dashboard.requests, "get", return_value=_mock_json_response(payload)):
-        result = dashboard.fetch_seerr_pending()
-    check("seerr_pending: reports pageInfo.results as the pending count", result == 3)
+    requests_page = {
+        "pageInfo": {"pages": 1},
+        "results": [
+            _make_seerr_request(1, status=2, media_status=1, tmdb_id=101),  # still requested
+            _make_seerr_request(2, status=5, media_status=5, tmdb_id=102),  # available
+            _make_seerr_request(3, status=5, media_status=4, tmdb_id=103),  # partially available
+            _make_seerr_request(4, status=5, media_status=7, tmdb_id=104),  # deleted
+            _make_seerr_request(5, status=3, media_status=1, tmdb_id=105),  # declined
+        ],
+    }
+    with mock.patch.object(
+        dashboard.requests, "get",
+        side_effect=_seerr_get_side_effect([requests_page], {("movie", 101): "Still Waiting"}),
+    ):
+        result = dashboard.fetch_seerr_unfulfilled()
+    check(
+        "seerr_unfulfilled: only the still-not-available, non-declined request is counted",
+        result["count"] == 1 and result["requests"] == [{"title": "Still Waiting", "type": "movie"}],
+    )
 
 
-def test_seerr_pending_api_error_returns_none():
+def test_seerr_unfulfilled_resolves_tv_titles_via_the_tv_endpoint():
+    import routes.dashboard as dashboard
+    requests_page = {
+        "pageInfo": {"pages": 1},
+        "results": [_make_seerr_request(1, status=2, media_status=1, req_type="tv", tmdb_id=258230)],
+    }
+    with mock.patch.object(
+        dashboard.requests, "get",
+        side_effect=_seerr_get_side_effect([requests_page], {("tv", 258230): "Last Seen"}),
+    ):
+        result = dashboard.fetch_seerr_unfulfilled()
+    check(
+        "seerr_unfulfilled: a tv-type request resolves its title via /api/v1/tv, not /api/v1/movie",
+        result["requests"] == [{"title": "Last Seen", "type": "tv"}],
+    )
+
+
+def test_seerr_unfulfilled_falls_back_to_unknown_on_title_lookup_failure():
+    import routes.dashboard as dashboard
+    requests_page = {
+        "pageInfo": {"pages": 1},
+        "results": [_make_seerr_request(1, status=2, media_status=1, tmdb_id=999)],
+    }
+
+    def _get(url, **kwargs):
+        if "/api/v1/request" in url:
+            return _mock_json_response(requests_page)
+        raise Exception("tmdb lookup failed")
+
+    with mock.patch.object(dashboard.requests, "get", side_effect=_get):
+        result = dashboard.fetch_seerr_unfulfilled()
+    check(
+        "seerr_unfulfilled: a failed title lookup falls back to 'Unknown' rather than dropping the item",
+        result["count"] == 1 and result["requests"][0]["title"] == "Unknown",
+    )
+
+
+def test_seerr_unfulfilled_api_error_returns_none():
     import routes.dashboard as dashboard
     with mock.patch.object(dashboard.requests, "get", side_effect=Exception("boom")):
-        result = dashboard.fetch_seerr_pending()
-    check("seerr_pending: an API error reports None", result is None)
+        result = dashboard.fetch_seerr_unfulfilled()
+    check("seerr_unfulfilled: an error listing requests at all reports None, not an empty result", result is None)
 
 
 def main():
