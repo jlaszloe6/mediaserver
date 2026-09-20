@@ -318,6 +318,32 @@
             {% endif %}
         </div>
 
+        {% if stuck_downloads %}
+        <!-- Stuck Downloads -->
+        <div class="section" style="border:1px solid rgba(233,69,96,0.4)">
+            <h2 style="color:#e94560">Stuck Downloads</h2>
+            <div style="overflow-x:auto">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Finished</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for d in stuck_downloads %}
+                        <tr>
+                            <td>{{ d.name }}</td>
+                            <td>{{ d.age }} ago</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            <p style="font-size:0.75rem;color:#5a6a8a;margin-top:0.5rem;">Fully downloaded in Transmission, but Sonarr/Radarr never imported it. Check Sonarr/Radarr's manual import screen for these.</p>
+        </div>
+        {% endif %}
+
         <!-- Recent Activity -->
         <div class="section">
             <h2>Recent Activity (24h)</h2>

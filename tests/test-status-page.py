@@ -614,6 +614,91 @@ def test_backup_status_no_log_reports_never():
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
+# === routes/dashboard.py: stuck-download detection ===
+# New feature: catches the exact failure mode found live this session with
+# Blue Lights/Last Seen - a torrent finishes downloading, but Sonarr/Radarr
+# never imports it, and nothing else on the dashboard (or anywhere) shows it.
+
+def _mock_history_response(imported):
+    """A fake requests.Response for Sonarr/Radarr's /api/v3/history."""
+    records = [{"eventType": "downloadFolderImported"}] if imported else []
+    resp = mock.Mock()
+    resp.raise_for_status = mock.Mock()
+    resp.json.return_value = {"records": records}
+    return resp
+
+
+def _make_torrent(name="Some.Show.S01E01", percent_done=1.0, done_age_seconds=3 * 3600,
+                   download_dir="/downloads/complete/tv-sonarr", hash_string="abc123"):
+    done_date = 0 if done_age_seconds is None else time.time() - done_age_seconds
+    return {
+        "name": name,
+        "percentDone": percent_done,
+        "doneDate": done_date,
+        "downloadDir": download_dir,
+        "hashString": hash_string,
+    }
+
+
+def test_stuck_downloads_flags_old_completed_untracked_torrent():
+    import routes.dashboard as dashboard
+    torrent = _make_torrent()
+    with mock.patch.object(dashboard.requests, "get", return_value=_mock_history_response(imported=False)):
+        result = dashboard.fetch_stuck_downloads([torrent])
+    check(
+        "stuck_downloads: a torrent completed hours ago with no import event is flagged",
+        len(result) == 1 and result[0]["name"] == torrent["name"],
+    )
+
+
+def test_stuck_downloads_ignores_recently_completed():
+    """Grace period: Sonarr/Radarr's own import polling needs a chance to
+    run before this flags anything - a torrent that just finished isn't
+    "stuck" yet."""
+    import routes.dashboard as dashboard
+    torrent = _make_torrent(done_age_seconds=5 * 60)
+    with mock.patch.object(dashboard.requests, "get", return_value=_mock_history_response(imported=False)):
+        result = dashboard.fetch_stuck_downloads([torrent])
+    check("stuck_downloads: a torrent completed 5 minutes ago is not flagged yet", result == [])
+
+
+def test_stuck_downloads_ignores_already_imported():
+    import routes.dashboard as dashboard
+    torrent = _make_torrent()
+    with mock.patch.object(dashboard.requests, "get", return_value=_mock_history_response(imported=True)):
+        result = dashboard.fetch_stuck_downloads([torrent])
+    check("stuck_downloads: a torrent with a matching downloadFolderImported event is not flagged", result == [])
+
+
+def test_stuck_downloads_ignores_incomplete_torrent():
+    import routes.dashboard as dashboard
+    torrent = _make_torrent(percent_done=0.6)
+    with mock.patch.object(dashboard.requests, "get", return_value=_mock_history_response(imported=False)):
+        result = dashboard.fetch_stuck_downloads([torrent])
+    check("stuck_downloads: a still-downloading torrent is never flagged", result == [])
+
+
+def test_stuck_downloads_ignores_non_sonarr_radarr_downloads():
+    """e.g. ebook torrents - out of scope for this check, ebook-pipeline.sh
+    has its own idempotency tracking."""
+    import routes.dashboard as dashboard
+    torrent = _make_torrent(download_dir="/downloads/complete/ebooks-incoming")
+    with mock.patch.object(dashboard.requests, "get", return_value=_mock_history_response(imported=False)):
+        result = dashboard.fetch_stuck_downloads([torrent])
+    check("stuck_downloads: a non-Sonarr/Radarr download directory is skipped entirely", result == [])
+
+
+def test_stuck_downloads_fails_safe_on_api_error():
+    """A transient Sonarr/Radarr API error must not be reported as a stuck
+    download - "couldn't check" and "checked, not imported" are different
+    things."""
+    import routes.dashboard as dashboard
+    torrent = _make_torrent()
+    with mock.patch.object(dashboard.requests, "get", side_effect=Exception("boom")):
+        result = dashboard.fetch_stuck_downloads([torrent])
+    check("stuck_downloads: an API error while checking is not reported as stuck", result == [])
+
+
 def main():
     tests = [obj for name, obj in list(globals().items()) if name.startswith("test_") and callable(obj)]
     for t in tests:
