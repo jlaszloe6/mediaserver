@@ -496,6 +496,135 @@ def test_remove_route_deletes_row_on_full_success():
     check("remove_route: row fully deleted when both deletions succeed", guest is None)
 
 
+# === routes/dashboard.py: disk space, Prowlarr indexers, upcoming/missing ===
+
+def _mock_json_response(payload):
+    resp = mock.Mock()
+    resp.raise_for_status = mock.Mock()
+    resp.json.return_value = payload
+    return resp
+
+
+def test_disk_space_reads_the_data_mount():
+    import routes.dashboard as dashboard
+    payload = [
+        {"path": "/", "freeSpace": 1, "totalSpace": 2},
+        {"path": "/data", "freeSpace": 500 * 1024**3, "totalSpace": 1000 * 1024**3},
+    ]
+    with mock.patch.object(dashboard.requests, "get", return_value=_mock_json_response(payload)):
+        result = dashboard.fetch_disk_space()
+    check(
+        "disk_space: picks the '/data' entry, not the container's own root filesystem",
+        result == {"free_gb": 500.0, "total_gb": 1000.0, "percent_used": 50},
+    )
+
+
+def test_disk_space_no_data_entry_returns_none():
+    import routes.dashboard as dashboard
+    payload = [{"path": "/", "freeSpace": 1, "totalSpace": 2}]
+    with mock.patch.object(dashboard.requests, "get", return_value=_mock_json_response(payload)):
+        result = dashboard.fetch_disk_space()
+    check("disk_space: no '/data' entry in the response reports None, not a wrong path's numbers", result is None)
+
+
+def test_disk_space_api_error_returns_none():
+    import routes.dashboard as dashboard
+    with mock.patch.object(dashboard.requests, "get", side_effect=Exception("boom")):
+        result = dashboard.fetch_disk_space()
+    check("disk_space: an API error reports None", result is None)
+
+
+def _prowlarr_get_side_effect(disabled_status, indexer_names):
+    def _get(url, **kwargs):
+        if "indexerstatus" in url:
+            return _mock_json_response(disabled_status)
+        return _mock_json_response(indexer_names)
+    return _get
+
+
+def test_disabled_indexers_empty_when_none_auto_disabled():
+    import routes.dashboard as dashboard
+    with mock.patch.object(dashboard.requests, "get", side_effect=_prowlarr_get_side_effect([], [])):
+        result = dashboard.fetch_disabled_indexers()
+    check("disabled_indexers: no auto-disabled indexers reports an empty list, not None", result == [])
+
+
+def test_disabled_indexers_names_auto_disabled_only():
+    """Regression guard: must use /api/v1/indexerstatus (auto-disable,
+    e.g. Cloudflare failures), never a plain enable=false on /api/v1/indexer
+    - this project deliberately keeps EZTV/1337x permanently disabled by
+    hand, and that must never show up here as a "problem"."""
+    import routes.dashboard as dashboard
+    disabled_status = [{"indexerId": 7}]
+    indexer_names = [
+        {"id": 7, "name": "SomeIndexer"},
+        {"id": 3, "name": "EZTV", "enable": False},  # manually disabled - not in indexerstatus, must not appear
+    ]
+    with mock.patch.object(dashboard.requests, "get", side_effect=_prowlarr_get_side_effect(disabled_status, indexer_names)):
+        result = dashboard.fetch_disabled_indexers()
+    check(
+        "disabled_indexers: only the auto-disabled indexer's name is reported, not a manually-disabled one",
+        result == ["SomeIndexer"],
+    )
+
+
+def test_disabled_indexers_api_error_returns_none():
+    import routes.dashboard as dashboard
+    with mock.patch.object(dashboard.requests, "get", side_effect=Exception("boom")):
+        result = dashboard.fetch_disabled_indexers()
+    check("disabled_indexers: an API error reports None, distinct from an empty (all-healthy) list", result is None)
+
+
+def _calendar_get_side_effect(sonarr_items, radarr_items):
+    def _get(url, **kwargs):
+        if "8989" in url:
+            return _mock_json_response(sonarr_items)
+        return _mock_json_response(radarr_items)
+    return _get
+
+
+def test_upcoming_combines_and_sorts_series_and_movies():
+    import routes.dashboard as dashboard
+    sonarr_items = [{"series": {"title": "Show"}, "seasonNumber": 2, "episodeNumber": 3, "airDateUtc": "2026-09-25T20:00:00Z"}]
+    radarr_items = [{"title": "A Movie", "digitalRelease": "2026-09-22T00:00:00Z"}]
+    with mock.patch.object(dashboard.requests, "get", side_effect=_calendar_get_side_effect(sonarr_items, radarr_items)):
+        result = dashboard.fetch_upcoming()
+    check(
+        "upcoming: combines Sonarr episodes and Radarr movies, sorted by date",
+        [i["date"] for i in result] == ["2026-09-22", "2026-09-25"] and result[0]["title"] == "A Movie",
+    )
+
+
+def test_upcoming_one_app_failing_still_returns_the_other():
+    import routes.dashboard as dashboard
+
+    def _get(url, **kwargs):
+        if "8989" in url:
+            raise Exception("Sonarr unreachable")
+        return _mock_json_response([{"title": "A Movie", "physicalRelease": "2026-09-22T00:00:00Z"}])
+
+    with mock.patch.object(dashboard.requests, "get", side_effect=_get):
+        result = dashboard.fetch_upcoming()
+    check("upcoming: Radarr's results still come through even if Sonarr's call fails", len(result) == 1)
+
+
+def test_missing_counts_partial_failure_keeps_the_other_apps_count():
+    import routes.dashboard as dashboard
+
+    def _get(url, **kwargs):
+        if "8989" in url:
+            raise Exception("Sonarr unreachable")
+        return _mock_json_response({"totalRecords": 4})
+
+    with mock.patch.object(dashboard.requests, "get", side_effect=_get):
+        result = dashboard.fetch_missing_counts()
+    check(
+        "missing_counts: Radarr's count still comes through even if Sonarr's call fails, "
+        "and the failed side stays None rather than 0",
+        result == {"series": None, "movies": 4},
+    )
+
+
 def main():
     tests = [obj for name, obj in list(globals().items()) if name.startswith("test_") and callable(obj)]
     for t in tests:
