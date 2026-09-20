@@ -203,6 +203,134 @@ def fetch_stuck_downloads(torrents):
     return stuck
 
 
+# --- Disk space ---
+
+def fetch_disk_space():
+    """Reads free/total space for MEDIA_ROOT via Sonarr's own diskspace API,
+    rather than statuspage needing its own filesystem mount into the media
+    root just to call statvfs() - Sonarr already reports this (it needs it
+    for its own UI), and this app already talks to Sonarr's API for
+    everything else, so no new mount/blast-radius is needed for one number.
+    """
+    try:
+        r = requests.get(f"{SONARR_URL}/api/v3/diskspace", headers={"X-Api-Key": SONARR_KEY}, timeout=API_TIMEOUT)
+        r.raise_for_status()
+        for entry in r.json():
+            # "/data" is Sonarr/Radarr/Lidarr/Bazarr's shared ${MEDIA_ROOT}:/data
+            # mount - the one this whole stack's media actually lives on.
+            if entry.get("path") == "/data":
+                free = entry.get("freeSpace", 0)
+                total = entry.get("totalSpace", 0)
+                return {
+                    "free_gb": round(free / 1024**3, 1),
+                    "total_gb": round(total / 1024**3, 1),
+                    "percent_used": round((1 - free / total) * 100) if total else 0,
+                }
+        return None
+    except Exception:
+        return None
+
+
+# --- Prowlarr indexer health ---
+
+def fetch_disabled_indexers():
+    """Only Prowlarr's automatic-disable state (indexerstatus, keyed by a
+    disabledTill timestamp - e.g. repeated Cloudflare/timeout failures),
+    never a deliberately/manually disabled indexer (plain enable=false on
+    /api/v1/indexer, e.g. this project's own EZTV/1337x, dead for unrelated
+    reasons - see CLAUDE.md). Mirrors pipeline-monitor.sh's own check,
+    which already draws this exact distinction. None means "couldn't
+    check", distinct from [] ("checked, nothing auto-disabled")."""
+    try:
+        status_r = requests.get(f"{PROWLARR_URL}/api/v1/indexerstatus", headers={"X-Api-Key": PROWLARR_KEY}, timeout=API_TIMEOUT)
+        status_r.raise_for_status()
+        statuses = status_r.json()
+        if not statuses:
+            return []
+        indexers_r = requests.get(f"{PROWLARR_URL}/api/v1/indexer", headers={"X-Api-Key": PROWLARR_KEY}, timeout=API_TIMEOUT)
+        indexers_r.raise_for_status()
+        id_to_name = {i["id"]: i["name"] for i in indexers_r.json()}
+        return [id_to_name.get(s["indexerId"], f"indexer {s['indexerId']}") for s in statuses]
+    except Exception:
+        return None
+
+
+# --- Upcoming releases / missing counts ---
+
+def fetch_upcoming(days=7):
+    """Next `days` of monitored episodes/movies, from Sonarr/Radarr's own
+    calendar - both apps already search for these automatically once
+    available; this is visibility, not a trigger for anything."""
+    now = datetime.now(timezone.utc)
+    start = now.strftime("%Y-%m-%d")
+    end = (now + timedelta(days=days)).strftime("%Y-%m-%d")
+    items = []
+
+    try:
+        r = requests.get(
+            f"{SONARR_URL}/api/v3/calendar",
+            params={"start": start, "end": end, "includeSeries": "true"},
+            headers={"X-Api-Key": SONARR_KEY},
+            timeout=API_TIMEOUT,
+        )
+        r.raise_for_status()
+        for e in r.json():
+            series_title = e.get("series", {}).get("title", "Unknown")
+            items.append({
+                "date": (e.get("airDateUtc") or "")[:10],
+                "title": f"{series_title} S{e.get('seasonNumber', 0):02d}E{e.get('episodeNumber', 0):02d}",
+            })
+    except Exception:
+        pass
+
+    try:
+        r = requests.get(
+            f"{RADARR_URL}/api/v3/calendar",
+            params={"start": start, "end": end},
+            headers={"X-Api-Key": RADARR_KEY},
+            timeout=API_TIMEOUT,
+        )
+        r.raise_for_status()
+        for m in r.json():
+            date = m.get("digitalRelease") or m.get("physicalRelease") or m.get("inCinemas") or ""
+            items.append({"date": date[:10], "title": m.get("title", "Unknown")})
+    except Exception:
+        pass
+
+    items.sort(key=lambda x: x["date"])
+    return items
+
+
+def fetch_missing_counts():
+    """Total monitored-but-fileless episodes/movies, via each app's own
+    wanted/missing totalRecords - both apps already search for these on
+    their normal schedule; this is visibility, not a trigger for anything."""
+    counts = {"series": None, "movies": None}
+    try:
+        r = requests.get(
+            f"{SONARR_URL}/api/v3/wanted/missing",
+            params={"pageSize": 1},
+            headers={"X-Api-Key": SONARR_KEY},
+            timeout=API_TIMEOUT,
+        )
+        r.raise_for_status()
+        counts["series"] = r.json().get("totalRecords")
+    except Exception:
+        pass
+    try:
+        r = requests.get(
+            f"{RADARR_URL}/api/v3/wanted/missing",
+            params={"pageSize": 1},
+            headers={"X-Api-Key": RADARR_KEY},
+            timeout=API_TIMEOUT,
+        )
+        r.raise_for_status()
+        counts["movies"] = r.json().get("totalRecords")
+    except Exception:
+        pass
+    return counts
+
+
 # --- Snapshot logic ---
 
 def build_snapshot(series, movies):
@@ -388,6 +516,10 @@ def dashboard():
             ex.submit(fetch_sonarr_history): "sonarr_history",
             ex.submit(fetch_radarr_history): "radarr_history",
             ex.submit(fetch_transmission_torrents): "torrents",
+            ex.submit(fetch_disk_space): "disk_space",
+            ex.submit(fetch_disabled_indexers): "disabled_indexers",
+            ex.submit(fetch_upcoming): "upcoming",
+            ex.submit(fetch_missing_counts): "missing_counts",
         }
         for fut in as_completed(futures):
             key = futures[fut]
@@ -423,4 +555,8 @@ def dashboard():
         guests=guests,
         cron_jobs=fetch_cron_status(),
         backup=fetch_backup_status(),
+        disk_space=results.get("disk_space"),
+        disabled_indexers=results.get("disabled_indexers"),
+        upcoming=(results.get("upcoming") or [])[:10],
+        missing_counts=results.get("missing_counts") or {},
     )

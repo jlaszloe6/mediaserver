@@ -77,7 +77,7 @@
         .badge.down { background: rgba(233,69,96,0.15); color: #e94560; }
 
         /* Stat cards */
-        .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
+        .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 1rem; }
         .stat-card {
             background: #0f3460;
             border-radius: 10px;
@@ -201,6 +201,12 @@
                 {% for svc in health %}
                     <span class="badge {{ 'up' if svc.ok else 'down' }}">{{ svc.name }}</span>
                 {% endfor %}
+                {% if disabled_indexers is not none %}
+                    <span class="badge {{ 'down' if disabled_indexers else 'up' }}"
+                          title="{{ disabled_indexers|join(', ') if disabled_indexers else 'All indexers healthy' }}">
+                        Prowlarr Indexers{% if disabled_indexers %} ({{ disabled_indexers|length }} disabled){% endif %}
+                    </span>
+                {% endif %}
             </div>
         </div>
 
@@ -271,8 +277,37 @@
                     <div class="number">{{ episode_count }}</div>
                     <div class="label">Episodes</div>
                 </div>
+                {% if disk_space %}
+                <div class="stat-card">
+                    <div class="number">{{ disk_space.free_gb }}<span style="font-size:1rem;color:#8892b0"> GB</span></div>
+                    <div class="label">Free ({{ disk_space.percent_used }}% used)</div>
+                </div>
+                {% endif %}
             </div>
+            {% if missing_counts.series is not none or missing_counts.movies is not none %}
+            <p style="font-size:0.8rem;color:#8892b0;margin-top:1rem;">
+                Missing:
+                {% if missing_counts.series is not none %}{{ missing_counts.series }} episode(s){% endif %}
+                {% if missing_counts.series is not none and missing_counts.movies is not none %}, {% endif %}
+                {% if missing_counts.movies is not none %}{{ missing_counts.movies }} movie(s){% endif %}
+            </p>
+            {% endif %}
         </div>
+
+        {% if upcoming %}
+        <!-- Upcoming -->
+        <div class="section">
+            <h2>Upcoming (next 7 days)</h2>
+            <ul class="timeline">
+                {% for item in upcoming %}
+                <li>
+                    <span class="time">{{ item.date }}</span>
+                    <span>{{ item.title }}</span>
+                </li>
+                {% endfor %}
+            </ul>
+        </div>
+        {% endif %}
 
         <!-- Active Downloads -->
         <div class="section">
