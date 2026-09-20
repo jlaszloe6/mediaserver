@@ -496,6 +496,30 @@ def test_remove_route_deletes_row_on_full_success():
     check("remove_route: row fully deleted when both deletions succeed", guest is None)
 
 
+# === LAN-direct login link routing ===
+# Bug: magic-link emails always pointed at the public BASE_URL, even when
+# login started from the LAN-direct IP path - sending the recipient back
+# through the exact hairpin-NAT path that doesn't work on this network,
+# instead of the IP they were already using.
+
+def test_is_lan_direct_request_true_when_host_differs_from_base_url():
+    app = make_app()
+    with app.test_request_context(base_url="http://192.168.1.14:8080/"):
+        check(
+            "is_lan_direct_request: true when request Host differs from BASE_URL's hostname",
+            auth.is_lan_direct_request(),
+        )
+
+
+def test_is_lan_direct_request_false_when_host_matches_base_url():
+    app = make_app()
+    with app.test_request_context(base_url=config.BASE_URL + "/"):
+        check(
+            "is_lan_direct_request: false when request Host matches BASE_URL's hostname",
+            not auth.is_lan_direct_request(),
+        )
+
+
 def main():
     tests = [obj for name, obj in list(globals().items()) if name.startswith("test_") and callable(obj)]
     for t in tests:
