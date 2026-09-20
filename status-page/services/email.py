@@ -57,8 +57,8 @@ def send_styled_email(to, subject, body):
     send_email(to, subject, _wrap_html(body))
 
 
-def send_magic_link(email, token):
-    link = f"{BASE_URL}/auth/{token}"
+def send_magic_link(email, token, base_url=BASE_URL):
+    link = f"{base_url}/auth/{token}"
     body = f"""\
 <p style="color:#e0e0e0;">Click below to log in to the Media Server Status Page:</p>
 <p style="text-align:center;margin:20px 0;">{_button(link, 'Log In')}</p>

@@ -11,10 +11,12 @@
 # script keeps it that way rather than adding a new dependency just for
 # this. Run directly: python3 tests/test-status-page.py
 
+import io
 import os
 import shutil
 import sys
 import tempfile
+import time
 from datetime import datetime, timedelta, timezone
 from unittest import mock
 
@@ -424,10 +426,12 @@ def _make_test_client_app():
     from auth import auth_bp
     from routes.dashboard import dashboard_bp
     from routes.guests import guests_bp
+    from routes.ebooks import ebooks_bp
     auth.init_app(app)
     app.register_blueprint(auth_bp)
     app.register_blueprint(dashboard_bp)
     app.register_blueprint(guests_bp)
+    app.register_blueprint(ebooks_bp)
     return app
 
 
@@ -623,6 +627,345 @@ def test_missing_counts_partial_failure_keeps_the_other_apps_count():
         "and the failed side stays None rather than 0",
         result == {"series": None, "movies": 4},
     )
+
+
+# === services/automation.py: cron/backup health on the dashboard ===
+# New feature: surface each cron job's log mtime (staleness) and backup.sh's
+# last-run outcome, rather than relying on the jobs to self-report - the
+# whole point is catching the cron container itself being silently down,
+# which a self-reported "I'm fine" file would go equally silent along with.
+
+def test_cron_status_fresh_log_is_not_stale():
+    tmp_dir = tempfile.mkdtemp(prefix="cron-log-test-")
+    try:
+        import services.automation as automation
+        with open(os.path.join(tmp_dir, "jellyfin-scan.log"), "w") as f:
+            f.write("ok\n")
+        with mock.patch.object(automation, "CRON_LOG_DIR", tmp_dir):
+            results = automation.fetch_cron_status()
+        entry = next(r for r in results if r["name"] == "jellyfin-scan.sh")
+        check("cron_status: a just-written log is not stale", not entry["stale"])
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def test_cron_status_old_log_is_stale():
+    """Regression case: this is exactly what would have caught the ~26h
+    cron-container outage found live during this project's SSD migration -
+    every job's log simply stopped updating."""
+    tmp_dir = tempfile.mkdtemp(prefix="cron-log-test-")
+    try:
+        import services.automation as automation
+        log_path = os.path.join(tmp_dir, "jellyfin-scan.log")
+        with open(log_path, "w") as f:
+            f.write("ok\n")
+        old_time = time.time() - 26 * 3600
+        os.utime(log_path, (old_time, old_time))
+        with mock.patch.object(automation, "CRON_LOG_DIR", tmp_dir):
+            results = automation.fetch_cron_status()
+        entry = next(r for r in results if r["name"] == "jellyfin-scan.sh")
+        check(
+            "cron_status: a 26h-old log (1-min cadence job) is flagged stale",
+            entry["stale"],
+        )
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def test_cron_status_missing_log_reports_never():
+    tmp_dir = tempfile.mkdtemp(prefix="cron-log-test-")
+    try:
+        import services.automation as automation
+        with mock.patch.object(automation, "CRON_LOG_DIR", tmp_dir):
+            results = automation.fetch_cron_status()
+        entry = next(r for r in results if r["name"] == "backup.sh")
+        check(
+            "cron_status: a job with no log file at all reports 'never' and stale",
+            entry["last_run"] == "never" and entry["stale"],
+        )
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def test_backup_status_success():
+    tmp_dir = tempfile.mkdtemp(prefix="cron-log-test-")
+    try:
+        import services.automation as automation
+        with open(os.path.join(tmp_dir, "backup.log"), "w") as f:
+            f.write(
+                "[2026-09-20 02:30:00] Starting backup to /mnt/x/backup-1.tar.gz\n"
+                "[2026-09-20 02:30:05]   sonarr: sqlite3 .backup OK\n"
+                "[2026-09-20 02:32:10] Backup complete (0 warning(s))\n"
+            )
+        with mock.patch.object(automation, "CRON_LOG_DIR", tmp_dir):
+            result = automation.fetch_backup_status()
+        check(
+            "backup_status: a run ending in 'Backup complete' is reported OK",
+            result["ok"] and result["last_run"] == "2026-09-20 02:30:00",
+        )
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def test_backup_status_crashed_run_is_not_ok():
+    """Regression case: backup.sh runs under set -euo pipefail like every
+    script in this repo - a crashed run just stops logging mid-way, with
+    no distinct 'Backup failed' line ever printed."""
+    tmp_dir = tempfile.mkdtemp(prefix="cron-log-test-")
+    try:
+        import services.automation as automation
+        with open(os.path.join(tmp_dir, "backup.log"), "w") as f:
+            f.write(
+                "[2026-09-19 02:30:00] Starting backup to /mnt/x/backup-0.tar.gz\n"
+                "[2026-09-19 02:32:10] Backup complete (0 warning(s))\n"
+                "[2026-09-20 02:30:00] Starting backup to /mnt/x/backup-1.tar.gz\n"
+                "[2026-09-20 02:30:05]   sonarr: sqlite3 .backup OK\n"
+            )
+        with mock.patch.object(automation, "CRON_LOG_DIR", tmp_dir):
+            result = automation.fetch_backup_status()
+        check(
+            "backup_status: the most recent run never reaching 'Backup complete' is reported as failed, "
+            "not masked by an earlier successful run",
+            not result["ok"] and result["last_run"] == "2026-09-20 02:30:00",
+        )
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def test_backup_status_no_log_reports_never():
+    tmp_dir = tempfile.mkdtemp(prefix="cron-log-test-")
+    try:
+        import services.automation as automation
+        with mock.patch.object(automation, "CRON_LOG_DIR", tmp_dir):
+            result = automation.fetch_backup_status()
+        check(
+            "backup_status: no backup.log at all reports 'never' and not ok",
+            result["last_run"] == "never" and not result["ok"],
+        )
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+# === routes/dashboard.py: stuck-download detection ===
+# New feature: catches the exact failure mode found live this session with
+# Blue Lights/Last Seen - a torrent finishes downloading, but Sonarr/Radarr
+# never imports it, and nothing else on the dashboard (or anywhere) shows it.
+
+def _mock_history_response(imported, event_type="downloadFolderImported"):
+    """A fake requests.Response for Sonarr/Radarr's /api/v3/history."""
+    records = [{"eventType": event_type}] if imported else []
+    resp = mock.Mock()
+    resp.raise_for_status = mock.Mock()
+    resp.json.return_value = {"records": records}
+    return resp
+
+
+def _make_torrent(name="Some.Show.S01E01", percent_done=1.0, done_age_seconds=3 * 3600,
+                   download_dir="/downloads/complete/tv-sonarr", hash_string="abc123"):
+    done_date = 0 if done_age_seconds is None else time.time() - done_age_seconds
+    return {
+        "name": name,
+        "percentDone": percent_done,
+        "doneDate": done_date,
+        "downloadDir": download_dir,
+        "hashString": hash_string,
+    }
+
+
+def test_stuck_downloads_flags_old_completed_untracked_torrent():
+    import routes.dashboard as dashboard
+    torrent = _make_torrent()
+    with mock.patch.object(dashboard.requests, "get", return_value=_mock_history_response(imported=False)):
+        result = dashboard.fetch_stuck_downloads([torrent])
+    check(
+        "stuck_downloads: a torrent completed hours ago with no import event is flagged",
+        len(result) == 1 and result[0]["name"] == torrent["name"],
+    )
+
+
+def test_stuck_downloads_ignores_recently_completed():
+    """Grace period: Sonarr/Radarr's own import polling needs a chance to
+    run before this flags anything - a torrent that just finished isn't
+    "stuck" yet."""
+    import routes.dashboard as dashboard
+    torrent = _make_torrent(done_age_seconds=5 * 60)
+    with mock.patch.object(dashboard.requests, "get", return_value=_mock_history_response(imported=False)):
+        result = dashboard.fetch_stuck_downloads([torrent])
+    check("stuck_downloads: a torrent completed 5 minutes ago is not flagged yet", result == [])
+
+
+def test_stuck_downloads_ignores_already_imported():
+    import routes.dashboard as dashboard
+    torrent = _make_torrent()
+    with mock.patch.object(dashboard.requests, "get", return_value=_mock_history_response(imported=True)):
+        result = dashboard.fetch_stuck_downloads([torrent])
+    check("stuck_downloads: a torrent with a matching downloadFolderImported event is not flagged", result == [])
+
+
+def test_stuck_downloads_recognizes_seriesFolderImported_too():
+    """Regression case found live this session: Blue Lights S03's only
+    import event on record was 'seriesFolderImported', not
+    'downloadFolderImported' - checking only the latter reported a
+    successfully-imported torrent as stuck."""
+    import routes.dashboard as dashboard
+    torrent = _make_torrent()
+    with mock.patch.object(
+        dashboard.requests, "get",
+        return_value=_mock_history_response(imported=True, event_type="seriesFolderImported"),
+    ):
+        result = dashboard.fetch_stuck_downloads([torrent])
+    check("stuck_downloads: a 'seriesFolderImported' event also counts as imported", result == [])
+
+
+def test_stuck_downloads_ignores_incomplete_torrent():
+    import routes.dashboard as dashboard
+    torrent = _make_torrent(percent_done=0.6)
+    with mock.patch.object(dashboard.requests, "get", return_value=_mock_history_response(imported=False)):
+        result = dashboard.fetch_stuck_downloads([torrent])
+    check("stuck_downloads: a still-downloading torrent is never flagged", result == [])
+
+
+def test_stuck_downloads_ignores_non_sonarr_radarr_downloads():
+    """e.g. ebook torrents - out of scope for this check, ebook-pipeline.sh
+    has its own idempotency tracking."""
+    import routes.dashboard as dashboard
+    torrent = _make_torrent(download_dir="/downloads/complete/ebooks-incoming")
+    with mock.patch.object(dashboard.requests, "get", return_value=_mock_history_response(imported=False)):
+        result = dashboard.fetch_stuck_downloads([torrent])
+    check("stuck_downloads: a non-Sonarr/Radarr download directory is skipped entirely", result == [])
+
+
+def test_stuck_downloads_fails_safe_on_api_error():
+    """A transient Sonarr/Radarr API error must not be reported as a stuck
+    download - "couldn't check" and "checked, not imported" are different
+    things."""
+    import routes.dashboard as dashboard
+    torrent = _make_torrent()
+    with mock.patch.object(dashboard.requests, "get", side_effect=Exception("boom")):
+        result = dashboard.fetch_stuck_downloads([torrent])
+    check("stuck_downloads: an API error while checking is not reported as stuck", result == [])
+
+
+# === routes/ebooks.py: torrent upload ===
+# New feature: drop a .torrent via the dashboard into ebook-pipeline.sh's
+# watch folder instead of copying it there by hand.
+
+def test_ebooks_upload_rejects_anonymous():
+    app = _make_test_client_app()
+    client = app.test_client()
+    resp = client.post("/ebooks/upload", data={"_csrf": "x"}, follow_redirects=False)
+    check(
+        "ebooks_upload: anonymous request is redirected to login, not allowed through",
+        resp.status_code == 302 and "/login" in resp.headers.get("Location", ""),
+    )
+
+
+def test_ebooks_upload_rejects_bad_csrf():
+    app = _make_test_client_app()
+    client = app.test_client()
+    with client.session_transaction() as sess:
+        sess["_csrf"] = "real-token"
+        sess["user_email"] = "admin@example.com"
+    resp = client.post("/ebooks/upload", data={"_csrf": "wrong-token"}, follow_redirects=False)
+    check("ebooks_upload: mismatched CSRF token is rejected (403)", resp.status_code == 403)
+
+
+def test_ebooks_upload_rejects_non_torrent_extension():
+    tmp_watch_dir = tempfile.mkdtemp(prefix="watch-ebooks-test-")
+    try:
+        app = _make_test_client_app()
+        client = app.test_client()
+        import routes.ebooks as ebooks_module
+        with client.session_transaction() as sess:
+            sess["_csrf"] = "test-csrf-token"
+            sess["user_email"] = "admin@example.com"
+        with mock.patch.object(ebooks_module, "WATCH_EBOOKS_DIR", tmp_watch_dir):
+            resp = client.post(
+                "/ebooks/upload",
+                data={"_csrf": "test-csrf-token", "torrent_file": (io.BytesIO(b"d8:announce"), "not-a-torrent.txt")},
+                content_type="multipart/form-data",
+                follow_redirects=False,
+            )
+        check(
+            "ebooks_upload: a non-.torrent filename is rejected, nothing written to the watch folder",
+            resp.status_code == 302 and os.listdir(tmp_watch_dir) == [],
+        )
+    finally:
+        shutil.rmtree(tmp_watch_dir, ignore_errors=True)
+
+
+def test_ebooks_upload_rejects_invalid_torrent_content():
+    tmp_watch_dir = tempfile.mkdtemp(prefix="watch-ebooks-test-")
+    try:
+        app = _make_test_client_app()
+        client = app.test_client()
+        import routes.ebooks as ebooks_module
+        with client.session_transaction() as sess:
+            sess["_csrf"] = "test-csrf-token"
+            sess["user_email"] = "admin@example.com"
+        with mock.patch.object(ebooks_module, "WATCH_EBOOKS_DIR", tmp_watch_dir):
+            resp = client.post(
+                "/ebooks/upload",
+                data={"_csrf": "test-csrf-token", "torrent_file": (io.BytesIO(b"not a bencoded file"), "fake.torrent")},
+                content_type="multipart/form-data",
+                follow_redirects=False,
+            )
+        check(
+            "ebooks_upload: a .torrent-named file that isn't actually bencoded is rejected",
+            resp.status_code == 302 and os.listdir(tmp_watch_dir) == [],
+        )
+    finally:
+        shutil.rmtree(tmp_watch_dir, ignore_errors=True)
+
+
+def test_ebooks_upload_saves_valid_torrent_file():
+    tmp_watch_dir = tempfile.mkdtemp(prefix="watch-ebooks-test-")
+    try:
+        app = _make_test_client_app()
+        client = app.test_client()
+        import routes.ebooks as ebooks_module
+        with client.session_transaction() as sess:
+            sess["_csrf"] = "test-csrf-token"
+            sess["user_email"] = "admin@example.com"
+        with mock.patch.object(ebooks_module, "WATCH_EBOOKS_DIR", tmp_watch_dir):
+            resp = client.post(
+                "/ebooks/upload",
+                data={"_csrf": "test-csrf-token", "torrent_file": (io.BytesIO(b"d8:announce0:e"), "My Book.torrent")},
+                content_type="multipart/form-data",
+                follow_redirects=False,
+            )
+        written = os.listdir(tmp_watch_dir)
+        check(
+            "ebooks_upload: a valid .torrent file is written to the watch folder",
+            resp.status_code == 302 and len(written) == 1 and written[0].endswith("My_Book.torrent"),
+            f"watch dir contents: {written}",
+        )
+    finally:
+        shutil.rmtree(tmp_watch_dir, ignore_errors=True)
+
+
+# === LAN-direct login link routing ===
+# Bug: magic-link emails always pointed at the public BASE_URL, even when
+# login started from the LAN-direct IP path - sending the recipient back
+# through the exact hairpin-NAT path that doesn't work on this network,
+# instead of the IP they were already using.
+
+def test_is_lan_direct_request_true_when_host_differs_from_base_url():
+    app = make_app()
+    with app.test_request_context(base_url="http://192.168.1.14:8080/"):
+        check(
+            "is_lan_direct_request: true when request Host differs from BASE_URL's hostname",
+            auth.is_lan_direct_request(),
+        )
+
+
+def test_is_lan_direct_request_false_when_host_matches_base_url():
+    app = make_app()
+    with app.test_request_context(base_url=config.BASE_URL + "/"):
+        check(
+            "is_lan_direct_request: false when request Host matches BASE_URL's hostname",
+            not auth.is_lan_direct_request(),
+        )
 
 
 def main():

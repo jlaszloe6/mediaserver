@@ -414,6 +414,21 @@ services:
       - SERVER_NAME=${SERVER_NAME:-Media Server}
     volumes:
       - ./config/statuspage:/app/data
+      # Read-only: dashboard's automation-health section (services/automation.py)
+      # checks each cron job's log mtime directly, rather than having the
+      # cron container write a separate "I'm fine" status file - if cron
+      # itself goes down (as happened for ~26h during this project's SSD
+      # migration, undetected the whole time), every log simply stops
+      # updating, which this catches; a self-reported status file would go
+      # equally silent right along with it and prove nothing.
+      - cron-logs:/var/log/cron:ro
+      # Ebook torrent upload (routes/ebooks.py) - only this one folder, not
+      # the rest of MEDIA_ROOT, matching ebook-pipeline's own least-privilege
+      # mount (see its own volumes comment: it parses untrusted downloaded
+      # content, so it doesn't get blast-radius access to the rest of the
+      # media library either). ebook-pipeline.sh's cron (every 5 min) picks
+      # up whatever lands here from either source.
+      - ${MEDIA_ROOT}/watch-ebooks:/watch-ebooks
     mem_limit: 256m
     restart: unless-stopped
     logging: *default-logging
