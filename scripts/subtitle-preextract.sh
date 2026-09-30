@@ -149,11 +149,16 @@ preextract_item() {
         return 0
     fi
 
+    # Only text-based tracks - image-based ones (PGS, VobSub, DVB) have no
+    # text extraction path at all, so there's nothing to pre-extract, and
+    # Jellyfin's error code for them varies by codec (400 for PGS, 404 for
+    # DVBSUB), so filtering on Jellyfin's own flag up front beats guessing
+    # from the HTTP status afterwards.
     local indices
-    indices=$(echo "$item" | jq -r '.MediaSources[0].MediaStreams[] | select(.Type == "Subtitle" and .IsExternal == false) | .Index')
+    indices=$(echo "$item" | jq -r '.MediaSources[0].MediaStreams[] | select(.Type == "Subtitle" and .IsExternal == false and .IsTextSubtitleStream == true) | .Index')
 
     if [ -z "$indices" ]; then
-        log "  $label: no embedded subtitle tracks"
+        log "  $label: no embedded text subtitle tracks"
         return 0
     fi
 
@@ -179,13 +184,11 @@ preextract_item() {
             EXTRACTED=$((EXTRACTED + 1))
         elif [ "$code" = "400" ]; then
             # Jellyfin returns 400 when a subtitle stream can't be converted
-            # to SRT - always an image-based track (PGS/VobSub/DVD sub, no
-            # OCR path in Jellyfin), never a transient condition. Treating
-            # this as a regular failure would retry the same unconvertible
-            # track every 5 minutes forever, since it can never succeed -
-            # this pre-extraction technique doesn't apply to it in the first
-            # place, since there's no on-demand text extraction at playback
-            # time for these to race the NAS on either.
+            # to SRT - an image-based track (no OCR path in Jellyfin), never
+            # a transient condition. The IsTextSubtitleStream filter above
+            # should already exclude these; this is a fallback in case that
+            # flag is ever wrong, since retrying an unconvertible track
+            # every run would never succeed and blocks the whole batch.
             log "  Skipped subtitle index $idx for $label - not text-convertible (HTTP 400, likely image-based PGS/VobSub)"
         else
             log "  ERROR: Failed to pre-extract subtitle index $idx for $label - HTTP $code"
