@@ -190,6 +190,15 @@ preextract_item() {
             # flag is ever wrong, since retrying an unconvertible track
             # every run would never succeed and blocks the whole batch.
             log "  Skipped subtitle index $idx for $label - not text-convertible (HTTP 400, likely image-based PGS/VobSub)"
+        elif [ "$code" = "404" ]; then
+            # The item and stream were both just resolved above, so a 404
+            # here means ffmpeg ran but produced no output and Jellyfin
+            # deleted the empty result - seen live with WEB releases that
+            # mux a zero-frame placeholder subrip track (Shark Tank S17,
+            # BAE). Jellyfin still flags it IsTextSubtitleStream, so the
+            # filter above can't catch it, and like 400 it can never
+            # succeed - retrying would block the whole batch forever.
+            log "  Skipped subtitle index $idx for $label - extraction produced no output (HTTP 404, likely an empty track)"
         else
             log "  ERROR: Failed to pre-extract subtitle index $idx for $label - HTTP $code"
             ERRORS=$((ERRORS + 1))
