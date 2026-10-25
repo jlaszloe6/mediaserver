@@ -1785,6 +1785,87 @@ test_queue_cleanup_all_unparseable_false_when_mixed_with_a_real_problem() {
     fi
 }
 
+# --- queue-cleanup.sh: import-blocked auto-import scoping ------------------
+# Bug found live 2026-10-25: the manualimport query passed seriesId, which
+# makes Sonarr ignore `folder` and return the series' existing LIBRARY
+# files. Auto-importing those onto themselves deleted every file, and
+# jellyfin-cleanup.sh then deleted the whole series (MobLand, Rebecka
+# Martinsson). Same extract-from-source approach as above.
+
+_queue_cleanup_outside_count_filter() {
+    local line
+    line=$(grep 'outside_count=\$(echo "\$candidates" | jq' "$REPO_ROOT/scripts/queue-cleanup.sh")
+    line="${line#*\"\$output_path\" \'}"
+    line="${line%\'\)}"
+    printf '%s' "$line"
+}
+
+_queue_cleanup_valid_candidates_filter() {
+    local line
+    line=$(grep 'valid_candidates=\$(echo "\$candidates" | jq' "$REPO_ROOT/scripts/queue-cleanup.sh")
+    line="${line#*\"\$media_id\" \'}"
+    line="${line%\'\)}"
+    printf '%s' "$line"
+}
+
+test_queue_cleanup_manualimport_query_has_no_media_id() {
+    if grep 'import_url=.*manualimport' "$REPO_ROOT/scripts/queue-cleanup.sh" | grep -qE 'seriesId=|movieId='; then
+        fail "queue-cleanup: manualimport candidate query must not pass seriesId/movieId (makes the API ignore folder)"
+    else
+        pass "queue-cleanup: manualimport candidate query must not pass seriesId/movieId (makes the API ignore folder)"
+    fi
+}
+
+test_queue_cleanup_outside_count_flags_library_files() {
+    # The exact shape returned live for Rebecka Martinsson: library paths,
+    # not the download folder.
+    local filter result
+    filter=$(_queue_cleanup_outside_count_filter)
+    result=$(echo '[{"path":"/data/media/tv/Rebecka Martinsson/Season 2/S02E01.mkv"},{"path":"/data/torrents/complete/tv-sonarr/Rel/e01.mkv"}]' \
+        | jq --arg out "/data/torrents/complete/tv-sonarr/Rel" "$filter" 2>&1)
+    if [ "$result" = "1" ]; then
+        pass "queue-cleanup outside_count: a library-path candidate is counted as outside the download folder"
+    else
+        fail "queue-cleanup outside_count: a library-path candidate is counted as outside the download folder" "got '$result'"
+    fi
+}
+
+test_queue_cleanup_outside_count_accepts_folder_and_single_file() {
+    local filter r1 r2
+    filter=$(_queue_cleanup_outside_count_filter)
+    r1=$(echo '[{"path":"/dl/Rel/a.mkv"},{"path":"/dl/Rel/sub/b.mkv"}]' | jq --arg out "/dl/Rel" "$filter" 2>&1)
+    r2=$(echo '[{"path":"/dl/Rel.mkv"}]' | jq --arg out "/dl/Rel.mkv" "$filter" 2>&1)
+    if [ "$r1" = "0" ] && [ "$r2" = "0" ]; then
+        pass "queue-cleanup outside_count: files inside the folder, and a single-file download, are not flagged"
+    else
+        fail "queue-cleanup outside_count: files inside the folder, and a single-file download, are not flagged" "got '$r1' / '$r2'"
+    fi
+}
+
+test_queue_cleanup_outside_count_rejects_sibling_prefix() {
+    # /dl/Rel-other must not pass as being "inside" /dl/Rel.
+    local filter result
+    filter=$(_queue_cleanup_outside_count_filter)
+    result=$(echo '[{"path":"/dl/Rel-other/a.mkv"}]' | jq --arg out "/dl/Rel" "$filter" 2>&1)
+    if [ "$result" = "1" ]; then
+        pass "queue-cleanup outside_count: a sibling folder sharing the name prefix is flagged"
+    else
+        fail "queue-cleanup outside_count: a sibling folder sharing the name prefix is flagged" "got '$result'"
+    fi
+}
+
+test_queue_cleanup_valid_candidates_drops_other_series() {
+    local filter result
+    filter=$(_queue_cleanup_valid_candidates_filter)
+    result=$(echo '[{"path":"a","rejections":[],"series":{"id":50}},{"path":"b","rejections":[],"series":{"id":7}},{"path":"c","rejections":[]},{"path":"d","rejections":[{"reason":"x"}],"series":{"id":50}}]' \
+        | jq -c --argjson mid 50 "$filter" 2>&1 | jq -c '[.[].path]' 2>&1)
+    if [ "$result" = '["a","c"]' ]; then
+        pass "queue-cleanup valid_candidates: keeps unrejected same-series/unmatched files, drops other series and rejected"
+    else
+        fail "queue-cleanup valid_candidates: keeps unrejected same-series/unmatched files, drops other series and rejected" "got '$result'"
+    fi
+}
+
 # --- run everything -------------------------------------------------------
 
 test_env_set_preserves_inode
@@ -1843,6 +1924,11 @@ test_reboot_test_backup_dir_with_backups_still_reports_correct_count
 test_queue_cleanup_all_unparseable_true_for_pure_brdisk_release
 test_queue_cleanup_all_unparseable_false_for_title_mismatch_without_crashing
 test_queue_cleanup_all_unparseable_false_when_mixed_with_a_real_problem
+test_queue_cleanup_manualimport_query_has_no_media_id
+test_queue_cleanup_outside_count_flags_library_files
+test_queue_cleanup_outside_count_accepts_folder_and_single_file
+test_queue_cleanup_outside_count_rejects_sibling_prefix
+test_queue_cleanup_valid_candidates_drops_other_series
 
 echo
 echo "$PASS_COUNT passed, $FAIL_COUNT failed"

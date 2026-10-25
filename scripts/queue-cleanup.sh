@@ -291,19 +291,47 @@ handle_import_blocked() {
             continue
         fi
 
-        # Try manual import: get candidates
-        local import_url
-        if [ "$media_type" = "movie" ]; then
-            import_url="$base_url/api/v3/manualimport?movieId=$media_id&downloadId=$download_id&folder=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$output_path'))")&filterExistingFiles=false"
-        else
-            import_url="$base_url/api/v3/manualimport?seriesId=$media_id&downloadId=$download_id&folder=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$output_path'))")&filterExistingFiles=false"
+        # Without a download folder there's nothing to scope the candidates
+        # to - and an empty prefix would make the outside-folder guard below
+        # match every path, library files included.
+        output_path="${output_path%/}"
+        if [ -z "$output_path" ] || [ "$output_path" = "null" ]; then
+            queue_alert "[NEEDS ATTENTION] $service_name: '$title' import blocked, no download folder known — $messages"
+            continue
         fi
+
+        # Try manual import: get candidates
+        #
+        # Deliberately NO seriesId/movieId here. Passing one makes Sonarr
+        # (and Radarr, see CLAUDE.md's Mayday note) ignore `folder` and
+        # return the series'/movie's EXISTING LIBRARY files instead - with
+        # filterExistingFiles=false they come back unrejected. Importing
+        # those "upgrades" each library file with itself: Sonarr hardlinks it
+        # onto its own path, then deletes the "old" file (no recycle bin =
+        # permanent). jellyfin-cleanup.sh then sees sizeOnDisk 0 and deletes
+        # the whole series with an import exclusion. Confirmed live: wiped
+        # MobLand (2026-10-21) and Rebecka Martinsson (2026-10-24).
+        local import_url
+        import_url="$base_url/api/v3/manualimport?downloadId=$download_id&folder=$(python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1]))" "$output_path")&filterExistingFiles=false"
 
         local candidates
         candidates=$(curl -sf -H "X-Api-Key: $api_key" "$import_url" 2>/dev/null) || {
             queue_alert "[NEEDS ATTENTION] $service_name: '$title' import blocked, could not fetch candidates — $messages"
             continue
         }
+
+        # Belt and braces for the above: refuse outright (not just filter)
+        # if ANY candidate lies outside this download's own folder - that
+        # means the API isn't scoping the way we expect, and importing even
+        # the in-folder ones isn't safe to assume.
+        local outside_count
+        outside_count=$(echo "$candidates" | jq --arg out "$output_path" 'if type == "array" then [.[] | select(.path != $out and (.path | startswith($out + "/") | not))] | length else 0 end')
+        if [ "$outside_count" -gt 0 ]; then
+            log "  REFUSING auto-import: $outside_count candidate(s) outside $output_path"
+            queue_alert "[NEEDS ATTENTION] $service_name: '$title' import blocked, auto-import refused — $outside_count candidate(s) outside the download folder"
+            ERRORS=$((ERRORS + 1))
+            continue
+        fi
 
         local candidate_count
         candidate_count=$(echo "$candidates" | jq 'if type == "array" then length else 0 end')
@@ -313,9 +341,11 @@ handle_import_blocked() {
             continue
         fi
 
-        # Filter to candidates with no rejections
+        # Filter to candidates with no rejections, matched (if at all) to the
+        # same series/movie the queue item belongs to - with no seriesId/
+        # movieId in the query, the API matches each file on its own.
         local valid_candidates
-        valid_candidates=$(echo "$candidates" | jq -c '[.[] | select((.rejections | length) == 0)]')
+        valid_candidates=$(echo "$candidates" | jq -c --argjson mid "$media_id" '[.[] | select((.rejections | length) == 0) | select(((.series // .movie // {}).id // $mid) == $mid)]')
         local valid_count
         valid_count=$(echo "$valid_candidates" | jq 'length')
 
