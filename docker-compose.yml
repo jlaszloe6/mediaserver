@@ -263,6 +263,13 @@ services:
     user: "${PUID:-1000}:${PGID:-1000}"
     environment:
       - TZ=Europe/Budapest
+      # Real-time watcher (fsnotify) has been observed to silently fail to start
+      # on this host (logged "Error starting watcher: open /music: permission
+      # denied" at one container boot, not reproducible on a later recreate —
+      # looks like a boot-time race rather than a deterministic permission bug).
+      # Periodic scan is a cheap fallback so new imports (e.g. from Lidarr)
+      # still show up even if the watcher silently isn't running.
+      - ND_SCANNER_SCHEDULE=@every 10m
     volumes:
       - ./config/navidrome:/data
       - ${MEDIA_ROOT}/media/music:/music:ro
