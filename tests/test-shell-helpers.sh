@@ -1866,6 +1866,29 @@ test_queue_cleanup_valid_candidates_drops_other_series() {
     fi
 }
 
+# --- queue-cleanup.sh: suspicious-release title filter ----------------------
+# Archive-named releases (.zip/.rar/.7z) must be rejected as suspicious: a
+# fake "Nocturne S01E04 ... CAKES.zip" (one bobok3.exe inside) slipped past
+# the executable-only list on 2026-11-09. Pulls SUSPICIOUS_EXTENSIONS and
+# the select() filter shape from the real script so it can't drift.
+
+_queue_cleanup_suspicious_titles() {
+    local exts
+    exts=$(grep '^SUSPICIOUS_EXTENSIONS=' "$REPO_ROOT/scripts/queue-cleanup.sh" | cut -d'"' -f2)
+    jq -c "[.records[] | select(.title | test(\"\\\\.(${exts})$\"; \"i\")) | .title]"
+}
+
+test_queue_cleanup_suspicious_flags_archive_and_exe_but_not_video() {
+    local result
+    result=$(echo '{"records":[{"title":"Nocturne S01E04 The Courier 1080p WEB H264 - CAKES.zip"},{"title":"Show.S01E01.1080p.RAR"},{"title":"Movie.2026.7z"},{"title":"Movie.2026.1080p.exe"},{"title":"Nocturne.2026.S01E03.1080p.WEB.H264-CAKES"},{"title":"Show.S01E02.1080p.mkv"},{"title":"Some.Zipper.Show.S01E01"}]}' \
+        | _queue_cleanup_suspicious_titles 2>&1)
+    if [ "$result" = '["Nocturne S01E04 The Courier 1080p WEB H264 - CAKES.zip","Show.S01E01.1080p.RAR","Movie.2026.7z","Movie.2026.1080p.exe"]' ]; then
+        pass "queue-cleanup suspicious: flags .zip/.rar/.7z/.exe titles, leaves normal releases alone"
+    else
+        fail "queue-cleanup suspicious: flags .zip/.rar/.7z/.exe titles, leaves normal releases alone" "got '$result'"
+    fi
+}
+
 # --- run everything -------------------------------------------------------
 
 test_env_set_preserves_inode
@@ -1929,6 +1952,7 @@ test_queue_cleanup_outside_count_flags_library_files
 test_queue_cleanup_outside_count_accepts_folder_and_single_file
 test_queue_cleanup_outside_count_rejects_sibling_prefix
 test_queue_cleanup_valid_candidates_drops_other_series
+test_queue_cleanup_suspicious_flags_archive_and_exe_but_not_video
 
 echo
 echo "$PASS_COUNT passed, $FAIL_COUNT failed"

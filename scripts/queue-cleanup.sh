@@ -7,8 +7,8 @@
 #    matching file candidate. Otherwise sends an email alert.
 #
 # 2. Suspicious files (.exe, .msi, .bat, .scr, .cmd, .ps1, .vbs, .com,
-#    .pif, .js, .lnk): auto-removes from the queue and blocklists the
-#    release.
+#    .pif, .js, .lnk, and archive-named releases .zip/.rar/.7z):
+#    auto-removes from the queue and blocklists the release.
 #
 # 3. Downloads stuck at 0% for 2+ hours (dead torrent, no seeders): same
 #    signal pipeline-monitor.sh alerts on - removes from the queue,
@@ -47,7 +47,14 @@ RADARR_KEY="$RADARR_API_KEY"
 # Instance list: "label|sonarr_url|sonarr_key|radarr_url|radarr_key"
 QUEUE_INSTANCES="owner|http://sonarr:8989|$SONARR_KEY|http://radarr:7878|$RADARR_KEY"
 
-SUSPICIOUS_EXTENSIONS="exe|msi|bat|scr|cmd|ps1|vbs|com|pif|js|lnk"
+# zip|rar|7z: a release whose *title* ends in an archive extension is a
+# single-archive torrent, never a real TV/movie release (genuine scene rar
+# sets arrive as a folder of .rNN parts, and Sonarr/Radarr can't import an
+# archive anyway). Seen live 2026-11-09: "Nocturne S01E04 ... CAKES.zip"
+# held a single bobok3.exe - the executable hid inside the archive, so the
+# title-only check here missed it and it fell through to the import-blocked
+# handler as a mere "all candidates rejected" alert while seeding for 33h.
+SUSPICIOUS_EXTENSIONS="exe|msi|bat|scr|cmd|ps1|vbs|com|pif|js|lnk|zip|rar|7z"
 
 ERRORS=0
 ALERT_MESSAGES=""
