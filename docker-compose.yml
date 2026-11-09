@@ -49,7 +49,7 @@ services:
 
   transmission:
     # transmission v4.1.3
-    image: lscr.io/linuxserver/transmission@sha256:81787bc706d3833d252e6d8b94545fea46bf2156f616320991a395619a477d2c
+    image: lscr.io/linuxserver/transmission@sha256:fb8fe625941cf15eb69aba4e5c0a678e035ddb11605fd85af4516a4e641f2687
     container_name: transmission
     networks:
       - mediaserver
@@ -84,7 +84,7 @@ services:
 
   sonarr:
     # sonarr v4.0.19.2979
-    image: lscr.io/linuxserver/sonarr@sha256:373159ba768e23a3a1c497d9f2b936addf8fd5b1fdce7dd6a14080ac928bfda0
+    image: lscr.io/linuxserver/sonarr@sha256:673dc4609a5672bc8e46069c86ffcea283a86b48d34a6c93d8da8c24a1b87571
     container_name: sonarr
     networks:
       - mediaserver
@@ -112,7 +112,7 @@ services:
 
   radarr:
     # radarr v6.3.0.10514
-    image: lscr.io/linuxserver/radarr@sha256:a45b5ab0f850f39edb4cc9c95bbd967b52ddc3d4574a4dfb45561177db6c88f4
+    image: lscr.io/linuxserver/radarr@sha256:51a9ac2a9eb47afc833541e5fd6c11b86eb9f810694c22fa2429e3078e9194b2
     container_name: radarr
     networks:
       - mediaserver
@@ -140,7 +140,7 @@ services:
 
   bazarr:
     # bazarr v1.6.0 — subtitle automation for Sonarr/Radarr
-    image: lscr.io/linuxserver/bazarr@sha256:e464484e7e6cff8ee189036c9ba96977ab054104ea18067ecf6171d0f3f3f8f2
+    image: lscr.io/linuxserver/bazarr@sha256:7ef0e58216900dbce30b123e0eb65f5cb30e36f126de9474acdd2022fb069c54
     container_name: bazarr
     networks:
       - mediaserver
@@ -169,7 +169,7 @@ services:
 
   lidarr:
     # lidarr v3.1.0.4875-ls38 — music acquisition/management (Sonarr/Radarr equivalent for music)
-    image: lscr.io/linuxserver/lidarr@sha256:bfec0ec2dc351fa5928379d785b08be395886f109393b9040ed7973bd1008060
+    image: lscr.io/linuxserver/lidarr@sha256:d5707cfe084da21a3864c7ef0edd9c0543b5e26c79c551f84dad5ef8683af8c7
     container_name: lidarr
     networks:
       - mediaserver
@@ -200,7 +200,7 @@ services:
 
   prowlarr:
     # prowlarr v2.5.2.5491
-    image: lscr.io/linuxserver/prowlarr@sha256:1295cff29d10b486c0d8324d1559a552140a5932bf8b3d87e398654414f63f92
+    image: lscr.io/linuxserver/prowlarr@sha256:431d7efebcef466e56adaa40a7a2fa2b0e85159a037b8bf465eaadbf0cf5bedf
     container_name: prowlarr
     networks:
       - mediaserver
@@ -227,7 +227,7 @@ services:
 
   seerr:
     # seerr v3.4.1 — v3.4.0 patches GHSA-mc6w-69r3-62h8 (path traversal -> RCE in avatar image proxy)
-    image: ghcr.io/seerr-team/seerr@sha256:f4768de5f616248d723e05891f3345a1402123775d03bf0890dbfedc0831bda1
+    image: ghcr.io/seerr-team/seerr@sha256:d8fab675b55ad293ded98fd71efcfd46054cbad9746534ae1cc4794a88c0b3be
     container_name: seerr
     networks:
       - mediaserver
@@ -251,7 +251,7 @@ services:
 
   navidrome:
     # navidrome v0.63.2 — lightweight Subsonic/OpenSubsonic-compatible music server
-    image: deluan/navidrome@sha256:9012939114fbb1bb641b81cf96dec5ded15f0aafefe8d47a511d7cb919658e40
+    image: deluan/navidrome@sha256:38dc2727bfcfd5ede290f8ada114fc90368146f265ae4701ddddbcbe2a44ee52
     container_name: navidrome
     networks:
       - mediaserver
@@ -281,7 +281,7 @@ services:
 
   audiobookshelf:
     # audiobookshelf v2.36.0 — audiobook server
-    image: ghcr.io/advplyr/audiobookshelf@sha256:180acad33d69c99ed208676465d8edcb268fa46967735579a7810859885b1a8e
+    image: ghcr.io/advplyr/audiobookshelf@sha256:b897c33f05972fb1bf484f7487bc878fa91ec8691335c1db6e2929c3a7658efa
     container_name: audiobookshelf
     networks:
       - mediaserver
@@ -348,7 +348,7 @@ services:
 
   duckdns:
     # duckdns latest (rebuilt 2026-08-03, was pinned from 2026-03-09)
-    image: lscr.io/linuxserver/duckdns@sha256:ac65c0d1d2cdfd380ab7b450d97b8c80b2a30f2e086bd79b4cce2fc7190d33a6
+    image: lscr.io/linuxserver/duckdns@sha256:b7ee0121f2e1915c5813953da6611d031d7cc3bdaa182a47fcb6b01a66e81f46
     container_name: duckdns
     networks:
       - mediaserver

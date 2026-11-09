@@ -1,5 +1,5 @@
 # caddy with duckdns DNS plugin and MaxMind GeoIP (pinned digests)
-FROM caddy:2-builder@sha256:d4f984844fc3b867ac88fd814285a38eaaf5b3ecadb9ca1b3b0397182ef60cfe AS builder
+FROM caddy:2-builder@sha256:3db11aead97f1fdff9c563d0dd8e7fba2e4c7031bef40f3e44fd1982f3e8366b AS builder
 # Pinned to specific tagged releases (was previously unpinned - always
 # building against whatever each plugin's default branch HEAD was at
 # build time) so an upstream change or compromise doesn't automatically
@@ -7,7 +7,7 @@ FROM caddy:2-builder@sha256:d4f984844fc3b867ac88fd814285a38eaaf5b3ecadb9ca1b3b03
 RUN xcaddy build \
     --with github.com/caddy-dns/duckdns@v0.5.0 \
     --with github.com/porech/caddy-maxmind-geolocation@v1.0.3
-FROM caddy:2@sha256:af5fdcd76f2db5e4e974ee92f96ee8c0fc3edb55bd4ba5032547cbf3f65e486d
+FROM caddy:2@sha256:ce773ec7a742ce15ee6bf2bb5f65882b9e2a4487b10733e6f1484f86e6b5d8bc
 RUN apk add --no-cache curl
 COPY --from=builder /usr/bin/caddy /usr/bin/caddy
 COPY download-geodb.sh /usr/local/bin/download-geodb.sh

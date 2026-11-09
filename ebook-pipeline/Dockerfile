@@ -1,5 +1,5 @@
 # debian bookworm-slim
-FROM debian@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818
+FROM debian@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc
 
 # Non-root user for actual job execution (this container parses untrusted
 # downloaded file content through Calibre - jobs should not run as root).
