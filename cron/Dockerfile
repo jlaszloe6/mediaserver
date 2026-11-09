@@ -1,5 +1,5 @@
 # alpine 3.21
-FROM alpine@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d
+FROM alpine@sha256:bc21487101ae47172509130ee1092cc273a831968d64b617776d1f69c81e42ab
 
 RUN apk add --no-cache \
     bash \
