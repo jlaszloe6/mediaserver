@@ -219,6 +219,7 @@ Services: Jellyfin, Transmission, Sonarr, Radarr, Prowlarr, Bazarr, Seerr, Caddy
 - SQLite safe snapshots via `sqlite3 .backup` on mounted config files (no Docker socket needed)
 - Services backed up: Sonarr, Radarr, Prowlarr, Jellyfin, Statuspage
 - Jellyfin transcodes/cache excluded (regenerable)
+- Caddy TLS state (`caddy/data/caddy`: certs, keys, ACME account) excluded too - Caddy writes it as root with 0600, so the `cronjob` user could only read part of it (caused a daily "tar had warnings" until 2026-11-09); on restore Caddy re-issues every cert via DNS-01 by itself. tar's stderr is now logged with the warning instead of discarded
 - `.env` file included in every backup
 - Manifest file tracks which services were backed up and any warnings
 - `BACKUP_ENCRYPTION_KEY` lives only in `.env`, which is itself inside the encrypted backup — store a copy off-server (password manager, printed), or a lost server + lost key means the backup can never be decrypted
