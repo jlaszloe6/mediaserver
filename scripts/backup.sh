@@ -44,7 +44,7 @@ WARNINGS=0
 # BACKUP_ENCRYPTION_KEY on a process's argv) gets the same treatment.
 KEY_TMPFILE=""
 cleanup_backup_tmp() {
-    rm -rf "$STAGING" "$STAGING.tar.gz"
+    rm -rf "$STAGING" "$STAGING.tar.gz" "$STAGING.tar-err"
     [ -n "$KEY_TMPFILE" ] && rm -f "$KEY_TMPFILE"
 }
 trap cleanup_backup_tmp EXIT
@@ -175,12 +175,26 @@ fi
 
 log "Archiving config directories..."
 
-tar -cf "$STAGING/configs.tar" \
+# caddy/data/caddy (TLS certs/keys, ACME account, local PKI) is excluded:
+# Caddy runs as root and writes these 0600, so the cronjob user could only
+# ever read the older files - every run warned "tar had warnings" and the
+# archived TLS state was a partial, inconsistent mix anyway. It's
+# regenerable: on restore Caddy re-issues all certs via DNS-01 on its own.
+# caddy/data/geolite2 is still archived (readable, and saves a download).
+#
+# tar's stderr goes to a sibling file (not into $STAGING, which gets
+# archived itself below) and its first lines are logged, so a future
+# warning says what actually failed instead of just that something did.
+if ! tar -cf "$STAGING/configs.tar" \
     -C /config/all-configs \
     --exclude='jellyfin/data/transcodes' \
     --exclude='jellyfin/cache' \
+    --exclude='caddy/data/caddy' \
     --exclude='*.db.backup' \
-    . 2>/dev/null || warn "tar had warnings (possibly missing dirs)"
+    . 2>"$STAGING.tar-err"; then
+    warn "tar had warnings ($(wc -l < "$STAGING.tar-err") line(s)), first ones: $(head -3 "$STAGING.tar-err" | tr '\n' ';')"
+fi
+rm -f "$STAGING.tar-err"
 
 log "  configs.tar: $(du -sh "$STAGING/configs.tar" | cut -f1)"
 
