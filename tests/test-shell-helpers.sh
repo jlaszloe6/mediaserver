@@ -1889,6 +1889,53 @@ test_queue_cleanup_suspicious_flags_archive_and_exe_but_not_video() {
     fi
 }
 
+# --- queue-cleanup.sh: pre-air grab filter ---------------------------------
+# Sonarr RSS-grabbed a fake Nocturne S01E04 ~5.3 days before its air date
+# (2026-11-09). handle_preair flags episode downloads airing more than
+# PREAIR_GRACE_HOURS away. Filter is extracted from the real script source.
+
+_queue_cleanup_preair_filter() {
+    local line
+    line=$(grep -F 'preair=$(echo "$queue" | jq' "$REPO_ROOT/scripts/queue-cleanup.sh")
+    line="${line#*\'}"
+    line="${line%\'\)}"
+    printf '%s' "$line"
+}
+
+_queue_cleanup_preair_titles() {
+    # $1 = queue JSON; fixed "now" = 2026-11-09T07:00:00Z, grace = 24h
+    jq -c --argjson now 1794207600 --argjson grace 86400 "$(_queue_cleanup_preair_filter)" <<< "$1" 2>&1 | jq -c '[.[].title]' 2>&1
+}
+
+test_queue_cleanup_preair_flags_early_grab_only() {
+    local result
+    result=$(_queue_cleanup_preair_titles '{"records":[
+        {"id":1,"downloadId":"A","title":"Nocturne S01E04 fake","episode":{"airDateUtc":"2026-11-13T05:00:00Z"}},
+        {"id":2,"downloadId":"B","title":"airs in 12h (inside grace)","episode":{"airDateUtc":"2026-11-09T19:00:00Z"}},
+        {"id":3,"downloadId":"C","title":"already aired","episode":{"airDateUtc":"2026-11-06T05:00:00Z"}},
+        {"id":4,"downloadId":"D","title":"no air date","episode":{"airDateUtc":null}},
+        {"id":5,"downloadId":"E","title":"fractional seconds","episode":{"airDateUtc":"2026-11-20T05:00:00.000Z"}}]}')
+    if [ "$result" = '["Nocturne S01E04 fake","fractional seconds"]' ]; then
+        pass "queue-cleanup preair: flags grabs >24h before air, skips inside-grace/aired/unknown"
+    else
+        fail "queue-cleanup preair: flags grabs >24h before air, skips inside-grace/aired/unknown" "got '$result'"
+    fi
+}
+
+test_queue_cleanup_preair_season_pack_judged_once_by_earliest_episode() {
+    local result
+    result=$(_queue_cleanup_preair_titles '{"records":[
+        {"id":10,"downloadId":"P","title":"unaired pack","episode":{"airDateUtc":"2026-11-27T05:00:00Z"}},
+        {"id":11,"downloadId":"P","title":"unaired pack","episode":{"airDateUtc":"2026-11-20T05:00:00Z"}},
+        {"id":20,"downloadId":"Q","title":"partly aired pack","episode":{"airDateUtc":"2026-11-06T05:00:00Z"}},
+        {"id":21,"downloadId":"Q","title":"partly aired pack","episode":{"airDateUtc":"2026-11-20T05:00:00Z"}}]}')
+    if [ "$result" = '["unaired pack"]' ]; then
+        pass "queue-cleanup preair: season pack removed once, only when its earliest episode is unaired"
+    else
+        fail "queue-cleanup preair: season pack removed once, only when its earliest episode is unaired" "got '$result'"
+    fi
+}
+
 # --- run everything -------------------------------------------------------
 
 test_env_set_preserves_inode
@@ -1953,6 +2000,8 @@ test_queue_cleanup_outside_count_accepts_folder_and_single_file
 test_queue_cleanup_outside_count_rejects_sibling_prefix
 test_queue_cleanup_valid_candidates_drops_other_series
 test_queue_cleanup_suspicious_flags_archive_and_exe_but_not_video
+test_queue_cleanup_preair_flags_early_grab_only
+test_queue_cleanup_preair_season_pack_judged_once_by_earliest_episode
 
 echo
 echo "$PASS_COUNT passed, $FAIL_COUNT failed"

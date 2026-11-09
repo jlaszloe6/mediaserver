@@ -10,6 +10,12 @@
 #    .pif, .js, .lnk, and archive-named releases .zip/.rar/.7z):
 #    auto-removes from the queue and blocklists the release.
 #
+# 2b. Pre-air grabs (Sonarr only): an episode download whose air date is
+#    still more than PREAIR_GRACE_HOURS away is almost always a fake -
+#    auto-removes and blocklists it the same way. Radarr doesn't need
+#    this: every movie uses minimumAvailability=released, so Radarr never
+#    grabs before release in the first place.
+#
 # 3. Downloads stuck at 0% for 2+ hours (dead torrent, no seeders): same
 #    signal pipeline-monitor.sh alerts on - removes from the queue,
 #    blocklists the release, and triggers a new search.
@@ -55,6 +61,15 @@ QUEUE_INSTANCES="owner|http://sonarr:8989|$SONARR_KEY|http://radarr:7878|$RADARR
 # title-only check here missed it and it fell through to the import-blocked
 # handler as a mere "all candidates rejected" alert while seeding for 33h.
 SUSPICIOUS_EXTENSIONS="exe|msi|bat|scr|cmd|ps1|vbs|com|pif|js|lnk|zip|rar|7z"
+
+# Sonarr grabs from RSS for any monitored episode, aired or not - there's no
+# native "don't grab before air date" setting. Seen live 2026-11-09: the fake
+# Nocturne S01E04 .zip was RSS-grabbed 2026-11-07, ~5.3 days before its
+# 2026-11-13 air date. The grace window covers streaming services dropping an
+# episode a few hours ahead of the date TVDB lists, so a genuine early
+# release isn't blocklisted. Downloads inside the window (or after air) are
+# left to the other checks.
+PREAIR_GRACE_HOURS=24
 
 ERRORS=0
 ALERT_MESSAGES=""
@@ -175,6 +190,76 @@ handle_suspicious() {
             ERRORS=$((ERRORS + 1))
         fi
     done <<< "$suspicious_items"
+}
+
+# --- Handle pre-air grabs (Sonarr) ---
+handle_preair() {
+    local service_name="$1"
+    local base_url="$2"
+    local api_key="$3"
+
+    # Returns 0 (not 1) on a fetch failure: this is called as a bare
+    # statement under set -e, and a transient Sonarr error must not abort
+    # the remaining checks for this cycle. ERRORS still records it.
+    local queue
+    queue=$(curl -sf -H "X-Api-Key: $api_key" "$base_url/api/v3/queue?page=1&pageSize=100&includeEpisode=true") || {
+        log "ERROR: Failed to fetch queue from $service_name"
+        ERRORS=$((ERRORS + 1))
+        return 0
+    }
+
+    # One entry per download (a season pack shows up as one queue row per
+    # episode, all sharing a downloadId - removing it once removes them
+    # all), keeping the earliest-airing episode's row. Rows with no known
+    # air date never match. Already-suspicious titles are skipped - they
+    # were handled by handle_suspicious earlier this run.
+    local preair
+    preair=$(echo "$queue" | jq -c --argjson now "$(date +%s)" --argjson grace "$((PREAIR_GRACE_HOURS * 3600))" '[.records[] | select(.episode.airDateUtc != null) | . + {air_ts: (.episode.airDateUtc | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601)}] | group_by(.downloadId // (.id | tostring)) | map(min_by(.air_ts)) | map(select(.air_ts - $now > $grace))')
+    local count
+    count=$(echo "$preair" | jq 'length')
+
+    if [ "$count" -eq 0 ]; then
+        return 0
+    fi
+
+    log "  Found $count pre-air download(s) in $service_name"
+
+    local preair_items
+    preair_items=$(echo "$preair" | jq -c '.[]')
+    while IFS= read -r item; do
+        [ -z "$item" ] && continue
+        local id title indexer air_date days_early
+        id=$(echo "$item" | jq -r '.id')
+        title=$(echo "$item" | jq -r '.title')
+        indexer=$(echo "$item" | jq -r '.indexer // "unknown"')
+        air_date=$(echo "$item" | jq -r '.episode.airDateUtc')
+        days_early=$(echo "$item" | jq -r --argjson now "$(date +%s)" '((.air_ts - $now) / 86400 * 10 | floor) / 10')
+
+        if echo "$title" | grep -qiE "\.(${SUSPICIOUS_EXTENSIONS})$"; then
+            continue
+        fi
+
+        log "  Rejecting pre-air: $title (airs $air_date, ${days_early}d away, indexer: $indexer)"
+
+        if $DRY_RUN; then
+            log "  [DRY RUN] Would remove '$title' from queue and blocklist"
+            continue
+        fi
+
+        local del_code
+        del_code=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE \
+            -H "X-Api-Key: $api_key" \
+            "$base_url/api/v3/queue/$id?removeFromClient=true&blocklist=true&skipRedownload=false")
+
+        if [ "$del_code" = "200" ]; then
+            log "  Removed and blocklisted '$title'"
+            queue_alert "[AUTO-FIXED] $service_name: Rejected '$title' from indexer '$indexer' — grabbed ${days_early} days before its air date ($air_date), blocklisted"
+        else
+            log "  ERROR: Failed to remove '$title' (HTTP $del_code)"
+            queue_alert "[NEEDS ATTENTION] $service_name: Could not remove pre-air download '$title' from indexer '$indexer' (airs $air_date)"
+            ERRORS=$((ERRORS + 1))
+        fi
+    done <<< "$preair_items"
 }
 
 # --- Handle import-blocked items ---
@@ -657,6 +742,9 @@ while IFS= read -r inst; do
     log "Checking for suspicious files..."
     handle_suspicious "Sonarr ($label)" "$sonarr_url" "$sonarr_key"
     handle_suspicious "Radarr ($label)" "$radarr_url" "$radarr_key"
+
+    log "Checking for pre-air grabs..."
+    handle_preair "Sonarr ($label)" "$sonarr_url" "$sonarr_key"
 
     log "Checking for import-blocked items..."
     handle_import_blocked "Sonarr ($label)" "$sonarr_url" "$sonarr_key" "series"
