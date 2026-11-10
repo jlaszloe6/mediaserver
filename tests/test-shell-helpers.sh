@@ -2093,9 +2093,9 @@ _run_is_superseded() {
         SAMPLE_RE=$(grep "^SAMPLE_RE=" "$REPO_ROOT/scripts/transmission-cleanup.sh" | cut -d"'" -f2)
         TORRENTS_HOST_ROOT="$tmp/torrents"; EP_CACHE="$tmp/cache"; SID=x
         SONARR_URL="http://sonarr.invalid"; SONARR_KEY=k
-        RADARR_WITHFILE="$tmp/radarr_withfile"; : > "$RADARR_WITHFILE"
+        RADARR_SETTLED="$tmp/radarr_settled"; : > "$RADARR_SETTLED"
         HISTORY_MAP="$tmp/history"; printf 'S:abc:7\nE:abc:101\nE:abc:102\n' > "$HISTORY_MAP"
-        EP_HASFILE='[{"id":101,"hasFile":true},{"id":102,"hasFile":true},{"id":103,"hasFile":false}]'
+        EP_HASFILE='[{"id":101,"hasFile":true,"monitored":true},{"id":102,"hasFile":true,"monitored":true},{"id":103,"hasFile":false,"monitored":true}]'
         TORRENT_FILES='["Show.S01E01/show.s01e01.mkv","Show.S01E01/Sample/show-sample.mkv","Show.S01E01/show.nfo"]'
         DLDIR=/downloads/complete/tv-sonarr; DONE=$((NOW - 72 * 3600)); MOVIE=""; SERIES=7
         echo data > "$tmp/torrents/complete/tv-sonarr/Show.S01E01/show.s01e01.mkv"
@@ -2117,28 +2117,49 @@ MOCKEOF
 
 _sc_base() { :; }
 _sc_hardlinked() { ln "$TMP/torrents/complete/tv-sonarr/Show.S01E01/show.s01e01.mkv" "$TMP/library/ep.mkv"; }
-_sc_mayday() { EP_HASFILE='[{"id":101,"hasFile":true},{"id":102,"hasFile":false}]'; }
+_sc_mayday() { EP_HASFILE='[{"id":101,"hasFile":true,"monitored":true},{"id":102,"hasFile":false,"monitored":true}]'; }
+_sc_cleared_on_purpose() { EP_HASFILE='[{"id":101,"hasFile":false,"monitored":false},{"id":102,"hasFile":false,"monitored":false}]'; }
+_sc_cleared_but_linked() { _sc_cleared_on_purpose; _sc_hardlinked; }
 _sc_in_grace() { DONE=$((NOW - 24 * 3600)); }
 _sc_only_sample() { TORRENT_FILES='["Show.S01E01/Sample/show-sample.mkv"]'; }
 _sc_other_category() { DLDIR=/downloads/complete/ebooks-incoming; }
 _sc_missing_file() { TORRENT_FILES='["Show.S01E01/gone.mkv"]'; }
 _sc_dotdot() { TORRENT_FILES='["../../library/ep.mkv"]'; }
-_sc_movie_with_file() { MOVIE=5; SERIES=""; DLDIR=/downloads/complete/radarr; TORRENT_FILES='["Movie/movie.mkv"]'; echo m > "$TMP/torrents/complete/radarr/Movie/movie.mkv"; echo 5 > "$RADARR_WITHFILE"; }
-_sc_movie_no_file() { _sc_movie_with_file; : > "$RADARR_WITHFILE"; }
+_sc_movie_with_file() { MOVIE=5; SERIES=""; DLDIR=/downloads/complete/radarr; TORRENT_FILES='["Movie/movie.mkv"]'; echo m > "$TMP/torrents/complete/radarr/Movie/movie.mkv"; echo 5 > "$RADARR_SETTLED"; }
+_sc_movie_no_file() { _sc_movie_with_file; : > "$RADARR_SETTLED"; }
 
 test_transmission_cleanup_superseded_detection() {
     local sc expected got all_ok=true details=""
     for pair in base:superseded hardlinked:keep mayday:keep in_grace:keep only_sample:keep \
-                other_category:keep missing_file:keep dotdot:keep movie_with_file:superseded movie_no_file:keep; do
+                other_category:keep missing_file:keep dotdot:keep movie_with_file:superseded movie_no_file:keep \
+                cleared_on_purpose:superseded cleared_but_linked:keep; do
         sc="${pair%%:*}"; expected="${pair#*:}"
         got=$(_run_is_superseded "_sc_$sc" 2>&1)
         if [ "$got" != "$expected" ]; then all_ok=false; details="$details $sc=$got(want $expected)"; fi
     done
     if $all_ok; then
-        pass "transmission-cleanup: superseded only when library has another file and nothing links to this torrent (10 scenarios incl. Mayday)"
+        pass "transmission-cleanup: superseded only when library has another file and nothing links to this torrent (12 scenarios incl. Mayday)"
     else
-        fail "transmission-cleanup: superseded only when library has another file and nothing links to this torrent (10 scenarios incl. Mayday)" "$details"
+        fail "transmission-cleanup: superseded only when library has another file and nothing links to this torrent (12 scenarios incl. Mayday)" "$details"
         echo "  details:$details"
+    fi
+}
+
+test_transmission_cleanup_radarr_settled_list() {
+    local line result
+    line=$(grep -F "awk '\$2 == \"true\" || \$3 == \"false\"" "$REPO_ROOT/scripts/transmission-cleanup.sh")
+    result=$(
+        tmp=$(mktemp -d)
+        RADARR_IDS="$tmp/ids"; RADARR_SETTLED="$tmp/settled"
+        printf '1 true true\n2 false true\n3 false false\n4 true false\n' > "$RADARR_IDS"
+        eval "$line"
+        tr '\n' ' ' < "$RADARR_SETTLED"
+        rm -rf "$tmp"
+    )
+    if [ -n "$line" ] && [ "$result" = "1 3 4 " ]; then
+        pass "transmission-cleanup: Radarr 'settled' = has a file or unmonitored; monitored-without-file (Mayday) excluded"
+    else
+        fail "transmission-cleanup: Radarr 'settled' = has a file or unmonitored; monitored-without-file (Mayday) excluded" "got '$result'"
     fi
 }
 
@@ -2213,6 +2234,7 @@ test_watched_cleanup_clear_running_series_deletes_nothing_if_mark_fails
 test_watched_cleanup_mark_prunes_expired_entries
 test_jellyfin_cleanup_skips_series_cleared_by_watched_cleanup
 test_transmission_cleanup_superseded_detection
+test_transmission_cleanup_radarr_settled_list
 
 echo
 echo "$PASS_COUNT passed, $FAIL_COUNT failed"
