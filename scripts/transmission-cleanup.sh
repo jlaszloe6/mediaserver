@@ -89,10 +89,15 @@ transmission_rpc() {
 
 # A torrent the library has moved past: returns 0 only if ALL hold -
 #  - finished >= SUPERSEDED_GRACE_HOURS ago, in a Sonarr/Radarr category dir
-#  - the library already has a file for everything it was grabbed for:
-#    the movie has a file, or every episode Sonarr's history ties to this
-#    hash has a file. This is what keeps the Mayday case safe (import never
-#    happened, the torrent holds the ONLY copy): there hasFile is false.
+#  - nothing it was grabbed for still needs it: the movie / every episode
+#    Sonarr's history ties to this hash either already has a (different)
+#    file, or has no file AND is unmonitored - i.e. it was let go on
+#    purpose, e.g. jellyfin-watched-cleanup.sh clearing a still-running
+#    series' watched episodes (it unmonitors them, then deletes the files,
+#    leaving the torrent copy as the only link-count-1 remnant).
+#    This is what keeps the Mayday case safe (import never happened, the
+#    torrent holds the ONLY copy of something still wanted): there the item
+#    has no file but is still monitored, so the torrent is kept.
 #  - it has >= 1 non-sample video file, and every one of them exists and
 #    has link count 1, i.e. no library file is a hardlink of it.
 # Anything unexpected (API/RPC failure, missing/unreadable file, ".." in a
@@ -106,14 +111,14 @@ is_superseded() {
     [[ "$dldir" =~ ^/downloads/complete/(radarr|tv-sonarr|guest-radarr|guest-sonarr)/?$ ]] || return 1
 
     if [ -n "$movie_id" ]; then
-        grep -qx "$movie_id" "$RADARR_WITHFILE" || return 1
+        grep -qx "$movie_id" "$RADARR_SETTLED" || return 1
     elif [ -n "$series_id" ]; then
         eps=$(grep "^E:${hash}:" "$HISTORY_MAP" | cut -d: -f3 | sort -u)
         [ -n "$eps" ] || return 1
         cache="$EP_CACHE/$series_id"
         if [ ! -e "$cache" ]; then
             curl -sf --max-time 15 -H "X-Api-Key: $SONARR_KEY" "$SONARR_URL/api/v3/episode?seriesId=$series_id" \
-                | jq -r '.[] | select(.hasFile == true) | .id' > "$cache.tmp" \
+                | jq -r '.[] | select(.hasFile == true or .monitored == false) | .id' > "$cache.tmp" \
                 && mv "$cache.tmp" "$cache" || { rm -f "$cache.tmp"; return 1; }
         fi
         for ep in $eps; do
@@ -194,12 +199,12 @@ log "Session seed ratio limit: $SEED_RATIO_LIMIT"
 # --- Build orphan detection data (from ALL instances) ---
 QUEUE_HASHES=$(mktemp)
 RADARR_IDS=$(mktemp)
-RADARR_WITHFILE=$(mktemp)
+RADARR_SETTLED=$(mktemp)
 SONARR_IDS=$(mktemp)
 HISTORY_MAP=$(mktemp)
 TMPFILE=$(mktemp)
 EP_CACHE=$(mktemp -d)
-trap 'rm -rf "$QUEUE_HASHES" "$RADARR_IDS" "$RADARR_WITHFILE" "$SONARR_IDS" "$HISTORY_MAP" "$TMPFILE" "$EP_CACHE"' EXIT
+trap 'rm -rf "$QUEUE_HASHES" "$RADARR_IDS" "$RADARR_SETTLED" "$SONARR_IDS" "$HISTORY_MAP" "$TMPFILE" "$EP_CACHE"' EXIT
 
 # Every fetch below feeds orphan detection further down (a torrent is
 # "orphaned" if it's NOT found in these lists) - a transient fetch failure
@@ -224,7 +229,7 @@ while IFS= read -r inst; do
 
     # Library IDs
     curl -sf --max-time 15 -H "X-Api-Key: $r_key" "$r_url/api/v3/movie" 2>/dev/null \
-        | jq -r '.[] | "\(.id) \(.hasFile)"' >> "$RADARR_IDS" \
+        | jq -r '.[] | "\(.id) \(.hasFile) \(.monitored)"' >> "$RADARR_IDS" \
         || { log "ERROR: Failed to fetch Radarr movie library ($r_url)"; FETCH_ERRORS=$((FETCH_ERRORS + 1)); }
     curl -sf --max-time 15 -H "X-Api-Key: $s_key" "$s_url/api/v3/series" 2>/dev/null \
         | jq -r '.[].id' >> "$SONARR_IDS" \
@@ -247,7 +252,8 @@ fi
 # Deduplicate and normalize
 sort -u -o "$QUEUE_HASHES" "$QUEUE_HASHES"
 tr '[:upper:]' '[:lower:]' < "$QUEUE_HASHES" > "$QUEUE_HASHES.tmp" && mv "$QUEUE_HASHES.tmp" "$QUEUE_HASHES"
-awk '$2 == "true" {print $1}' "$RADARR_IDS" | sort -u > "$RADARR_WITHFILE"
+# "Settled" = has a file, or deliberately unwanted (no file + unmonitored).
+awk '$2 == "true" || $3 == "false" {print $1}' "$RADARR_IDS" | sort -u > "$RADARR_SETTLED"
 cut -d' ' -f1 "$RADARR_IDS" | sort -u -o "$RADARR_IDS"
 sort -u -o "$SONARR_IDS" "$SONARR_IDS"
 sort -u -o "$HISTORY_MAP" "$HISTORY_MAP"
@@ -420,7 +426,7 @@ while IFS= read -r torrent; do
         fi
     fi
 
-    $SUPERSEDED && REASON="superseded, library uses another file; $REASON"
+    $SUPERSEDED && REASON="superseded, no library file links to it and nothing still wants it; $REASON"
 
     # --- Remove the orphaned torrent ---
     if $DRY_RUN; then
