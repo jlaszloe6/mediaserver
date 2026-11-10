@@ -11,6 +11,12 @@
 # Public trackers (1337x, YTS, TPB, etc.) have no seed obligation:
 #   → Remove immediately if orphaned (media deleted from library)
 #
+# Also "superseded": the movie/series is still in Radarr/Sonarr, but the
+# library has since switched to a different file (quality upgrade, PROPER,
+# or a duplicate grab) - so nothing links to this torrent's files any more.
+# See is_superseded() for the (deliberately strict) conditions. Same H&R
+# rules apply afterwards.
+#
 # Detection: Cross-references torrent hashes against Sonarr/Radarr download
 # history. Falls back to filesystem hardlink check for old hashes.
 #
@@ -43,6 +49,17 @@ RADARR_KEY="$RADARR_API_KEY"
 INSTANCE_CONFIGS="http://sonarr:8989|$SONARR_KEY|http://radarr:7878|$RADARR_KEY"
 
 TRANSMISSION_URL="http://transmission:9091/transmission/rpc"
+SONARR_URL="${INSTANCE_CONFIGS%%|*}"
+
+# Where Transmission's /downloads lives inside this (cron) container.
+TORRENTS_HOST_ROOT="/mnt/mediaserver/torrents"
+
+# Superseded torrents (see is_superseded): only judged this long after the
+# download finished, so an import that's merely slow is never mistaken
+# for a replaced one.
+SUPERSEDED_GRACE_HOURS=48
+VIDEO_EXT_RE='\.(mkv|mp4|avi|m4v|ts|wmv)$'
+SAMPLE_RE='(^|[/._ -])sample([/._ -]|$)'
 
 # --- Hit-and-run configuration ---
 # Tracker domains with H&R policies and their minimum seed hours.
@@ -68,6 +85,59 @@ transmission_rpc() {
         -H "X-Transmission-Session-Id: $1" \
         -H "Content-Type: application/json" \
         -d "$2" 2>/dev/null
+}
+
+# A torrent the library has moved past: returns 0 only if ALL hold -
+#  - finished >= SUPERSEDED_GRACE_HOURS ago, in a Sonarr/Radarr category dir
+#  - the library already has a file for everything it was grabbed for:
+#    the movie has a file, or every episode Sonarr's history ties to this
+#    hash has a file. This is what keeps the Mayday case safe (import never
+#    happened, the torrent holds the ONLY copy): there hasFile is false.
+#  - it has >= 1 non-sample video file, and every one of them exists and
+#    has link count 1, i.e. no library file is a hardlink of it.
+# Anything unexpected (API/RPC failure, missing/unreadable file, ".." in a
+# torrent-supplied name) returns 1 = keep.
+is_superseded() {
+    local id="$1" dldir="$2" done_date="$3" movie_id="$4" series_id="$5" hash="$6"
+    local eps ep cache files name path host_dir nvideo=0
+
+    [ "${done_date:-0}" -gt 0 ] 2>/dev/null || return 1
+    [ $((NOW - done_date)) -ge $((SUPERSEDED_GRACE_HOURS * 3600)) ] || return 1
+    [[ "$dldir" =~ ^/downloads/complete/(radarr|tv-sonarr|guest-radarr|guest-sonarr)/?$ ]] || return 1
+
+    if [ -n "$movie_id" ]; then
+        grep -qx "$movie_id" "$RADARR_WITHFILE" || return 1
+    elif [ -n "$series_id" ]; then
+        eps=$(grep "^E:${hash}:" "$HISTORY_MAP" | cut -d: -f3 | sort -u)
+        [ -n "$eps" ] || return 1
+        cache="$EP_CACHE/$series_id"
+        if [ ! -e "$cache" ]; then
+            curl -sf --max-time 15 -H "X-Api-Key: $SONARR_KEY" "$SONARR_URL/api/v3/episode?seriesId=$series_id" \
+                | jq -r '.[] | select(.hasFile == true) | .id' > "$cache.tmp" \
+                && mv "$cache.tmp" "$cache" || { rm -f "$cache.tmp"; return 1; }
+        fi
+        for ep in $eps; do
+            grep -qx "$ep" "$cache" || return 1
+        done
+    else
+        return 1
+    fi
+
+    files=$(transmission_rpc "$SID" \
+        "{\"method\":\"torrent-get\",\"arguments\":{\"ids\":[$id],\"fields\":[\"files\"]}}" \
+        | jq -r '.arguments.torrents[0].files[].name') || return 1
+    host_dir="${dldir/#\/downloads/$TORRENTS_HOST_ROOT}"
+    while IFS= read -r name; do
+        [ -n "$name" ] || continue
+        case "$name" in *..*) return 1 ;; esac
+        echo "$name" | grep -qiE "$VIDEO_EXT_RE" || continue
+        echo "$name" | grep -qiE "$SAMPLE_RE" && continue
+        path="$host_dir/$name"
+        [ -f "$path" ] || return 1
+        [ "$(stat -c '%h' "$path" 2>/dev/null || echo 0)" = "1" ] || return 1
+        nvideo=$((nvideo + 1))
+    done <<< "$files"
+    [ "$nvideo" -gt 0 ]
 }
 
 float_gte() {
@@ -124,10 +194,12 @@ log "Session seed ratio limit: $SEED_RATIO_LIMIT"
 # --- Build orphan detection data (from ALL instances) ---
 QUEUE_HASHES=$(mktemp)
 RADARR_IDS=$(mktemp)
+RADARR_WITHFILE=$(mktemp)
 SONARR_IDS=$(mktemp)
 HISTORY_MAP=$(mktemp)
 TMPFILE=$(mktemp)
-trap 'rm -f "$QUEUE_HASHES" "$RADARR_IDS" "$SONARR_IDS" "$HISTORY_MAP" "$TMPFILE"' EXIT
+EP_CACHE=$(mktemp -d)
+trap 'rm -rf "$QUEUE_HASHES" "$RADARR_IDS" "$RADARR_WITHFILE" "$SONARR_IDS" "$HISTORY_MAP" "$TMPFILE" "$EP_CACHE"' EXIT
 
 # Every fetch below feeds orphan detection further down (a torrent is
 # "orphaned" if it's NOT found in these lists) - a transient fetch failure
@@ -152,7 +224,7 @@ while IFS= read -r inst; do
 
     # Library IDs
     curl -sf --max-time 15 -H "X-Api-Key: $r_key" "$r_url/api/v3/movie" 2>/dev/null \
-        | jq -r '.[].id' >> "$RADARR_IDS" \
+        | jq -r '.[] | "\(.id) \(.hasFile)"' >> "$RADARR_IDS" \
         || { log "ERROR: Failed to fetch Radarr movie library ($r_url)"; FETCH_ERRORS=$((FETCH_ERRORS + 1)); }
     curl -sf --max-time 15 -H "X-Api-Key: $s_key" "$s_url/api/v3/series" 2>/dev/null \
         | jq -r '.[].id' >> "$SONARR_IDS" \
@@ -163,7 +235,7 @@ while IFS= read -r inst; do
         | jq -r '.records[] | select(.downloadId != null) | "R:" + (.downloadId | ascii_downcase) + ":" + (.movieId | tostring)' 2>/dev/null >> "$HISTORY_MAP" \
         || { log "ERROR: Failed to fetch Radarr history ($r_url)"; FETCH_ERRORS=$((FETCH_ERRORS + 1)); }
     curl -sf --max-time 15 -H "X-Api-Key: $s_key" "$s_url/api/v3/history?pageSize=500" 2>/dev/null \
-        | jq -r '.records[] | select(.downloadId != null) | "S:" + (.downloadId | ascii_downcase) + ":" + (.seriesId | tostring)' 2>/dev/null >> "$HISTORY_MAP" \
+        | jq -r '.records[] | select(.downloadId != null) | ("S:" + (.downloadId | ascii_downcase) + ":" + (.seriesId | tostring)), (select(.episodeId != null) | "E:" + (.downloadId | ascii_downcase) + ":" + (.episodeId | tostring))' 2>/dev/null >> "$HISTORY_MAP" \
         || { log "ERROR: Failed to fetch Sonarr history ($s_url)"; FETCH_ERRORS=$((FETCH_ERRORS + 1)); }
 done <<< "$INSTANCE_CONFIGS"
 
@@ -175,7 +247,8 @@ fi
 # Deduplicate and normalize
 sort -u -o "$QUEUE_HASHES" "$QUEUE_HASHES"
 tr '[:upper:]' '[:lower:]' < "$QUEUE_HASHES" > "$QUEUE_HASHES.tmp" && mv "$QUEUE_HASHES.tmp" "$QUEUE_HASHES"
-sort -u -o "$RADARR_IDS" "$RADARR_IDS"
+awk '$2 == "true" {print $1}' "$RADARR_IDS" | sort -u > "$RADARR_WITHFILE"
+cut -d' ' -f1 "$RADARR_IDS" | sort -u -o "$RADARR_IDS"
 sort -u -o "$SONARR_IDS" "$SONARR_IDS"
 sort -u -o "$HISTORY_MAP" "$HISTORY_MAP"
 
@@ -248,7 +321,7 @@ while IFS= read -r torrent; do
     if ! $ORPHANED && [ -z "$MOVIE_ID" ] && [ -z "$SERIES_ID" ]; then
         DLDIR=$(echo "$torrent" | jq -r '.downloadDir // empty' 2>/dev/null || true)
         if [ -n "$DLDIR" ]; then
-            HOST_DIR="${DLDIR/#\/downloads//mnt/mediaserver/torrents}"
+            HOST_DIR="${DLDIR/#\/downloads/$TORRENTS_HOST_ROOT}"
             # `|| MAIN_FILE=""`: this per-torrent RPC call is now bounded by
             # transmission_rpc's --max-time, so a stalled/failed lookup for
             # ONE old torrent actually returns a failure rather than
@@ -279,6 +352,15 @@ while IFS= read -r torrent; do
                     ORPHANED=true
                 fi
             fi
+        fi
+    fi
+
+    # Still-tracked media whose library copy is now a different file.
+    SUPERSEDED=false
+    if ! $ORPHANED && { [ -n "$MOVIE_ID" ] || [ -n "$SERIES_ID" ]; }; then
+        if is_superseded "$ID" "$(echo "$torrent" | jq -r '.downloadDir // empty')" "$DONE_DATE" "$MOVIE_ID" "$SERIES_ID" "$HASH"; then
+            ORPHANED=true
+            SUPERSEDED=true
         fi
     fi
 
@@ -337,6 +419,8 @@ while IFS= read -r torrent; do
             continue
         fi
     fi
+
+    $SUPERSEDED && REASON="superseded, library uses another file; $REASON"
 
     # --- Remove the orphaned torrent ---
     if $DRY_RUN; then

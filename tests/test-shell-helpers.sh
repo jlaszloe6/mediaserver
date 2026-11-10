@@ -2071,6 +2071,77 @@ test_jellyfin_cleanup_skips_series_cleared_by_watched_cleanup() {
     fi
 }
 
+# --- transmission-cleanup: superseded torrents --------------------------------
+# Found 2026-11-10: torrents whose media is still in Sonarr but whose files
+# the library no longer uses (Slow Horses S06E02 CAKES after the PROPER,
+# duplicate Shark Tank S17 grabs) were kept seeding forever - only a whole
+# series/movie leaving Sonarr/Radarr made a torrent "orphaned". The Mayday
+# case (import never happened, torrent holds the only copy) must stay safe.
+
+# Runs the real is_superseded() against a fake torrents tree.
+# Args: scenario-setup function name. Prints "superseded" or "keep".
+_run_is_superseded() {
+    local setup="$1" tmp src
+    tmp=$(mktemp -d)
+    src=$(extract_bash_function "is_superseded" "$REPO_ROOT/scripts/transmission-cleanup.sh")
+    mkdir -p "$tmp/torrents/complete/tv-sonarr/Show.S01E01" "$tmp/torrents/complete/radarr/Movie" "$tmp/library" "$tmp/bin" "$tmp/cache"
+    (
+        set -uo pipefail
+        unset -f curl
+        TMP="$tmp"; NOW=$(date +%s); SUPERSEDED_GRACE_HOURS=48
+        VIDEO_EXT_RE=$(grep "^VIDEO_EXT_RE=" "$REPO_ROOT/scripts/transmission-cleanup.sh" | cut -d"'" -f2)
+        SAMPLE_RE=$(grep "^SAMPLE_RE=" "$REPO_ROOT/scripts/transmission-cleanup.sh" | cut -d"'" -f2)
+        TORRENTS_HOST_ROOT="$tmp/torrents"; EP_CACHE="$tmp/cache"; SID=x
+        SONARR_URL="http://sonarr.invalid"; SONARR_KEY=k
+        RADARR_WITHFILE="$tmp/radarr_withfile"; : > "$RADARR_WITHFILE"
+        HISTORY_MAP="$tmp/history"; printf 'S:abc:7\nE:abc:101\nE:abc:102\n' > "$HISTORY_MAP"
+        EP_HASFILE='[{"id":101,"hasFile":true},{"id":102,"hasFile":true},{"id":103,"hasFile":false}]'
+        TORRENT_FILES='["Show.S01E01/show.s01e01.mkv","Show.S01E01/Sample/show-sample.mkv","Show.S01E01/show.nfo"]'
+        DLDIR=/downloads/complete/tv-sonarr; DONE=$((NOW - 72 * 3600)); MOVIE=""; SERIES=7
+        echo data > "$tmp/torrents/complete/tv-sonarr/Show.S01E01/show.s01e01.mkv"
+        mkdir -p "$tmp/torrents/complete/tv-sonarr/Show.S01E01/Sample"
+        echo s > "$tmp/torrents/complete/tv-sonarr/Show.S01E01/Sample/show-sample.mkv"
+        "$setup"
+        cat > "$tmp/bin/curl" <<MOCKEOF
+#!/usr/bin/env bash
+echo '$EP_HASFILE'
+MOCKEOF
+        chmod +x "$tmp/bin/curl"
+        export PATH="$tmp/bin:$ORIGINAL_PATH"
+        transmission_rpc() { echo "{\"arguments\":{\"torrents\":[{\"files\":$(echo "$TORRENT_FILES" | jq -c 'map({name: .})')}]}}"; }
+        eval "$src"
+        if is_superseded 1 "$DLDIR" "$DONE" "$MOVIE" "$SERIES" abc; then echo superseded; else echo keep; fi
+    )
+    rm -rf "$tmp"
+}
+
+_sc_base() { :; }
+_sc_hardlinked() { ln "$TMP/torrents/complete/tv-sonarr/Show.S01E01/show.s01e01.mkv" "$TMP/library/ep.mkv"; }
+_sc_mayday() { EP_HASFILE='[{"id":101,"hasFile":true},{"id":102,"hasFile":false}]'; }
+_sc_in_grace() { DONE=$((NOW - 24 * 3600)); }
+_sc_only_sample() { TORRENT_FILES='["Show.S01E01/Sample/show-sample.mkv"]'; }
+_sc_other_category() { DLDIR=/downloads/complete/ebooks-incoming; }
+_sc_missing_file() { TORRENT_FILES='["Show.S01E01/gone.mkv"]'; }
+_sc_dotdot() { TORRENT_FILES='["../../library/ep.mkv"]'; }
+_sc_movie_with_file() { MOVIE=5; SERIES=""; DLDIR=/downloads/complete/radarr; TORRENT_FILES='["Movie/movie.mkv"]'; echo m > "$TMP/torrents/complete/radarr/Movie/movie.mkv"; echo 5 > "$RADARR_WITHFILE"; }
+_sc_movie_no_file() { _sc_movie_with_file; : > "$RADARR_WITHFILE"; }
+
+test_transmission_cleanup_superseded_detection() {
+    local sc expected got all_ok=true details=""
+    for pair in base:superseded hardlinked:keep mayday:keep in_grace:keep only_sample:keep \
+                other_category:keep missing_file:keep dotdot:keep movie_with_file:superseded movie_no_file:keep; do
+        sc="${pair%%:*}"; expected="${pair#*:}"
+        got=$(_run_is_superseded "_sc_$sc" 2>&1)
+        if [ "$got" != "$expected" ]; then all_ok=false; details="$details $sc=$got(want $expected)"; fi
+    done
+    if $all_ok; then
+        pass "transmission-cleanup: superseded only when library has another file and nothing links to this torrent (10 scenarios incl. Mayday)"
+    else
+        fail "transmission-cleanup: superseded only when library has another file and nothing links to this torrent (10 scenarios incl. Mayday)" "$details"
+        echo "  details:$details"
+    fi
+}
+
 # --- run everything -------------------------------------------------------
 
 test_env_set_preserves_inode
@@ -2141,6 +2212,7 @@ test_watched_cleanup_clear_running_series_marks_then_unmonitors_then_deletes
 test_watched_cleanup_clear_running_series_deletes_nothing_if_mark_fails
 test_watched_cleanup_mark_prunes_expired_entries
 test_jellyfin_cleanup_skips_series_cleared_by_watched_cleanup
+test_transmission_cleanup_superseded_detection
 
 echo
 echo "$PASS_COUNT passed, $FAIL_COUNT failed"
