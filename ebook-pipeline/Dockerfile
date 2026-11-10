@@ -53,7 +53,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # can silently stop building. The installer's own signature check
     # already guarantees whatever version it does fetch is authentic.
     && curl -fsSL https://download.calibre-ebook.com/linux-installer.sh -o /tmp/calibre-installer.sh \
-    && echo "5ae3933e8d0c484d8621ab8a169488e99735fe22a0cfc01536f260d2ce1a86e0  /tmp/calibre-installer.sh" | sha256sum -c - \
+    && echo "f6a5b98416e6b7c66cb097093ae0578516ed33692a0d0506c122818bde232870  /tmp/calibre-installer.sh" | sha256sum -c - \
     && bash /tmp/calibre-installer.sh \
     && rm -f /tmp/calibre-installer.sh \
     && rm -rf /var/lib/apt/lists/* \
