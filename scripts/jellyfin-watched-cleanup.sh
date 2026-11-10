@@ -4,6 +4,14 @@
 # Replaces Prunarr. Queries Jellyfin for played items, checks LastPlayedDate,
 # and deletes from Sonarr/Radarr if watched more than 30 days ago.
 #
+# Series: an *ended* series is removed from Sonarr entirely (files + import
+# list exclusion). A series that is still running (Sonarr status
+# continuing/upcoming) only has its watched episode files deleted and those
+# episodes unmonitored - the series itself stays in Sonarr, monitored, so
+# future episodes/seasons still get downloaded. Before deleting any file it
+# is marked in $CLEARED_FILE so jellyfin-cleanup.sh doesn't mistake the
+# now-empty series for a manual Jellyfin deletion and wipe it.
+#
 # Run daily at 3 AM via cron.
 
 DRY_RUN=false
@@ -33,6 +41,13 @@ SONARR_KEY="$SONARR_API_KEY"
 RADARR_URL="http://radarr:7878"
 RADARR_KEY="$RADARR_API_KEY"
 DAYS_WATCHED=30
+
+# Shared with jellyfin-cleanup.sh (same cron container, same /var/tmp
+# volume): {"<sonarr series id>": <epoch when its files were cleared>}.
+STATE_DIR="/var/tmp/mediaserver-cleanup"
+CLEARED_FILE="$STATE_DIR/watched-cleared-series.json"
+CLEARED_TTL_DAYS=7
+mkdir -p "$STATE_DIR"
 
 ERRORS=0
 REMOVED_MOVIES=0
@@ -123,8 +138,90 @@ done
 
 log "  Movies removed: $REMOVED_MOVIES"
 
+# Record a series as "files intentionally cleared" for jellyfin-cleanup.sh,
+# pruning entries older than CLEARED_TTL_DAYS (by then jellyfin-cleanup has
+# long since saved sizeOnDisk=0 as its baseline, so the mark isn't needed).
+# Written atomically (tmp + mv) - jellyfin-cleanup may read it concurrently.
+mark_series_cleared() {
+    local id="$1" now cur tmp
+    now=$(date +%s)
+    cur=$(jq -c '.' "$CLEARED_FILE" 2>/dev/null) || cur="{}"
+    [ -n "$cur" ] || cur="{}"
+    tmp=$(mktemp "$STATE_DIR/.cleared.XXXXXX") || return 1
+    if echo "$cur" | jq -c --arg id "$id" --argjson now "$now" --argjson ttl "$((CLEARED_TTL_DAYS * 86400))" \
+        'with_entries(select(($now - .value) < $ttl)) + {($id): $now}' > "$tmp"; then
+        mv "$tmp" "$CLEARED_FILE"
+    else
+        rm -f "$tmp"
+        return 1
+    fi
+}
+
+# Continuing/upcoming series: delete the watched episode files and
+# unmonitor exactly those episodes (so Sonarr doesn't re-grab them), but
+# keep the series itself monitored for future episodes. Aired episodes that
+# never had a file stay monitored, so Sonarr keeps looking for them.
+# Returns non-zero on any failure (caller counts it as an error).
+clear_watched_series() {
+    local id="$1" title="$2"
+    local files file_ids eps ep_ids code
+
+    files=$(curl -sf --max-time 15 -H "X-Api-Key: $SONARR_KEY" "$SONARR_URL/api/v3/episodefile?seriesId=$id") || {
+        log "  ERROR: Failed to list episode files for '$title'"
+        return 1
+    }
+    file_ids=$(echo "$files" | jq -c '[.[].id]')
+    if [ "$file_ids" = "[]" ]; then
+        log "  Series '$title' (still running) has no files left - nothing to clear"
+        return 0
+    fi
+
+    eps=$(curl -sf --max-time 15 -H "X-Api-Key: $SONARR_KEY" "$SONARR_URL/api/v3/episode?seriesId=$id") || {
+        log "  ERROR: Failed to list episodes for '$title'"
+        return 1
+    }
+    ep_ids=$(echo "$eps" | jq -c '[.[] | select(.hasFile == true) | .id]')
+
+    if $DRY_RUN; then
+        log "  [DRY RUN] Would clear $(echo "$file_ids" | jq length) watched file(s) of still-running series '$title' and unmonitor $(echo "$ep_ids" | jq length) episode(s), keeping the series"
+        return 0
+    fi
+
+    # Mark first: if this fails, delete nothing - otherwise jellyfin-cleanup
+    # would see the emptied series and remove it from Sonarr for good.
+    mark_series_cleared "$id" || {
+        log "  ERROR: Could not write $CLEARED_FILE - not clearing '$title'"
+        return 1
+    }
+
+    code=$(curl -s --max-time 15 -o /dev/null -w '%{http_code}' -X PUT \
+        -H "X-Api-Key: $SONARR_KEY" -H "Content-Type: application/json" \
+        -d "{\"episodeIds\":$ep_ids,\"monitored\":false}" \
+        "$SONARR_URL/api/v3/episode/monitor") || code="000"
+    case "$code" in 2*) ;; *)
+        log "  ERROR: Failed to unmonitor watched episodes of '$title' (HTTP $code) - files left in place"
+        return 1 ;;
+    esac
+
+    code=$(curl -s --max-time 30 -o /dev/null -w '%{http_code}' -X DELETE \
+        -H "X-Api-Key: $SONARR_KEY" -H "Content-Type: application/json" \
+        -d "{\"episodeFileIds\":$file_ids}" \
+        "$SONARR_URL/api/v3/episodefile/bulk") || code="000"
+    case "$code" in 2*) ;; *)
+        log "  ERROR: Failed to delete watched files of '$title' (HTTP $code)"
+        return 1 ;;
+    esac
+
+    log "  Cleared $(echo "$file_ids" | jq length) watched file(s) of still-running series '$title' - kept in Sonarr for future episodes"
+    return 0
+}
+
 # --- Series ---
 log "--- Checking watched series ---"
+
+# A series fully watched by several users would otherwise be handled once
+# per user (the second DELETE 404s and counts as an error).
+HANDLED_SERIES=" "
 
 # Get all Sonarr series for matching
 sonarr_series=$(curl -sf -H "X-Api-Key: $SONARR_KEY" "$SONARR_URL/api/v3/series") || {
@@ -182,6 +279,22 @@ for user_id in $user_ids; do
             sonarr_id=$(echo "$sonarr_series" | jq -r ".[] | select(.title == \"$title\") | .id" 2>/dev/null)
         fi
         [ -z "$sonarr_id" ] && continue
+
+        case "$HANDLED_SERIES" in *" $sonarr_id "*) continue ;; esac
+        HANDLED_SERIES="$HANDLED_SERIES$sonarr_id "
+
+        # Only an ended series is removed outright; anything Sonarr still
+        # expects new episodes for keeps its Sonarr entry.
+        series_status=$(echo "$sonarr_series" | jq -r ".[] | select(.id == $sonarr_id) | .status")
+        if [ "$series_status" != "ended" ]; then
+            log "  Series '$title' watched by $user_name on $last_played is still running (status=$series_status)"
+            if clear_watched_series "$sonarr_id" "$title"; then
+                REMOVED_SERIES=$((REMOVED_SERIES + 1))
+            else
+                ERRORS=$((ERRORS + 1))
+            fi
+            continue
+        fi
 
         if $DRY_RUN; then
             log "  [DRY RUN] Would remove series '$title' (tvdb=$tvdb_id, watched by $user_name on $last_played)"

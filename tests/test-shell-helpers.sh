@@ -1936,6 +1936,141 @@ test_queue_cleanup_preair_season_pack_judged_once_by_earliest_episode() {
     fi
 }
 
+# --- watched-cleanup: keep still-running series, mark for jellyfin-cleanup --
+# Found 2026-11-10: jellyfin-watched-cleanup.sh removed still-running series
+# (Dutton Ranch, Wild Cherry - status continuing, only S1 out) from Sonarr
+# entirely with an import list exclusion, so future seasons would never be
+# grabbed. It now only clears the watched files of a non-ended series and
+# marks it in watched-cleared-series.json first, which jellyfin-cleanup.sh
+# honors (otherwise its "sizeOnDisk 0 + monitored + was >0" rule would
+# delete the emptied series 30 minutes later anyway).
+
+_watched_cleanup_mock_curl() {
+    # $1 = mock dir. Records "METHOD URL DATA marked=<0|1>" per call.
+    cat > "$1/bin/curl" <<'MOCKEOF'
+#!/usr/bin/env bash
+method=GET; data=""; url=""; wcode=false
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -X) method="$2"; shift ;;
+        -d) data="$2"; shift ;;
+        -w) wcode=true; shift ;;
+        -H|-o|--max-time) shift ;;
+        http*) url="$1" ;;
+    esac
+    shift
+done
+marked=0; [ -f "$CLEARED_FILE" ] && marked=1
+echo "$method $url $data marked=$marked" >> "$CALL_LOG"
+case "$method $url" in
+    "GET "*"/episodefile?seriesId="*) echo '[{"id":11},{"id":12}]' ;;
+    "GET "*"/episode?seriesId="*) echo '[{"id":1,"hasFile":true},{"id":2,"hasFile":false},{"id":3,"hasFile":true}]' ;;
+    "PUT "*"/episode/monitor") $wcode && printf 202 ;;
+    "DELETE "*"/episodefile/bulk") $wcode && printf 200 ;;
+    *) exit 22 ;;
+esac
+MOCKEOF
+    chmod +x "$1/bin/curl"
+}
+
+test_watched_cleanup_clear_running_series_marks_then_unmonitors_then_deletes() {
+    local mockdir calls src_mark src_clear result
+    mockdir=$(mktemp -d); mkdir -p "$mockdir/bin" "$mockdir/state"
+    _watched_cleanup_mock_curl "$mockdir"
+    src_mark=$(extract_bash_function "mark_series_cleared" "$REPO_ROOT/scripts/jellyfin-watched-cleanup.sh")
+    src_clear=$(extract_bash_function "clear_watched_series" "$REPO_ROOT/scripts/jellyfin-watched-cleanup.sh")
+    (
+        set -euo pipefail
+        export PATH="$mockdir/bin:$ORIGINAL_PATH" CALL_LOG="$mockdir/calls"
+        STATE_DIR="$mockdir/state"; export CLEARED_FILE="$STATE_DIR/watched-cleared-series.json"
+        CLEARED_TTL_DAYS=7; DRY_RUN=false; SONARR_URL="http://sonarr.invalid"; SONARR_KEY=k
+        log() { :; }
+        # curl-secrets.sh (sourced at the top of this file) wraps curl and
+        # moves -d bodies onto an fd the mock can't see; it has its own
+        # tests above, so call the mock directly here.
+        unset -f curl
+        eval "$src_mark"; eval "$src_clear"
+        clear_watched_series 42 "Some Show"
+    )
+    result=$?
+    calls=$(cat "$mockdir/calls" 2>/dev/null)
+    if [ "$result" -eq 0 ] \
+        && jq -e 'has("42")' "$mockdir/state/watched-cleared-series.json" >/dev/null 2>&1 \
+        && echo "$calls" | grep -q '^PUT .*/episode/monitor {"episodeIds":\[1,3\],"monitored":false} marked=1$' \
+        && echo "$calls" | grep -q '^DELETE .*/episodefile/bulk {"episodeFileIds":\[11,12\]} marked=1$' \
+        && [ "$(echo "$calls" | grep -n '^PUT' | cut -d: -f1)" -lt "$(echo "$calls" | grep -n '^DELETE' | cut -d: -f1)" ]; then
+        pass "watched-cleanup: running series is marked, then only file-bearing episodes unmonitored, then files deleted"
+    else
+        fail "watched-cleanup: running series is marked, then only file-bearing episodes unmonitored, then files deleted" "exit=$result calls=$calls"
+    fi
+    rm -rf "$mockdir"
+}
+
+test_watched_cleanup_clear_running_series_deletes_nothing_if_mark_fails() {
+    local mockdir calls src_mark src_clear result
+    mockdir=$(mktemp -d); mkdir -p "$mockdir/bin"
+    _watched_cleanup_mock_curl "$mockdir"
+    src_mark=$(extract_bash_function "mark_series_cleared" "$REPO_ROOT/scripts/jellyfin-watched-cleanup.sh")
+    src_clear=$(extract_bash_function "clear_watched_series" "$REPO_ROOT/scripts/jellyfin-watched-cleanup.sh")
+    (
+        set -euo pipefail
+        export PATH="$mockdir/bin:$ORIGINAL_PATH" CALL_LOG="$mockdir/calls"
+        STATE_DIR="$mockdir/does-not-exist"; export CLEARED_FILE="$STATE_DIR/watched-cleared-series.json"
+        CLEARED_TTL_DAYS=7; DRY_RUN=false; SONARR_URL="http://sonarr.invalid"; SONARR_KEY=k
+        log() { :; }
+        # curl-secrets.sh (sourced at the top of this file) wraps curl and
+        # moves -d bodies onto an fd the mock can't see; it has its own
+        # tests above, so call the mock directly here.
+        unset -f curl
+        eval "$src_mark"; eval "$src_clear"
+        clear_watched_series 42 "Some Show"
+    ) 2>/dev/null
+    result=$?
+    calls=$(cat "$mockdir/calls" 2>/dev/null)
+    if [ "$result" -ne 0 ] && ! echo "$calls" | grep -qE '^(PUT|DELETE) '; then
+        pass "watched-cleanup: no unmonitor/delete happens when the jellyfin-cleanup mark can't be written"
+    else
+        fail "watched-cleanup: no unmonitor/delete happens when the jellyfin-cleanup mark can't be written" "exit=$result calls=$calls"
+    fi
+    rm -rf "$mockdir"
+}
+
+test_watched_cleanup_mark_prunes_expired_entries() {
+    local tmp src now result
+    tmp=$(mktemp -d)
+    now=$(date +%s)
+    printf '{"1":%s,"2":%s}' "$((now - 8 * 86400))" "$((now - 86400))" > "$tmp/watched-cleared-series.json"
+    src=$(extract_bash_function "mark_series_cleared" "$REPO_ROOT/scripts/jellyfin-watched-cleanup.sh")
+    result=$(
+        set -euo pipefail
+        STATE_DIR="$tmp"; CLEARED_FILE="$tmp/watched-cleared-series.json"; CLEARED_TTL_DAYS=7
+        eval "$src"
+        mark_series_cleared 3
+        jq -c 'keys' "$CLEARED_FILE"
+    )
+    if [ "$result" = '["2","3"]' ]; then
+        pass "watched-cleanup: mark adds the series and prunes entries past the TTL"
+    else
+        fail "watched-cleanup: mark adds the series and prunes entries past the TTL" "got '$result'"
+    fi
+    rm -rf "$tmp"
+}
+
+test_jellyfin_cleanup_skips_series_cleared_by_watched_cleanup() {
+    local filter result
+    filter=$(awk '/deleted=\$\(echo "\$series" \| jq -c --argjson prev "\$prev_state" --argjson cleared "\$cleared" .$/{f=1; next} f && /^    .\)$/{exit} f' "$REPO_ROOT/scripts/jellyfin-cleanup.sh")
+    result=$(echo '[
+        {"id":1,"title":"manually deleted","monitored":true,"statistics":{"sizeOnDisk":0}},
+        {"id":2,"title":"cleared on purpose","monitored":true,"statistics":{"sizeOnDisk":0}},
+        {"id":3,"title":"still has files","monitored":true,"statistics":{"sizeOnDisk":5}}]' \
+        | jq -c --argjson prev '{"1":10,"2":10,"3":10}' --argjson cleared '{"2":1}' "$filter" 2>&1 | jq -sc '[.[].title]' 2>&1)
+    if [ -n "$filter" ] && [ "$result" = '["manually deleted"]' ]; then
+        pass "jellyfin-cleanup: series emptied by watched-cleanup are not removed, manual deletions still are"
+    else
+        fail "jellyfin-cleanup: series emptied by watched-cleanup are not removed, manual deletions still are" "filter_len=${#filter} got '$result'"
+    fi
+}
+
 # --- run everything -------------------------------------------------------
 
 test_env_set_preserves_inode
@@ -2002,6 +2137,10 @@ test_queue_cleanup_valid_candidates_drops_other_series
 test_queue_cleanup_suspicious_flags_archive_and_exe_but_not_video
 test_queue_cleanup_preair_flags_early_grab_only
 test_queue_cleanup_preair_season_pack_judged_once_by_earliest_episode
+test_watched_cleanup_clear_running_series_marks_then_unmonitors_then_deletes
+test_watched_cleanup_clear_running_series_deletes_nothing_if_mark_fails
+test_watched_cleanup_mark_prunes_expired_entries
+test_jellyfin_cleanup_skips_series_cleared_by_watched_cleanup
 
 echo
 echo "$PASS_COUNT passed, $FAIL_COUNT failed"

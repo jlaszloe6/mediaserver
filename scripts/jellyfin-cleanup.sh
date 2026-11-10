@@ -41,6 +41,11 @@ RADARR_URL="http://radarr:7878"
 
 STATE_DIR="/var/tmp/mediaserver-cleanup"
 mkdir -p "$STATE_DIR"
+# Written by jellyfin-watched-cleanup.sh when it deliberately deletes the
+# watched files of a still-running series but keeps the series in Sonarr:
+# {"<series id>": <epoch>}. Those series must not be treated as "deleted
+# from Jellyfin" here, or the series would be removed with an exclusion.
+CLEARED_FILE="$STATE_DIR/watched-cleared-series.json"
 
 ERRORS=0
 
@@ -214,12 +219,32 @@ process_series() {
         return
     }
 
+    # Read at decision time (after the rescan above), not at script start:
+    # watched-cleanup writes the mark before deleting any file, so whatever
+    # emptied a series during this run is already recorded by now.
+    local cleared
+    cleared=$(jq -c 'if type == "object" then . else {} end' "$CLEARED_FILE" 2>/dev/null) || cleared="{}"
+    [ -n "$cleared" ] || cleared="{}"
+
+    local skipped
+    skipped=$(echo "$series" | jq -r --argjson prev "$prev_state" --argjson cleared "$cleared" '
+        .[] | (.id | tostring) as $k | select(
+            (.statistics.sizeOnDisk // 0) == 0 and
+            ($prev[$k] // 0) > 0 and
+            ($cleared | has($k))
+        ) | .title
+    ')
+    while IFS= read -r t; do
+        [ -n "$t" ] && log "  Skipping '$t': watched files cleared on purpose by jellyfin-watched-cleanup.sh, series kept for future episodes"
+    done <<< "$skipped"
+
     local deleted
-    deleted=$(echo "$series" | jq -c --argjson prev "$prev_state" '
-        .[] | select(
+    deleted=$(echo "$series" | jq -c --argjson prev "$prev_state" --argjson cleared "$cleared" '
+        .[] | (.id | tostring) as $k | select(
             (.statistics.sizeOnDisk // 0) == 0 and
             .monitored == true and
-            ($prev[(.id | tostring)] // 0) > 0
+            ($prev[$k] // 0) > 0 and
+            ($cleared | has($k) | not)
         ) | {id, title}
     ')
 
