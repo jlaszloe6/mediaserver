@@ -263,6 +263,7 @@ services:
     user: "${PUID:-1000}:${PGID:-1000}"
     environment:
       - TZ=Europe/Budapest
+      - ND_SCANNER_SCHEDULE=@every 10m
     volumes:
       - ./config/navidrome:/data
       - ${MEDIA_ROOT}/media/music:/music:ro
